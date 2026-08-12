@@ -1,0 +1,26 @@
+NexBot
+======
+
+NexBot is maintained by LuNex Inc (https://github.com/LuNexInc).
+
+Upstream
+--------
+Substantial portions of this project are derived from :
+
+  https://github.com/-/
+  Copyright (c) 2026   and  contributors
+  License: MIT
+
+Imported baseline commit (shallow clone at fork time):
+  e4c455d03fb7211ce074b1a8d55a4b0c1 (v0.1.7)
+
+NexBot is independent. It is not affiliated with ,  ,
+or xAI. "Grok" is a trademark of its respective owner.
+
+LuNex changes (high level)
+--------------------------
+- Product rename: NexBot / LuNexInc branding
+- Data directory: ~/.nexbot (migrates from ~/. when present)
+- Bundle id: com.lunexinc.nexbot
+- Removed shipped PostHog analytics token and email identify to vendor cloud
+- Env prefix: NEXBOT_* (replaces OMB_* / OGB_* / _*)
