@@ -1,7 +1,9 @@
 {
   "name": "nexbot",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "description": "NexBot — team of AI agents in a chat app (LuNex Inc)",
+  "author": "LuNex Inc",
   "type": "module",
   "main": "electron/main.mjs",
   "engines": {
@@ -19,7 +21,10 @@
     "preview": "vite preview",
     "build:server": "tsc -p tsconfig.server.build.json",
     "build:speech": "swiftc -O electron/resources/speech-helper.swift -o electron/resources/speech-helper",
-    "package": "pnpm build && pnpm build:server && pnpm build:speech && electron-builder --mac --publish never"
+    "package": "pnpm build && pnpm build:server && electron-builder --publish never",
+    "package:win": "pnpm build && pnpm build:server && electron-builder --win --publish never",
+    "package:mac": "pnpm build && pnpm build:server && pnpm build:speech && electron-builder --mac --publish never",
+    "package:linux": "pnpm build && pnpm build:server && electron-builder --linux --publish never"
   },
   "dependencies": {
     "@trycua/cua-driver": "^0.19.3",

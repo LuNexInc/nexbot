@@ -19,20 +19,22 @@ Forked and rebranded from  (MIT). Attribution in `NOTICE` and `LICENSE`.
 2. **Secrets only in** `~/.nexbot/config.json` or env — never commit keys.
 3. **Harness binds 127.0.0.1 only.** Do not open it to LAN without auth design.
 4. **Keep MIT attribution** to  /   when redistributing.
-5. **Windows desktop packaging is not done.** Do not claim multi-platform installers yet.
+5. **Windows is supported** for harness + Electron shell + NSIS/portable packages. Local CUA computer-use remains macOS-first.
 6. Follow root workspace `AGENTS.md` (handoff, STE writing, no `git add -A`).
 
 ## Dev
 
 ```powershell
 pnpm install
-pnpm dev:server
-pnpm dev
+pnpm dev:server   # 127.0.0.1:8799
+pnpm dev          # Vite UI :5199
+pnpm dev:desktop  # Electron (needs server + vite running in dev)
 pnpm typecheck
 pnpm test
+pnpm package:win  # release\NexBot-Setup-*.exe + Portable
 ```
 
-Node 24+, pnpm. macOS for Electron desktop features (speech helper, CUA TCC).
+Node 24+, pnpm. Windows and macOS desktop shells. macOS still owns native speech helper + CUA TCC.
 
 ## Related LuNex products
 

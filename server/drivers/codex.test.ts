@@ -3,9 +3,8 @@
 // JSON-RPC handshake, normalize notifications into canonical events, and
 // surface server->client approval requests as request.opened.
 //
-// Spawn-based tests are POSIX-only until Windows CLI spawning lands (the
-// fake is a shebang script — same constraint as codex.cmd itself).
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+// Fake app-server is a Node script; Windows uses a .cmd shim via fakeCliShim.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +12,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { fakeCliShim } from "../testing/fake-cli-shim.ts";
 import { CodexDriver } from "./codex.ts";
 
-const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
+const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
 describe("CodexDriver.decodeConfig", () => {
   it("defaults to the codex binary with fullAuto off", () => {
@@ -28,10 +27,11 @@ describe("CodexDriver.decodeConfig", () => {
   });
 });
 
-posixOnly("CodexDriver turns (fake app-server)", () => {
+describe("CodexDriver turns (fake app-server)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
+  let fakeCli: string;
 
   const create = async (opts: { mode?: string; fullAuto?: boolean } = {}) => {
     if (opts.mode) process.env.FAKE_CODEX_MODE = opts.mode;
@@ -40,14 +40,14 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
       displayName: "Codex Test",
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
+      config: { cli: fakeCli, fullAuto: opts.fullAuto ?? false },
     });
     recorder = recordEvents(instance.adapter);
   };
 
   beforeEach(() => {
-    chmodSync(FAKE_CLI, 0o755);
     scratch = mkdtempSync(join(tmpdir(), "nexbot-codex-test-"));
+    fakeCli = fakeCliShim(FAKE_CLI_SCRIPT, scratch, "fake-codex");
   });
 
   afterEach(async () => {

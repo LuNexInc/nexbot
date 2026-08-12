@@ -4,9 +4,8 @@
 // normalize the ACP handshake into canonical events, keep argv/env hygiene,
 // broker permission asks, and settle interrupts/crashes cleanly.
 //
-// Spawn-based tests are POSIX-only until Windows CLI spawning lands (the fake
-// CLI is a shebang script Windows cannot exec directly).
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+// Fake ACP CLI is a Node script; Windows uses a .cmd shim via fakeCliShim.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,11 +14,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { fakeCliShim } from "../../testing/fake-cli-shim.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 
-const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
+const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
@@ -34,10 +33,11 @@ describe("ACP decodeConfig", () => {
   });
 });
 
-posixOnly("ACP turns (fake CLI)", () => {
+describe("ACP turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
+  let fakeCli: string;
 
   const create = async (driver = GrokAgentDriver, mode?: string) => {
     if (mode) process.env.FAKE_ACP_MODE = mode;
@@ -46,15 +46,15 @@ posixOnly("ACP turns (fake CLI)", () => {
       displayName: "ACP Test",
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: false },
+      config: { cli: fakeCli, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
   };
 
   beforeEach(() => {
     ensureDirs();
-    chmodSync(FAKE_CLI, 0o755);
     scratch = mkdtempSync(join(tmpdir(), "nexbot-acp-test-"));
+    fakeCli = fakeCliShim(FAKE_CLI_SCRIPT, scratch, "fake-acp");
   });
 
   afterEach(async () => {
@@ -165,7 +165,7 @@ posixOnly("ACP turns (fake CLI)", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("ACP snapshot", () => {
+describe("ACP snapshot", () => {
   it("a missing binary is unavailable", async () => {
     const instance = await GrokAgentDriver.create({
       instanceId: "grok-missing",
