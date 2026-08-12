@@ -9,9 +9,9 @@ Forked and rebranded from  (MIT). Attribution in `NOTICE` and `LICENSE`.
 
 ## Source of truth
 
-- **Canonical:** this folder in `AI Projects` (`nexbot\`).
-- **Publish:** `LuNexInc/nexbot` (create/push from here; do not invent a second home).
-- Before any release/tag: run workspace preflight when listed in `.tools\publish-targets.json`.
+- **Canonical:** this folder in `AI Projects` (`nexbot\`). No nested `.git` here.
+- **Publish:** `LuNexInc/nexbot` — local clone `_publish/nexbot-repo` (gitignored). Sync tracked source into the publish clone, then push. Do not implement only in the publish clone.
+- Before any release/tag: run workspace preflight (`nexbot` is in `.tools/publish-targets.json`).
 
 ## Hard product rules
 
