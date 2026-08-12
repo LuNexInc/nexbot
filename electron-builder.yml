@@ -1,4 +1,4 @@
-appId: com.nexbot.app
+appId: com.lunexinc.nexbot
 productName: NexBot
 artifactName: NexBot-${version}-${arch}.${ext}
 
@@ -6,11 +6,8 @@ directories:
   buildResources: build
   output: release
 
-# The app is three self-contained pieces, none needing node_modules at
-# runtime: the Electron main/preload (plain .mjs/.cjs), the built UI
-# (Vite → ui/), and the compiled harness server (tsc → server/), both
-# shipped in Resources and run on Electron's own Node via
-# ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
+# Three self-contained pieces, no node_modules at runtime:
+# Electron main/preload, Vite UI, compiled harness server.
 files:
   - electron/**
   - "!electron/resources/speech-helper"
@@ -24,8 +21,7 @@ extraResources:
     to: ui
   - from: dist-server
     to: server
-  - from: electron/resources/speech-helper
-    to: speech-helper
+  # macOS speech-helper is optional; package:mac copies it when built
 
 mac:
   target:
@@ -42,10 +38,39 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: NexBot uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: NexBot transcribes your voice on-device to type messages for you.
-  # Notarization runs manually after the build (notarytool + staple),
-  # mirroring the BlueyLite ship_release.sh flow.
   notarize: false
 
 dmg:
   sign: true
   artifactName: NexBot-${version}.dmg
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  # electron-builder accepts PNG and generates multi-size ICO
+  icon: build/icon-1024.png
+  artifactName: NexBot-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NexBot
+  uninstallDisplayName: NexBot
+
+portable:
+  artifactName: NexBot-Portable-${version}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Utility
+  icon: build/icon-1024.png

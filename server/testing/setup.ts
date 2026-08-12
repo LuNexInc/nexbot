@@ -12,5 +12,9 @@ process.env.HOME = home;
 process.env.USERPROFILE = home;
 
 afterAll(() => {
-  rmSync(home, { recursive: true, force: true });
+  try {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    // Windows can leave locks on temp dirs after named-pipe / child exits.
+  }
 });

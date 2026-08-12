@@ -8,8 +8,6 @@
 //   - Composio Connect (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
-import { spawn } from "node:child_process";
-import { execFile } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir } from "node:os";
@@ -18,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { DATA_DIR } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { execFileCli, spawnCli, stopChild } from "../cli-spawn.ts";
 
 import type {
   DriverCreateInput,
@@ -92,6 +91,9 @@ function askSummary(ask: Ask): string {
 
 function permissionSocketPath(threadId: string) {
   const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
+  // Windows: named pipes (AF_UNIX file sockets are flaky for MCP children).
+  // Unix: abstract-ish path under the data dir.
+  if (process.platform === "win32") return `\\\\.\\pipe\\nexbot-perm-${tag}`;
   return join(DATA_DIR, `perm-${tag}.sock`);
 }
 
@@ -103,9 +105,12 @@ function createPermissionBroker(opts: {
 }) {
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
   const pending = new Map<string, { ask: Ask; finish: (behavior: string, message: string | undefined, source: string) => void }>();
-  try {
-    unlinkSync(opts.socketPath);
-  } catch {}
+  // File sockets only — named pipes on Windows must not be unlinked as files.
+  if (!opts.socketPath.startsWith("\\\\.\\pipe\\")) {
+    try {
+      unlinkSync(opts.socketPath);
+    } catch {}
+  }
   const server = createNetServer((conn) => {
     conn.on("error", () => {});
     let buf = "";
@@ -165,9 +170,11 @@ function createPermissionBroker(opts: {
       try {
         server.close();
       } catch {}
-      try {
-        unlinkSync(opts.socketPath);
-      } catch {}
+      if (!opts.socketPath.startsWith("\\\\.\\pipe\\")) {
+        try {
+          unlinkSync(opts.socketPath);
+        } catch {}
+      }
     },
   };
 }
@@ -311,11 +318,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       delete env.CLAUDECODE;
       delete env.CLAUDE_CODE_ENTRYPOINT;
 
-      const child = spawn(config.cli, args, {
+      const child = spawnCli(config.cli, args, {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
-        detached: true, // own process group: killing -pid reaps child MCP servers
+        detached: true, // Unix process group; Windows uses taskkill /T via stopChild
       });
 
       let settled = false;
@@ -379,7 +386,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       };
 
       let buf = "";
-      child.stdout.on("data", (chunk) => {
+      child.stdout!.on("data", (chunk) => {
         buf += chunk;
         let nl;
         while ((nl = buf.indexOf("\n")) !== -1) {
@@ -390,7 +397,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       let stderr = "";
-      child.stderr.on("data", (c) => {
+      child.stderr!.on("data", (c) => {
         stderr += c;
         if (stderr.length > 8192) stderr = stderr.slice(-8192);
       });
@@ -411,22 +418,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       });
 
-      const stop = () => {
-        try {
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
-          try {
-            child.kill("SIGTERM");
-          } catch {}
-        }
-      };
+      const stop = () => stopChild(child);
       active.set(threadId, { stop, turnId, broker });
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
       // prompt over stdin as a stream-json message — never argv (ARG_MAX)
       const promptMsg = { type: "user", message: { role: "user", content: turn.text } };
-      child.stdin.write(JSON.stringify(promptMsg) + "\n");
-      child.stdin.end();
+      child.stdin!.write(JSON.stringify(promptMsg) + "\n");
+      child.stdin!.end();
       appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: promptMsg });
 
       return { turnId };
@@ -434,7 +433,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execFile(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
+        execFileCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
@@ -474,7 +473,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       },
       generateText: (prompt: string) =>
         new Promise((resolve, reject) => {
-          execFile(
+          execFileCli(
             config.cli,
             ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"],
             { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } },

@@ -64,43 +64,98 @@ export function Composer({ bot }: { bot: Bot }) {
     setText("");
   };
 
-  // native dictation: partials stream into the input while the Swift
-  // helper runs; the final transcript stays in the box, ready to edit/send
+  // Dictation: macOS uses the native Swift helper via preload; Windows/Linux
+  // (and browser) use Chromium Web Speech API.
   useEffect(() => {
     if (!recording) return;
-    const bridge = window.;
-    if (!bridge) {
-      setRecording(false);
-      return;
-    }
     setSpeechError(null);
-    const offTranscript = bridge.onSpeechTranscript((line) => {
-      if (typeof line.text === "string") {
-        const base = baseText.current;
-        setText(base ? `${base} ${line.text}` : line.text);
+    const bridge = window.;
+    let rec: {
+      start(): void;
+      stop(): void;
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      onresult: ((ev: { results: ArrayLike<{ 0?: { transcript?: string } }> }) => void) | null;
+      onerror: (() => void) | null;
+      onend: (() => void) | null;
+    } | null = null;
+    let offTranscript: (() => void) | undefined;
+    let offEnd: (() => void) | undefined;
+    let usedNative = false;
+
+    const applySpoken = (spoken: string) => {
+      const base = baseText.current;
+      setText(base ? `${base} ${spoken.trim()}` : spoken.trim());
+    };
+
+    const startWebSpeech = () => {
+      const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Ctor) {
+        setSpeechError("Voice input is not supported in this browser or OS.");
+        setRecording(false);
+        return;
       }
-    });
-    const offEnd = bridge.onSpeechEnd(({ code }) => {
-      setRecording(false);
-      if (code === 1) {
-        setSpeechError(
-          "Dictation needs Microphone + Speech Recognition access — System Settings → Privacy & Security.",
-        );
+      rec = new Ctor();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || "en-US";
+      rec.onresult = (ev) => {
+        let textOut = "";
+        for (let i = 0; i < ev.results.length; i++) {
+          textOut += ev.results[i][0]?.transcript ?? "";
+        }
+        applySpoken(textOut);
+      };
+      rec.onerror = () => {
+        setSpeechError("Microphone or speech recognition was blocked. Check OS privacy settings.");
+        setRecording(false);
+      };
+      rec.onend = () => setRecording(false);
+      try {
+        rec.start();
+      } catch {
+        setSpeechError("Could not start speech recognition.");
+        setRecording(false);
       }
-    });
-    void bridge.speechStart();
+    };
+
+    if (bridge?.speechNative) {
+      usedNative = true;
+      offTranscript = bridge.onSpeechTranscript((line) => {
+        if (typeof line.text === "string") applySpoken(line.text);
+      });
+      offEnd = bridge.onSpeechEnd(({ code }) => {
+        if (code === 2) {
+          // native unavailable — fall through to Web Speech
+          startWebSpeech();
+          return;
+        }
+        setRecording(false);
+        if (code === 1) {
+          setSpeechError(
+            "Dictation needs Microphone + Speech Recognition access — open Privacy settings.",
+          );
+        }
+      });
+      void bridge.speechStart();
+    } else {
+      startWebSpeech();
+    }
+
     return () => {
-      offTranscript();
-      offEnd();
-      void bridge.speechStop();
+      offTranscript?.();
+      offEnd?.();
+      if (usedNative) void bridge?.speechStop?.();
+      try {
+        rec?.stop();
+      } catch {
+        /* already stopped */
+      }
     };
   }, [recording]);
 
   const toggleMic = () => {
-    if (!window.) {
-      setSpeechError("Voice input needs the desktop app — run pnpm dev:desktop.");
-      return;
-    }
     baseText.current = text.trim();
     setRecording((r) => !r);
   };

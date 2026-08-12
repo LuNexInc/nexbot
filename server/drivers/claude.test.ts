@@ -3,10 +3,9 @@
 // stream-json protocol into canonical events, keep argv hygiene (prompt
 // over stdin, secrets stripped), and broker permission asks.
 //
-// Spawn-based tests are POSIX-only until Windows CLI spawning lands: the
-// fake CLI is a shebang script, which Windows cannot exec directly (the
-// same reason claude.cmd needs special handling — see the Windows PRs).
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+// Fake CLI is a Node script; on Windows we wrap it with a .cmd shim so
+// spawnCli can run it the same way as claude.cmd.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,10 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { fakeCliShim } from "../testing/fake-cli-shim.ts";
 import { ClaudeDriver } from "./claude.ts";
 
-const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
+const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
 describe("ClaudeDriver.decodeConfig", () => {
   it("defaults to the claude binary with acceptEdits", () => {
@@ -38,10 +37,11 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 });
 
-posixOnly("ClaudeDriver turns (fake CLI)", () => {
+describe("ClaudeDriver turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
+  let fakeCli: string;
 
   const create = async (mode?: string) => {
     if (mode) process.env.FAKE_CLAUDE_MODE = mode;
@@ -50,15 +50,15 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
       displayName: "Claude Test",
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+      config: { cli: fakeCli, permissionMode: "acceptEdits" },
     });
     recorder = recordEvents(instance.adapter);
   };
 
   beforeEach(() => {
     ensureDirs();
-    chmodSync(FAKE_CLI, 0o755);
     scratch = mkdtempSync(join(tmpdir(), "nexbot-claude-test-"));
+    fakeCli = fakeCliShim(FAKE_CLI_SCRIPT, scratch, "fake-claude");
   });
 
   afterEach(async () => {
@@ -187,9 +187,12 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "session.started");
 
     // connect as the MCP proxy would and raise an ask (same tag rule as
-    // permissionSocketPath in claude.ts)
+    // permissionSocketPath in claude.ts — named pipe on Windows)
     const tag = "t-perm-abc".replace(/[^\w-]/g, "").slice(0, 8);
-    const socketPath = join(DATA_DIR, `perm-${tag}.sock`);
+    const socketPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\nexbot-perm-${tag}`
+        : join(DATA_DIR, `perm-${tag}.sock`);
     const conn = connect(socketPath);
     const answered = new Promise<{ behavior: string }>((resolve) => {
       let buf = "";

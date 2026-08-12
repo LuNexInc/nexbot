@@ -10,7 +10,7 @@ Derived from [](https://github.com/-/) (MIT). See `NOTICE`.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Electron](https://img.shields.io/badge/Electron-macOS-2B2E3A?logo=electron&logoColor=9FEAF9)
+![Electron](https://img.shields.io/badge/Electron-Windows%20·%20macOS-2B2E3A?logo=electron&logoColor=9FEAF9)
 ![License](https://img.shields.io/badge/license-MIT-38d591)
 
 ## Why NexBot
@@ -28,11 +28,11 @@ pnpm install
 
 pnpm dev:server    # harness → 127.0.0.1:8799
 pnpm dev           # app → http://127.0.0.1:5199
-pnpm dev:desktop   # Electron shell (macOS)
+pnpm dev:desktop   # Electron shell (Windows or macOS)
 ```
 
 Requirements: **Node 24+**, **pnpm**, and at least one of [`claude`](https://claude.com/claude-code),
-[`codex`](https://github.com/openai/codex), or [`grok`](https://x.ai/cli).
+[`codex`](https://github.com/openai/codex), or [`grok`](https://x.ai/cli) on PATH.
 
 Optional keys (App Settings → gear): Composio Connect (`ck_…`), Composio API (`ak_…`),
 Box token ([box.ascii.dev](https://box.ascii.dev)).
@@ -40,17 +40,18 @@ Box token ([box.ascii.dev](https://box.ascii.dev)).
 ```sh
 pnpm typecheck
 pnpm test
-pnpm build
+pnpm package:win    # NSIS installer + portable .exe under release/
+pnpm package:mac    # macOS (on a Mac)
 ```
 
 ## Status
 
 | Area | Status |
 |------|--------|
-| Harness + Claude/Codex/Grok drivers | Upstream baseline, rebranded |
+| Harness + Claude/Codex/Grok drivers | Windows + Unix (`.cmd` spawn fixed) |
+| Windows Electron shell | 0.3.0 — NSIS + portable |
 | macOS Electron shell | Upstream baseline, rebranded |
-| Windows / Linux desktop | Not started (harness is portable Node) |
-| LuNex packaging / signed releases | Not started |
+| Local CUA (drive this PC) | macOS-first; Windows uses cloud Box or `CUA_DRIVER_PATH` |
 | Product analytics | Removed (no-op local stubs) |
 
 ## How it works

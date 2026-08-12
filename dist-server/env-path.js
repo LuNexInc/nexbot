@@ -1,14 +1,16 @@
 // PATH augmentation for GUI launches — the fix for "CLI not found" when
-// the app is opened from Finder (issues #8, #12).
+// the app is opened from Finder / Start menu / shortcut.
 //
 // A macOS app launched from Finder inherits a bare PATH
 // (/usr/bin:/bin:...): no ~/.local/bin (the claude installer default),
 // no /opt/homebrew/bin, and no nvm/volta/asdf shims — those only exist
-// in interactive shells. The terminal sees the CLIs; the packaged app
-// doesn't. So every spawn of an agent CLI goes through augmentedPath():
-// the inherited PATH, plus the well-known install locations that exist
-// on this machine, plus (async, best-effort) whatever PATH the user's
-// real login shell reports.
+// in interactive shells. Windows GUI apps usually inherit the user PATH,
+// but still miss npm global shims when the installer wrote them after
+// login, or when Local AppData npm is not on PATH.
+//
+// Every spawn of an agent CLI goes through augmentedPath(): inherited
+// PATH, well-known install locations, plus (Unix) a best-effort login
+// shell probe.
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,13 +29,13 @@ function nvmBinDirs() {
         return [];
     }
 }
-function knownDirs() {
+function knownDirsUnix() {
     const home = homedir();
     return [
-        join(home, ".local", "bin"), // claude installer default
-        join(home, ".claude", "local"), // claude "local install"
-        "/opt/homebrew/bin", // brew, Apple silicon
-        "/usr/local/bin", // brew Intel / classic installs
+        join(home, ".local", "bin"),
+        join(home, ".claude", "local"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
         join(home, ".volta", "bin"),
         join(home, ".bun", "bin"),
         join(home, ".asdf", "shims"),
@@ -42,22 +44,44 @@ function knownDirs() {
         ...nvmBinDirs(),
     ];
 }
+function knownDirsWin() {
+    const home = homedir();
+    const local = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+    const roaming = process.env.APPDATA || join(home, "AppData", "Roaming");
+    const pf = process.env.ProgramFiles || "C:\\Program Files";
+    const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    return [
+        join(roaming, "npm"), // npm global .cmd shims (claude.cmd, codex.cmd)
+        join(local, "npm"),
+        join(local, "Programs", "nodejs"),
+        join(pf, "nodejs"),
+        join(pf86, "nodejs"),
+        join(home, ".local", "bin"),
+        join(home, ".claude", "local"),
+        join(home, "AppData", "Roaming", "npm"),
+        join(home, ".volta", "bin"),
+        join(home, ".bun", "bin"),
+        join(home, ".deno", "bin"),
+        join(home, "bin"),
+        ...nvmBinDirs(),
+    ];
+}
+function knownDirs() {
+    return process.platform === "win32" ? knownDirsWin() : knownDirsUnix();
+}
 let cached = null;
 let probed = false;
 /** Current best PATH, synchronously. Cheap after the first call. */
 export function augmentedPath() {
     if (cached === null) {
+        const inherited = process.env.PATH || process.env.Path || "";
         cached = mergePaths([
             ...(process.env.NEXBOT_EXTRA_PATH ? process.env.NEXBOT_EXTRA_PATH.split(delimiter) : []),
-            ...(process.env.PATH ? process.env.PATH.split(delimiter) : []),
-            // GUI apps on Windows inherit the user PATH already; the unix
-            // install-dir scan and shell probe are the darwin/linux cure
-            ...(process.platform === "win32" ? [] : knownDirs().filter((d) => existsSync(d))),
+            ...inherited.split(delimiter),
+            ...knownDirs().filter((d) => existsSync(d)),
         ]);
     }
-    // belt-and-braces: fold in the login shell's PATH once, in the
-    // background — catches anything the known-dirs list doesn't (custom
-    // rc exports). Never blocks a spawn; the next one benefits.
+    // Unix: fold in the login shell's PATH once in the background.
     if (!probed && !process.env.VITEST && process.platform !== "win32") {
         probed = true;
         probeLoginShellPath();

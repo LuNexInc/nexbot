@@ -5,10 +5,13 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 export const DATA_DIR = join(homedir(), ".nexbot");
+/** Prior product data dirs ( / pre-rename). First existing wins. */
 const LEGACY_DATA_DIRS = [join(homedir(), "."), join(homedir(), ".opengrokbot")];
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
 export function ensureDirs() {
+    // one-time migration from upstream/pre-rename data dirs — bots, transcripts,
+    // config and keys all carry over
     if (!existsSync(DATA_DIR)) {
         for (const legacy of LEGACY_DATA_DIRS) {
             if (!existsSync(legacy))
@@ -18,6 +21,7 @@ export function ensureDirs() {
                 break;
             }
             catch {
+                /* cross-device or busy — try next or fall through to a fresh dir */
             }
         }
     }

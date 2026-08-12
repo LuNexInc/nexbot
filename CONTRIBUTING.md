@@ -16,11 +16,12 @@ pnpm install
 
 pnpm dev:server    # harness → 127.0.0.1:8799
 pnpm dev           # app → http://127.0.0.1:5199
-pnpm dev:desktop   # Electron (macOS desktop shell)
+pnpm dev:desktop   # Electron (Windows or macOS)
+pnpm package:win   # NSIS + portable under release/
 ```
 
 Requirements: **Node 24+**, **pnpm**, and at least one agent CLI (`claude`, `codex`, or `grok`)
-logged in. The packaged desktop shell is **macOS-first** today. Windows packaging is a later milestone.
+logged in. Packaged shells: Windows (`package:win`) and macOS (`package:mac`).
 
 Data lives in `~/.nexbot/` (bots, transcripts, per-thread NDJSON event logs, config with keys).
 

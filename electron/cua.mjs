@@ -1,18 +1,10 @@
 // CUA computer-use wiring for the Electron main process.
 //
-// Two modes, per cua-driver's EMBEDDING.md:
-//  - "embedded" (packaged app): spawn our own private daemon via
-//    EmbeddedCuaDriverHost so TCC grants attribute to NexBot and the
-//    driver inherits them. One prompt, named NexBot, out of the box.
-//  - "standalone" (dev): attach to an already-installed CuaDriver.app daemon
-//    (its own TCC identity, typically already granted on a dev machine).
+// macOS: EmbeddedCuaDriverHost or standalone CuaDriver.app (TCC attribution).
+// Windows/Linux: unavailable unless CUA_DRIVER_PATH points at a working binary
+// (local computer use is optional; cloud Box still works).
 //
-// Agents never talk to the daemon socket directly — they spawn the official
-// stdio MCP proxy: `cua-driver mcp [--embedded --socket <path>]`. The proxy
-// executes nothing; the host-owned daemon does.
-//
-// The resulting connection descriptor is written to
-// <userData>/cua-connection.json for the harness server to hand to drivers.
+// Connection descriptor → <userData>/cua-connection.json for the harness.
 
 import { app, ipcMain } from "electron";
 import { spawnSync } from "node:child_process";
@@ -20,23 +12,45 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-const INSTALLED_DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
-const STANDALONE_SOCKET = path.join(
+const HOST_BUNDLE_ID = "com.lunexinc.nexbot";
+
+const INSTALLED_DRIVER_MAC = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
+const STANDALONE_SOCKET_MAC = path.join(
   app.getPath("home"),
   "Library/Caches/cua-driver/cua-driver.sock",
 );
-const HOST_BUNDLE_ID = "com.nexbot.app";
 
-let embeddedHost = null; // EmbeddedCuaDriverHost | null
-let connection = null; // descriptor exposed to harness + renderer
+let embeddedHost = null;
+let connection = null;
+
+function writeConnection(conn) {
+  connection = conn;
+  try {
+    fs.writeFileSync(
+      path.join(app.getPath("userData"), "cua-connection.json"),
+      JSON.stringify(conn, null, 2),
+    );
+  } catch (e) {
+    console.error("[cua] write connection failed:", e);
+  }
+  return conn;
+}
 
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, "cua-driver");
-    if (fs.existsSync(bundled)) return bundled;
+    const names =
+      process.platform === "win32"
+        ? ["cua-driver.exe", "cua-driver"]
+        : ["cua-driver"];
+    for (const name of names) {
+      const bundled = path.join(process.resourcesPath, name);
+      if (fs.existsSync(bundled)) return bundled;
+    }
   }
-  if (fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
+  if (process.platform === "darwin" && fs.existsSync(INSTALLED_DRIVER_MAC)) {
+    return INSTALLED_DRIVER_MAC;
+  }
   return null;
 }
 
@@ -55,8 +69,6 @@ function socketAlive(sockPath) {
 }
 
 async function startEmbedded(binary) {
-  // Dynamic import: the SDK ships a native FFI lib; keep dev startup
-  // resilient if it fails to load on this machine.
   const { EmbeddedCuaDriverHost } = await import("@trycua/cua-driver/embedded");
   embeddedHost = new EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
   const conn = await embeddedHost.start();
@@ -70,46 +82,64 @@ async function startEmbedded(binary) {
 }
 
 export async function startCua() {
+  // Local CUA is macOS-first. On Windows, only an explicit binary path enables it.
+  if (process.platform !== "darwin" && !process.env.CUA_DRIVER_PATH && !app.isPackaged) {
+    return writeConnection({
+      mode: "unavailable",
+      reason: "local computer use (CUA) is macOS-first; set CUA_DRIVER_PATH or use a cloud computer",
+    });
+  }
+
   const binary = resolveDriverBinary();
   if (!binary) {
-    connection = { mode: "unavailable", reason: "cua-driver binary not found" };
-    return connection;
+    return writeConnection({
+      mode: "unavailable",
+      reason:
+        process.platform === "darwin"
+          ? "cua-driver binary not found"
+          : "local computer use unavailable on this platform (use cloud computer or set CUA_DRIVER_PATH)",
+    });
   }
 
   const wantEmbedded =
-    app.isPackaged || process.env.NEXBOT_CUA_EMBEDDED === "1";
+    app.isPackaged || process.env.NEXBOT_CUA_EMBEDDED === "1" || process.platform !== "darwin";
 
-  if (wantEmbedded) {
+  if (wantEmbedded && process.platform === "darwin") {
     try {
-      connection = await startEmbedded(binary);
+      return writeConnection(await startEmbedded(binary));
     } catch (err) {
-      connection = {
+      return writeConnection({
         mode: "unavailable",
         reason: `embedded host failed: ${err?.message ?? err}`,
-      };
+      });
     }
-  } else if (await socketAlive(STANDALONE_SOCKET)) {
-    // Dev machine with CuaDriver.app's daemon already running.
-    connection = {
+  }
+
+  if (process.platform === "darwin" && (await socketAlive(STANDALONE_SOCKET_MAC))) {
+    return writeConnection({
       mode: "standalone",
-      socketPath: STANDALONE_SOCKET,
+      socketPath: STANDALONE_SOCKET_MAC,
       mcpCommand: binary,
       mcpArgs: ["mcp"],
       mcpEnv: {},
-    };
-  } else {
-    connection = {
-      mode: "unavailable",
-      reason:
-        "no running cua-driver daemon; run `cua-driver serve` or grant via `cua-driver permissions grant`",
-    };
+    });
   }
 
-  fs.writeFileSync(
-    path.join(app.getPath("userData"), "cua-connection.json"),
-    JSON.stringify(connection, null, 2),
-  );
-  return connection;
+  // Non-macOS with an explicit binary: expose MCP spawn contract without embedded host.
+  if (process.platform !== "darwin" && binary) {
+    return writeConnection({
+      mode: "external",
+      mcpCommand: binary,
+      mcpArgs: ["mcp"],
+      mcpEnv: {},
+    });
+  }
+
+  return writeConnection({
+    mode: "unavailable",
+    reason:
+      "no running cua-driver daemon; run `cua-driver serve` or grant via `cua-driver permissions grant`",
+  });
 }
 
 export function cuaPermissionsStatus() {
@@ -118,6 +148,7 @@ export function cuaPermissionsStatus() {
   const out = spawnSync(binary, ["permissions", "status", "--json"], {
     encoding: "utf8",
     timeout: 5000,
+    windowsHide: true,
   });
   try {
     return { available: true, ...JSON.parse(out.stdout) };
@@ -132,7 +163,7 @@ export async function stopCua() {
       await embeddedHost.stop();
       embeddedHost.uniffiDestroy?.();
     } catch {
-      // daemon holds a parent-liveness pipe; host death closes it anyway
+      /* host death closes the daemon */
     }
     embeddedHost = null;
   }

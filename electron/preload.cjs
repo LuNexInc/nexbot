@@ -3,7 +3,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("", {
-  /** One frame of this Mac's screen as a data: URL (Screen Recording TCC). */
+  platform: process.platform,
+  /** True when the Swift SFSpeech helper is used (macOS). Else Web Speech. */
+  speechNative: process.platform === "darwin",
+  /** One frame of the local screen as a data: URL. */
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
   speechStart: () => ipcRenderer.invoke("speech:start"),
   speechStop: () => ipcRenderer.invoke("speech:stop"),
@@ -17,12 +20,7 @@ contextBridge.exposeInMainWorld("", {
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
-  /** {mic} TCC status strings: granted|denied|not-determined|unknown.
-   * No screen field — macOS 15+ caches that status per-process, so any
-   * value here would lie for the whole session after a grant. */
   permStatus: () => ipcRenderer.invoke("perm:status"),
-  /** Triggers the macOS microphone prompt; resolves true when granted. */
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
-  /** Opens System Settings on the given privacy pane: mic|screen|speech. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
 });

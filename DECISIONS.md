@@ -29,3 +29,15 @@
 - **Choice:** No Windows Electron port and no signed releases in M1.
 - **Why:** Long task; ship identity + source tree first.
 - **Next milestones (not approved until asked):** Windows harness verify; desktop shell; publish-targets; installer.
+- **Superseded by:** 2026-08-12 Windows end-to-end port (below).
+
+## 2026-08-12 — Windows end-to-end port (0.3.0)
+
+- **Choice:** Full Windows support for harness, Electron shell, NSIS + portable packages.
+- **How:**
+  - `server/cli-spawn.ts` resolves `claude.cmd` / kills process trees via `taskkill /T`
+  - Permission broker uses named pipes on Windows (`\\.\pipe\nexbot-perm-*`)
+  - Electron title-bar overlay, single-instance, ms-settings privacy links
+  - Dictation: Web Speech API on Windows; Swift helper remains macOS
+  - Local CUA still macOS-first (cloud Box computers work on Windows)
+- **Reverse if:** Named pipes break under a specific Windows SKU; fall back to TCP localhost with a token.

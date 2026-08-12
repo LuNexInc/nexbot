@@ -5,20 +5,20 @@ import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const IS_MAC = process.platform === "darwin";
+const IS_WIN = process.platform === "win32";
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
-// Packaged: the harness server ships in Resources (compiled JS, zero deps)
+// Packaged: the harness server ships in resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
 // UI too, so the window talks to one origin and there is no dev proxy.
-// A stray server on the default port must not brick the app — fall back to
-// alternate ports until one binds AND identifies as ours (the probe checks
-// our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const proc = utilityProcess.fork(entry, [], {
@@ -26,6 +26,7 @@ async function startServerOn(port) {
       ...process.env,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
+      NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
     },
     stdio: "inherit",
   });
@@ -33,10 +34,6 @@ async function startServerOn(port) {
   proc.once("exit", () => {
     exited = true;
   });
-  // wait for the port to answer (fresh machine: first boot writes data dirs).
-  // Identity check is by PID: a dev harness server has the same API shape,
-  // so only the child we actually forked (matching pid + static serving)
-  // counts as ours.
   for (let i = 0; i < 40; i++) {
     if (exited) return null;
     try {
@@ -44,7 +41,7 @@ async function startServerOn(port) {
       if (res.ok) {
         const body = await res.json().catch(() => null);
         if (body?.app === "nexbot" && body.pid === proc.pid && body.static) return proc;
-        break; // someone else owns this port — try the next one
+        break;
       }
     } catch {
       /* not up yet */
@@ -58,8 +55,6 @@ async function startServerOn(port) {
 }
 
 async function startServerPackaged() {
-  // two passes: a quit-and-reopen relaunch can race the dying instance's
-  // server during teardown — one settle-and-retry covers it
   for (let attempt = 0; attempt < 2; attempt++) {
     for (const port of [8799, 18799, 28799]) {
       const proc = await startServerOn(port);
@@ -77,8 +72,14 @@ async function startServerPackaged() {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen NexBot — if it keeps happening, restart your Mac.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px system-ui,Segoe UI,sans-serif"><div style="text-align:center;max-width:360px"><div style="font-size:40px">⚡</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen NexBot — if it keeps happening, restart your computer.</p></div></body>`,
   );
+
+// Single instance — second launch focuses the first window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -88,13 +89,33 @@ function createWindow() {
     minHeight: 600,
     icon: APP_ICON,
     backgroundColor: "#070707",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
+    show: false,
+    ...(IS_MAC
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+      : IS_WIN
+        ? {
+            // Frameless chrome with Windows caption buttons over dark UI
+            titleBarStyle: "hidden",
+            titleBarOverlay: {
+              color: "#070707",
+              symbolColor: "#fcfcfc",
+              height: 36,
+            },
+          }
+        : {
+            // Linux and other: standard frame
+            autoHideMenuBar: true,
+          }),
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
+
+  win.once("ready-to-show", () => win.show());
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -108,8 +129,7 @@ function createWindow() {
   }
 }
 
-// "This Mac" screen preview — served from the main process so the Screen
-// Recording permission prompt attributes to the app, never the server
+// Screen preview — desktopCapturer works on Windows, macOS, and Linux.
 ipcMain.handle("screen:frame", async () => {
   const sources = await desktopCapturer.getSources({
     types: ["screen"],
@@ -118,42 +138,47 @@ ipcMain.handle("screen:frame", async () => {
   return sources[0]?.thumbnail.toDataURL() ?? null;
 });
 
-// Onboarding permission checks. Status reads are free; the mic request
-// pops the real TCC prompt attributed to the app.
-//
-// Screen Recording deliberately has NO request path here. On macOS 15+
-// every pre-grant mechanism is broken: getMediaAccessStatus("screen")
-// wraps CGPreflightScreenCaptureAccess, which caches per-process (stays
-// "denied" for the whole session after the user grants); a helper child
-// binary gets TCC-attributed to ITSELF on macOS 26, not the app, and
-// plain executables no longer appear in the Settings pane at all; and
-// Sequoia+ re-prompts periodically regardless, so a pre-grant expires.
-// The one reliable path is the first real in-process capture
-// (screen:frame above / getDisplayMedia via the handler below) — macOS
-// prompts then, attributed correctly, at the moment of actual use. The
-// perm:open-settings deep link stays as the repair path for denials.
-ipcMain.handle("perm:status", () => ({
-  mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
-}));
-ipcMain.handle("perm:request-mic", async () => {
-  try {
-    return await systemPreferences.askForMediaAccess("microphone");
-  } catch {
-    return false;
-  }
+ipcMain.handle("perm:status", () => {
+  const mic =
+    typeof systemPreferences.getMediaAccessStatus === "function"
+      ? systemPreferences.getMediaAccessStatus("microphone")
+      : "unknown";
+  return { mic };
 });
 
-// macOS never re-prompts a denied permission — the only path is System
-// Settings; deep-link straight to the right privacy pane.
+ipcMain.handle("perm:request-mic", async () => {
+  if (typeof systemPreferences.askForMediaAccess === "function") {
+    try {
+      return await systemPreferences.askForMediaAccess("microphone");
+    } catch {
+      return false;
+    }
+  }
+  // Windows/Linux: first capture / Web Speech prompts via the OS.
+  return true;
+});
+
 ipcMain.handle("perm:open-settings", (_event, pane) => {
-  const panes = {
-    mic: "Privacy_Microphone",
-    screen: "Privacy_ScreenCapture",
-    speech: "Privacy_SpeechRecognition",
-  };
-  return shell.openExternal(
-    `x-apple.systempreferences:com.apple.preference.security?${panes[pane] ?? "Privacy"}`,
-  );
+  if (IS_MAC) {
+    const panes = {
+      mic: "Privacy_Microphone",
+      screen: "Privacy_ScreenCapture",
+      speech: "Privacy_SpeechRecognition",
+    };
+    return shell.openExternal(
+      `x-apple.systempreferences:com.apple.preference.security?${panes[pane] ?? "Privacy"}`,
+    );
+  }
+  if (IS_WIN) {
+    // Windows 10/11 privacy deep links
+    const urls = {
+      mic: "ms-settings:privacy-microphone",
+      screen: "ms-settings:privacy-webcam",
+      speech: "ms-settings:privacy-speech",
+    };
+    return shell.openExternal(urls[pane] ?? "ms-settings:privacy");
+  }
+  return shell.openExternal("about:blank");
 });
 
 ipcMain.handle("speech:start", (event) => {
@@ -162,12 +187,11 @@ ipcMain.handle("speech:start", (event) => {
 });
 ipcMain.handle("speech:stop", () => stopSpeech());
 
+ipcMain.handle("app:platform", () => process.platform);
+
 app.whenReady().then(async () => {
-  if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
-  // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
-  // inside the app's own processes — the one capture path macOS reliably
-  // attributes to the app (registers it in the Screen Recording pane and
-  // prompts). Used by the onboarding "Enable screen preview" button.
+  if (IS_MAC) app.dock.setIcon(APP_ICON);
+
   session.defaultSession.setDisplayMediaRequestHandler(
     (_request, callback) => {
       desktopCapturer
@@ -177,24 +201,30 @@ app.whenReady().then(async () => {
     },
     { useSystemPicker: false },
   );
+
   registerCuaIpc();
-  // Start the CUA daemon before the window so the harness can pick up the
-  // connection descriptor on first render. Never blocks window creation on
-  // failure — computer use degrades to "unavailable", the rest still works.
+  // CUA is macOS-primary today; Windows degrades to unavailable without a binary.
   startCua().catch((e) => console.error("[cua] start failed:", e));
+
   if (app.isPackaged) serverReady = await startServerPackaged();
   createWindow();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+app.on("second-instance", () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
 });
 
-// EMBEDDING.md lifecycle rule: defer the first quit until the embedded
-// daemon's async cleanup completes — it can't run after the host exits.
+app.on("window-all-closed", () => {
+  if (!IS_MAC) app.quit();
+});
+
 let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;

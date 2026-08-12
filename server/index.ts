@@ -263,14 +263,40 @@ function stopScreenPoller(botId: string): Frame | null {
   return entry.last;
 }
 
-// Local computer-use contract written by Electron main on startup
-// (~/Library/Application Support/NexBot/cua-connection.json). Read
-// fresh each turn — Electron may restart or permissions may change.
+// Local computer-use contract written by Electron main on startup.
+// Electron userData:
+//   macOS:  ~/Library/Application Support/<name>/
+//   Windows: %APPDATA%\<name>\
+//   Linux:  ~/.config/<name>/
+// Read fresh each turn — Electron may restart or permissions may change.
 function readCuaConnection(): { command: string; args: string[]; env: Record<string, string> } | null {
-  // new name first; pre-rename desktop builds used the old directory
-  for (const dir of ["NexBot", "nexbot", "NexBot", "nexbot"]) {
+  if (process.env.NEXBOT_CUA_CONNECTION) {
     try {
-      const p = join(homedir(), "Library", "Application Support", dir, "cua-connection.json");
+      const conn = JSON.parse(readFileSync(process.env.NEXBOT_CUA_CONNECTION, "utf8"));
+      if (conn && conn.mode !== "unavailable" && conn.mcpCommand) {
+        return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const names = ["NexBot", "nexbot", "", ""];
+  const roots: string[] = [];
+  if (process.env.APPDATA) {
+    for (const n of names) roots.push(join(process.env.APPDATA, n));
+  }
+  if (process.env.LOCALAPPDATA) {
+    for (const n of names) roots.push(join(process.env.LOCALAPPDATA, n));
+  }
+  for (const n of names) {
+    roots.push(join(homedir(), "Library", "Application Support", n));
+    roots.push(join(homedir(), ".config", n));
+  }
+
+  for (const root of roots) {
+    try {
+      const p = join(root, "cua-connection.json");
       const conn = JSON.parse(readFileSync(p, "utf8"));
       if (!conn || conn.mode === "unavailable" || !conn.mcpCommand) continue;
       return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };

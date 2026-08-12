@@ -1,7 +1,8 @@
-// Speech helper lifecycle, main-process side. The Swift helper is spawned
-// from HERE (never the harness server) so the Microphone + Speech
-// Recognition permission prompts attribute to the app. Compiled lazily on
-// first use; each recording session is one helper process.
+// Speech helper lifecycle, main-process side.
+//
+// macOS: Swift SFSpeechRecognizer helper (Microphone + Speech Recognition TCC).
+// Windows / Linux: no native helper — renderer uses the Chromium Web Speech
+// API (Composer falls back when speech:native is false).
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
@@ -10,25 +11,42 @@ import { app } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(__dirname, "resources", "speech-helper.swift");
-// packaged: the helper ships pre-built + signed in Resources (a signed app
-// bundle must never be written into — lazy compile would break the seal)
 const BIN = app.isPackaged
   ? path.join(process.resourcesPath, "speech-helper")
   : path.join(__dirname, "resources", "speech-helper");
 
 let child = null;
 
+export function speechNativeAvailable() {
+  return process.platform === "darwin" && (app.isPackaged ? existsSync(BIN) : existsSync(SRC) || existsSync(BIN));
+}
+
 function ensureBuilt() {
-  if (app.isPackaged) return; // pre-built at package time
-  const stale = !existsSync(BIN) || statSync(BIN).mtimeMs < statSync(SRC).mtimeMs;
+  if (app.isPackaged) return;
+  if (process.platform !== "darwin") return;
+  const stale = !existsSync(BIN) || (existsSync(SRC) && statSync(BIN).mtimeMs < statSync(SRC).mtimeMs);
   if (!stale) return;
-  // Xcode CLT required; ~2s once, then cached until the source changes
   execFileSync("swiftc", ["-O", SRC, "-o", BIN], { stdio: "pipe", timeout: 120_000 });
 }
 
 export function startSpeech(win) {
   stopSpeech();
-  ensureBuilt();
+  if (process.platform !== "darwin") {
+    // Signal renderer to use Web Speech (code 2 = use-web-speech).
+    if (!win.isDestroyed()) win.webContents.send("speech:end", { code: 2 });
+    return;
+  }
+  try {
+    ensureBuilt();
+  } catch (e) {
+    console.error("[speech] build failed:", e);
+    if (!win.isDestroyed()) win.webContents.send("speech:end", { code: 1 });
+    return;
+  }
+  if (!existsSync(BIN)) {
+    if (!win.isDestroyed()) win.webContents.send("speech:end", { code: 1 });
+    return;
+  }
   const proc = spawn(BIN, [], { stdio: ["ignore", "pipe", "pipe"] });
   child = proc;
 
@@ -43,7 +61,7 @@ export function startSpeech(win) {
       try {
         if (!win.isDestroyed()) win.webContents.send("speech:transcript", JSON.parse(line));
       } catch {
-        /* non-JSON noise on stdout — ignore */
+        /* non-JSON noise */
       }
     }
   });

@@ -4,6 +4,9 @@ export {};
 declare global {
   interface Window {
     ?: {
+      platform?: string;
+      /** True on macOS when the native speech helper is used. */
+      speechNative?: boolean;
       screenFrame(): Promise<string | null>;
       speechStart(): Promise<void>;
       speechStop(): Promise<void>;
@@ -11,14 +14,20 @@ declare global {
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null }) => void): () => void;
-      /** {mic} TCC status: granted|denied|not-determined|unknown. Screen
-       * status is deliberately absent — macOS 15+ caches it per-process,
-       * so it lies for the whole session after a grant. */
       permStatus(): Promise<{ mic: string }>;
-      /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
-      /** Opens System Settings on a privacy pane: mic|screen|speech. */
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
     };
+    webkitSpeechRecognition?: new () => {
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      start(): void;
+      stop(): void;
+      onresult: ((ev: { results: ArrayLike<{ 0?: { transcript?: string } }> }) => void) | null;
+      onerror: (() => void) | null;
+      onend: (() => void) | null;
+    };
+    SpeechRecognition?: Window["webkitSpeechRecognition"];
   }
 }
