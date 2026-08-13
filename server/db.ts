@@ -190,3 +190,19 @@ export function importJsonIfNeeded(): { bots: number; messages: number; routines
 }
 
 export function dbExists(): boolean { return existsSync(dbFile()); }
+
+export function integrityCheck(): string {
+  const row = openStoreDb().prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
+  return String(row?.integrity_check ?? "unknown");
+}
+
+export type WalCheckpoint = { busy: number; log: number; checkpointed: number };
+
+export function walCheckpoint(): WalCheckpoint {
+  const row = openStoreDb().prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as WalCheckpoint | undefined;
+  return {
+    busy: Number(row?.busy ?? 0),
+    log: Number(row?.log ?? 0),
+    checkpointed: Number(row?.checkpointed ?? 0),
+  };
+}

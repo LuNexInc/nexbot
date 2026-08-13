@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { closeStoreDb, dbExists, importJsonIfNeeded, openStoreDb, searchMessages } from "./db.ts";
+import { closeStoreDb, dbExists, importJsonIfNeeded, integrityCheck, openStoreDb, searchMessages, walCheckpoint } from "./db.ts";
 import { Store } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { rmSync } from "node:fs";
@@ -20,6 +20,8 @@ describe("sqlite import + search", () => {
     const db = openStoreDb();
     const mode = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
     expect(String(mode.journal_mode).toLowerCase()).toBe("wal");
+    const fts = db.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get("messages_fts") as { sql: string };
+    expect(String(fts.sql).toLowerCase()).toContain("unicode61");
     expect(dbExists()).toBe(true);
   });
 
@@ -47,5 +49,11 @@ describe("sqlite import + search", () => {
     const hits = searchMessages("cafe");
     expect(hits.some((h) => h.text.includes("cafe"))).toBe(true);
     expect(searchMessages("xyzzy-no-such")).toEqual([]);
+  });
+  it("integrity_check is ok and WAL checkpoint runs", () => {
+    openStoreDb();
+    expect(integrityCheck()).toBe("ok");
+    const ck = walCheckpoint();
+    expect(ck.busy).toBe(0);
   });
 });

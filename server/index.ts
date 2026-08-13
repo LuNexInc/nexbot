@@ -159,6 +159,7 @@ const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 store.ensureTeamSeeds();
+sessionDeathSettlement(store);
 const watchdog = createWatchdog({ stuckMs: 90_000 });
 let steerToken = loadSteerToken();
 /** botId → group thread that started this turn (shared transcript). */
@@ -1275,7 +1276,6 @@ function recoverAfterBoot() {
   runDueRoutines();
 }
 
-sessionDeathSettlement(store);
 
 const BIND = process.env.NEXBOT_BIND || "127.0.0.1";
 server.on("error", (err: NodeJS.ErrnoException) => {

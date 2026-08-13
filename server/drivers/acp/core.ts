@@ -28,7 +28,8 @@ import { newEventId, newId } from "../../contracts.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { execFileCli, spawnCli, stopChild } from "../../cli-spawn.ts";
 import { appendNative } from "../native.ts";
-import { isForbiddenSecretAccess, scrubAgentChildEnv } from "../../environ-guard.ts";
+import { scrubAgentChildEnv } from "../../environ-guard.ts";
+import { preToolHook } from "../../tool-hooks.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -232,19 +233,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
           const toolCall = params.toolCall ?? {};
           const raw = toolCall.rawInput ?? {};
-          if (
-            isForbiddenSecretAccess({
-              path: raw.path ?? raw.file ?? raw.filePath ?? raw.target,
-              command: raw.command ?? raw.cmd,
-              title: toolCall.title,
-              raw,
-            })
-          ) {
+          const hook = preToolHook({
+            name: String(toolCall.title ?? toolCall.kind ?? "tool"),
+            path: raw.path ?? raw.file ?? raw.filePath ?? raw.target,
+            command: raw.command ?? raw.cmd,
+            title: toolCall.title,
+            raw,
+          });
+          if (!hook.allow) {
             const reject = optionFor("reject");
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: "NexBot: blocked a request to read process environment secrets",
+              message: "NexBot: " + (hook.reason ?? "blocked a request to read process environment secrets"),
             });
             return send({
               jsonrpc: "2.0",
