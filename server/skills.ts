@@ -1,7 +1,7 @@
 // Local SKILL.md files. agentskills.io minimum: name + description.
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
 
@@ -46,7 +46,8 @@ export function slugify(name: string): string {
 }
 
 export function parseSkillMarkdown(raw: string, path: string, source: SkillRecord["source"]): SkillRecord {
-  const slug = basename(path, ".md");
+  let slug = basename(path, ".md");
+  if (slug.toLowerCase() === "skill") slug = basename(dirname(path));
   let name = slug;
   let description = "";
   let body = raw;
@@ -149,14 +150,9 @@ function walkMd(dir: string, out: string[], depth = 0) {
 export function listSkills(): SkillRecord[] {
   const paths: Array<{ path: string; source: SkillRecord["source"] }> = [];
   mkdirSync(SKILLS_DIR, { recursive: true });
-  walkMd(SKILLS_DIR, [] as string[]);
-  try {
-    for (const name of readdirSync(SKILLS_DIR)) {
-      if (name.toLowerCase().endsWith(".md")) paths.push({ path: join(SKILLS_DIR, name), source: "nexbot" });
-    }
-  } catch {
-    /* empty */
-  }
+  const nexbotFiles: string[] = [];
+  walkMd(SKILLS_DIR, nexbotFiles);
+  for (const p of nexbotFiles) paths.push({ path: p, source: "nexbot" });
   const claude = join(homedir(), ".claude", "skills");
   const claudeFiles: string[] = [];
   walkMd(claude, claudeFiles);
@@ -181,18 +177,28 @@ export function saveSkill(input: { name: string; description: string; fields?: P
   const description = input.description.trim();
   if (!name || !description) throw Object.assign(new Error("name and description required"), { status: 400 });
   const slug = slugify(input.slug || name);
-  mkdirSync(SKILLS_DIR, { recursive: true });
-  const path = join(SKILLS_DIR, `${slug}.md`);
+  const dir = join(SKILLS_DIR, slug);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "SKILL.md");
   const fields: SkillFields = { ...EMPTY_FIELDS, ...input.fields };
   writeFileSync(path, renderSkillMarkdown({ name, description, fields }));
   return parseSkillMarkdown(readFileSync(path, "utf8"), path, "nexbot");
 }
 
 export function deleteSkill(slug: string): boolean {
-  const path = join(SKILLS_DIR, `${slugify(slug)}.md`);
-  if (!existsSync(path)) return false;
-  unlinkSync(path);
-  return true;
+  const safe = slugify(slug);
+  const flat = join(SKILLS_DIR, `${safe}.md`);
+  const nested = join(SKILLS_DIR, safe, "SKILL.md");
+  let gone = false;
+  if (existsSync(flat)) {
+    unlinkSync(flat);
+    gone = true;
+  }
+  if (existsSync(nested)) {
+    unlinkSync(nested);
+    gone = true;
+  }
+  return gone;
 }
 
 export function skillFromTurn(input: {
@@ -219,6 +225,25 @@ export function skillFromTurn(input: {
       approval: "Ask before sending mail, spending money, or deleting files.",
     },
   };
+}
+
+
+/** Distill a SKILL.md under ~/.nexbot/skills/<slug>/ from a multi-tool success turn. */
+export const autoDistillFromTurn = distillSkillFromTurn;
+export function distillSkillFromTurn(input: {
+  name?: string;
+  userText: string;
+  assistantText: string;
+  toolNames: string[];
+}): SkillRecord | null {
+  const tools = input.toolNames.filter((n) => n && !n.startsWith("error:"));
+  if (tools.length < 2) return null;
+  const draft = skillFromTurn({ ...input, toolNames: tools });
+  const slug = slugify(draft.name);
+  mkdirSync(join(SKILLS_DIR, slug), { recursive: true });
+  const path = join(SKILLS_DIR, slug, "SKILL.md");
+  if (!existsSync(path)) writeFileSync(path, renderSkillMarkdown(draft));
+  return parseSkillMarkdown(readFileSync(path, "utf8"), path, "nexbot");
 }
 
 /** null/missing = every valid desk skill; string[] = only those slugs. */

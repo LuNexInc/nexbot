@@ -1,8 +1,9 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
-import { deleteSkill, listSkills, parseSkillMarkdown, saveSkill, skillFromTurn, skillsPrompt, slugify } from "./skills.ts";
+import { autoDistillFromTurn, deleteSkill, listSkills, parseSkillMarkdown, saveSkill, skillFromTurn, skillsPrompt, slugify } from "./skills.ts";
 
 describe("skills", () => {
   beforeEach(() => {
@@ -51,5 +52,20 @@ describe("skills", () => {
     expect(only).toContain("Alpha");
     expect(only).not.toContain("Beta");
     expect(skillsPrompt([])).toBe("");
+  });
+
+  it("auto-distills multi-tool success turns into skills/<slug>/SKILL.md", () => {
+    expect(autoDistillFromTurn({ userText: "hi", assistantText: "ok", toolNames: ["read"] })).toBeNull();
+    const rec = autoDistillFromTurn({
+      userText: "File the invoices",
+      assistantText: "Filed three PDFs in out/",
+      toolNames: ["read", "write"],
+    });
+    expect(rec?.valid).toBe(true);
+    expect(rec?.slug).toBe("file-the-invoices");
+    expect(rec?.path.replaceAll("\\", "/")).toMatch(/skills\/file-the-invoices\/SKILL.md$/);
+    expect(existsSync(join(DATA_DIR, "skills", "file-the-invoices", "SKILL.md"))).toBe(true);
+    expect(listSkills().some((x) => x.slug === "file-the-invoices")).toBe(true);
+    expect(deleteSkill("file-the-invoices")).toBe(true);
   });
 });

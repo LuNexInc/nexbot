@@ -17,7 +17,6 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory, inboxPath, MEMORY_FILE_MAX, memoryDir, memoryPrompt, readLog, readProfile, writeInboxFile, writeLog, writeProfile } from "./desk.ts";
-import { isForbiddenSecretAccess } from "./environ-guard.ts";
 import { json, readBody, serveStatic, portBusyHint } from "./http-util.ts";
 import { searchMessages } from "./db.ts";
 import { forgetTurn, rememberTurn } from "./pending.ts";
@@ -40,7 +39,9 @@ import { detectCapabilities } from "./capabilities.ts";
 import { clipForTurn, handoffThreadIds, mentionedBots, Store, type Message } from "./store.ts";
 import { roleByTitle, SLEEP_WARNING, withRolePrompt, isForbiddenFightAsk } from "./roles.ts";
 import { applyTodoTool, listTodos, onTodosChange } from "./todo.ts";
-import { deleteSkill, listSkills, saveSkill, skillFromTurn, skillsPrompt } from "./skills.ts";
+import { enqueueMemoryJob } from "./memory-worker.ts";
+import { autoDistillFromTurn, deleteSkill, listSkills, saveSkill, skillFromTurn, skillsPrompt } from "./skills.ts";
+import { onToolError, postToolHook, preToolHook } from "./tool-hooks.ts";
 import { checkSteerToken, loadSteerToken, rotateSteerToken, tokenFromRequest } from "./steer.ts";
 import { createNonceCache } from "./nonce.ts";
 import { createWatchdog, isComputerToolName } from "./watchdog.ts";
@@ -189,6 +190,7 @@ const screens = createScreenPoller({
 // and every client view are projections of it.
 const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
+const turnTools = new Map<string, { names: string[]; okNames: string[] }>();
 
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
@@ -239,20 +241,29 @@ bus.subscribe((event: RuntimeEvent) => {
         }
       } else if (event.itemType === "tool" && event.itemId) {
         const messageId = toolMessageByItem.get(event.itemId);
+        const existingName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
+        if (event.ok === false) onToolError({ name: existingName, title: existingName });
+        else postToolHook({ name: existingName, title: existingName });
+        const tools = turnTools.get(bot.id);
+        if (tools && event.ok !== false) tools.okNames.push(existingName);
         if (messageId) {
           const patched = store.patchMessage(event.threadId, messageId, {
-            tool: { name: store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool", ok: event.ok },
+            tool: { name: existingName, ok: event.ok },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(event.itemId);
         }
-        // the bot just finished acting — refresh its screen preview now
         screens.poke(bot.id);
       }
       break;
     case "item.started": {
       if (event.itemType === "tool") {
-        const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
+        const name = event.title ?? "tool";
+        const hook = preToolHook({ name, title: name });
+        const row = turnTools.get(bot.id) ?? { names: [], okNames: [] };
+        row.names.push(name);
+        turnTools.set(bot.id, row);
+        const message = pushMessage({ role: "bot", kind: "activity", tool: { name: hook.allow ? name : `blocked: ${name}`, ok: hook.allow ? undefined : false } });
         if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
       }
       break;
@@ -293,6 +304,7 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     }
     case "runtime.error":
+      onToolError({ name: "runtime.error", title: event.message });
       pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
       break;
     case "turn.completed": {
@@ -303,8 +315,34 @@ bus.subscribe((event: RuntimeEvent) => {
         pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
       }
       store.patchBot(bot.id, { busy: false, unread: true, ...(meta?.ttfrMs !== undefined ? { lastTtfrMs: meta.ttfrMs } : {}) });
+      const used = turnTools.get(bot.id);
+      turnTools.delete(bot.id);
+      if (used && used.okNames.length >= 2) {
+        const msgs = store.messagesFor(bot.threadId);
+        const userText = [...msgs].reverse().find((m) => m.role === "user" && m.kind === "text")?.text ?? "";
+        const assistantText = [...msgs].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "";
+        autoDistillFromTurn({ userText, assistantText, toolNames: used.okNames });
+      }
+      if (bot.memoryEnabled) enqueueMemoryJob(bot.id);
       turnGroup.delete(bot.id);
       forgetTurn(bot.id);
+      if (bot.memoryEnabled) {
+        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
+        enqueueMemoryJob(bot.id, last?.text);
+      }
+      try {
+        const msgs = store.messagesFor(bot.threadId);
+        let lastUser = 0;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
+        }
+        const slice = msgs.slice(lastUser);
+        distillSkillFromTurn({
+          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
+          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
+          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
+        });
+      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       if (bot.notifications !== false) {
         broadcast({ kind: "notify", botId: bot.id, title: bot.name, body: `${bot.name} finished.` });
@@ -484,6 +522,23 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       watchdog.end(bot.id);
       turnGroup.delete(bot.id);
       forgetTurn(bot.id);
+      if (bot.memoryEnabled) {
+        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
+        enqueueMemoryJob(bot.id, last?.text);
+      }
+      try {
+        const msgs = store.messagesFor(bot.threadId);
+        let lastUser = 0;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
+        }
+        const slice = msgs.slice(lastUser);
+        distillSkillFromTurn({
+          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
+          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
+          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
+        });
+      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
     }
   })();
@@ -782,6 +837,23 @@ const server = createServer(async (req, res) => {
       turnGroup.delete(bot.id);
       store.patchBot(bot.id, { busy: false });
       forgetTurn(bot.id);
+      if (bot.memoryEnabled) {
+        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
+        enqueueMemoryJob(bot.id, last?.text);
+      }
+      try {
+        const msgs = store.messagesFor(bot.threadId);
+        let lastUser = 0;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
+        }
+        const slice = msgs.slice(lastUser);
+        distillSkillFromTurn({
+          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
+          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
+          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
+        });
+      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       return json(res, 200, { ok: true });
     }
@@ -1133,8 +1205,9 @@ const server = createServer(async (req, res) => {
         case "exec": {
           const body = await readBody(req);
           const command = String(body.command ?? "");
-          if (isForbiddenSecretAccess({ command })) {
-            return json(res, 400, { error: "blocked a request to read process environment secrets" });
+          const hook = preToolHook({ name: "computer_exec", command });
+          if (!hook.allow) {
+            return json(res, 400, { error: hook.reason ?? "blocked a request to read process environment secrets" });
           }
           return json(res, 200, await box.execOnBox(cfg, botId, command));
         }
