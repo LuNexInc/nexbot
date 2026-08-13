@@ -18,11 +18,20 @@ describe("isGutsActivity", () => {
     }
   });
 
-  it("hides ask_bot dispatcher pills", () => {
+  it("hides ask_bot, git, and shell dispatcher pills", () => {
     expect(
       isGutsActivity({ kind: "activity", tool: { name: "asked @Research: say hi" } }),
     ).toBe(true);
     expect(isGutsActivity({ kind: "activity", tool: { name: "@Luna → @Research" } })).toBe(true);
+    expect(
+      isGutsActivity({
+        kind: "activity",
+        tool: { name: 'git add -- "handoff/note.md"' },
+      }),
+    ).toBe(true);
+    expect(
+      isGutsActivity({ kind: "activity", tool: { name: 'Get-Date -Format "yyyy-MM-dd"' } }),
+    ).toBe(true);
   });
 
   it("keeps error activity and non-activity messages", () => {
@@ -30,6 +39,6 @@ describe("isGutsActivity", () => {
       isGutsActivity({ kind: "activity", tool: { name: "error: provider unavailable" } }),
     ).toBe(false);
     expect(isGutsActivity({ kind: "text", tool: { name: "list_dir" } })).toBe(false);
-    expect(isGutsActivity({ kind: "text", text: "hey" } as { kind: string })).toBe(false);
+    expect(isGutsActivity({ kind: "text" })).toBe(false);
   });
 });

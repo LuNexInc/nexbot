@@ -22,10 +22,11 @@ const GUTS_TOOLS = new Set([
   "bash",
   "shell",
   "tool",
+  "write",
 ]);
 
 const GUTS_PREFIX =
-  /^(list_|read_|write_|edit_|delete_|search_|glob|grep|use_tool|str_replace|apply_patch|codebase_|file_search)/i;
+  /^(list_|read_|write_|edit_|delete_|search_|glob|grep|use_tool|str_replace|apply_patch|codebase_|file_search|git\b)/i;
 
 function toolKey(name: string): string {
   return name.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -42,11 +43,10 @@ export function isGutsActivity(message: ActivityLike): boolean {
   const name = message.tool?.name?.trim() ?? "";
   if (!name) return true;
   if (/^error:/i.test(name)) return false;
-  // ask_bot dispatcher pills — fromBot text bubbles are the story
+  const key = toolKey(name);
+  if (GUTS_TOOLS.has(key) || GUTS_PREFIX.test(key)) return true;
   if (/^asked\s+@/i.test(name)) return true;
   if (/^@\S+\s*(→|->)\s*@/.test(name)) return true;
-  const key = toolKey(name);
-  if (GUTS_TOOLS.has(key)) return true;
-  if (GUTS_PREFIX.test(key)) return true;
-  return false;
+  // git / powershell / any other tool title is still guts — busy dots already exist
+  return true;
 }
