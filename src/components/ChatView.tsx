@@ -6,6 +6,7 @@ import { OptionCard } from "./OptionCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
+import { isGutsActivity } from "@/lib/activity";
 import type { NexColor } from "@/lib/mascot";
 
 // Minimal markdown for bot bubbles: **bold**, `code`, headings, lists.
@@ -241,7 +242,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               case "options":
                 return <OptionCard key={m.id} botId={bot.id} message={m} />;
               case "activity":
-                return <ActivityChip key={m.id} message={m} />;
+                return isGutsActivity(m) ? null : <ActivityChip key={m.id} message={m} />;
               case "screen":
                 return m.png ? <ScreenFrame key={m.id} png={m.png} mime={m.mime} /> : null;
               default:

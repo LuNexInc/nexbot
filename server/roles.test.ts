@@ -70,5 +70,7 @@ describe("COS_PROMPT", () => {
     expect(COS_PROMPT).toMatch(/scavenged tokens/);
     expect(COS_PROMPT).toMatch(/After ask_bot returns/);
     expect(COS_PROMPT).toMatch(/Never ask_bot X to write the critique of itself/);
+    expect(COS_PROMPT).toMatch(/contractions/);
+    expect(COS_PROMPT).toMatch(/Don.t dump the roster unprompted/);
   });
 });
