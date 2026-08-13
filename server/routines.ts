@@ -1,8 +1,9 @@
 // Recurring jobs. The harness process must stay running (tray).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
+import { importJsonIfNeeded, loadRoutinesFromDb, persistRoutines } from "./db.ts";
 
 export type Routine = {
   id: string;
@@ -24,17 +25,12 @@ export type Routine = {
 const FILE = join(DATA_DIR, "routines.json");
 
 function load(): Routine[] {
-  try {
-    const raw = JSON.parse(readFileSync(FILE, "utf8"));
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
-  }
+  importJsonIfNeeded();
+  return loadRoutinesFromDb();
 }
 
 function save(list: Routine[]) {
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(FILE, JSON.stringify(list, null, 2));
+  persistRoutines(list);
 }
 
 export function isCronRoutine(r: Pick<Routine, "kind">): boolean {
@@ -181,5 +177,5 @@ export function markRan(id: string, now = Date.now()): Routine | null {
 }
 
 export function routinesFileExists(): boolean {
-  return existsSync(FILE);
+  return existsSync(FILE) || loadRoutinesFromDb().length > 0;
 }
