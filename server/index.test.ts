@@ -504,7 +504,7 @@ describe("harness HTTP API", () => {
       headers: { "content-type": "application/json", authorization: `Bearer ${tok}` },
       body: JSON.stringify({ text: "hi", botIds: [id] }),
     });
-    const steerBody = await steer.json();
+    const steerBody = (await steer.json()) as { started?: string[] };
     expect(steer.status).toBe(202);
     expect(steerBody.started).not.toContain(id);
 

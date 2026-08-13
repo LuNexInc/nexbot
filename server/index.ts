@@ -36,7 +36,8 @@ import { ASK_BOT_STILL_WORKING, ASK_BOT_WAIT_MS } from "./comms-policy.ts";
 import { createScreenPoller } from "./screen-poller.ts";
 import { detectCapabilities } from "./capabilities.ts";
 import { clipForTurn, handoffThreadIds, mentionedBots, Store, type Message } from "./store.ts";
-import { roleByTitle, SLEEP_WARNING, COS_PROMPT, isChiefOfStaffRole, isForbiddenFightAsk } from "./roles.ts";
+import { roleByTitle, SLEEP_WARNING, withRolePrompt, isForbiddenFightAsk } from "./roles.ts";
+import { applyTodoTool, listTodos, onTodosChange } from "./todo.ts";
 import { deleteSkill, listSkills, saveSkill, skillFromTurn, skillsPrompt } from "./skills.ts";
 import { checkSteerToken, loadSteerToken, rotateSteerToken, tokenFromRequest } from "./steer.ts";
 import { createNonceCache } from "./nonce.ts";
@@ -80,6 +81,24 @@ function agentsIntegration(botId: string, depth: number) {
       NEXBOT_BOT_ID: botId,
       NEXBOT_COMMS_TOKEN: COMMS_TOKEN,
       NEXBOT_TURN_DEPTH: String(depth),
+    },
+  };
+}
+
+const todoProxyPath = (() => {
+  const ts = join(dirname(fileURLToPath(import.meta.url)), "todo.ts");
+  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+})();
+
+function todosIntegration(botId: string) {
+  return {
+    command: process.execPath,
+    args: [todoProxyPath],
+    env: {
+      ...AGENTS_NODE_FLAG,
+      NEXBOT_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+      NEXBOT_BOT_ID: botId,
+      NEXBOT_COMMS_TOKEN: COMMS_TOKEN,
     },
   };
 }
@@ -154,6 +173,7 @@ function broadcast(payload: unknown) {
     }
   }
 }
+onTodosChange((botId, items) => broadcast({ kind: "todos", botId, items }));
 
 // ── live screen poller ─────────────────────────────────────────────────
 const screens = createScreenPoller({
@@ -357,9 +377,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     memory: bot.memoryEnabled ? memoryPrompt(bot.id) : "",
     skills: skillsPrompt(bot.enabledSkillSlugs),
   });
-  const persona = isChiefOfStaffRole(bot.name, bot.title)
-    ? `${builtPersona}\n\n${COS_PROMPT}`
-    : builtPersona;
+  const persona = withRolePrompt(bot, builtPersona);
 
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
@@ -413,6 +431,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       ) {
         integrations.agents = agentsIntegration(bot.id, commsDepth);
       }
+      integrations.todos = todosIntegration(bot.id);
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit delegation nudge — the agent still does the ask_bot call
       // itself, so the harness stays the single owner of turns/permissions
@@ -438,6 +457,9 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
             : "") +
           (integrations.composio
             ? " Connected apps via Composio are available as tools. Use them when they fit."
+            : "") +
+          (integrations.todos
+            ? " You have a todo tool — a durable checklist for this job. Update it as you work; keep one item in_progress."
             : "") +
           ` ${SLEEP_WARNING}` +
           (tagged.length
@@ -556,6 +578,13 @@ const server = createServer(async (req, res) => {
         }
         return json(res, 200, { botName: target.name, text: reply });
       }
+      if (method === "POST" && path === "/api/internal/todos") {
+        const body = await readBody(req);
+        const botId = String(body.botId ?? "").trim();
+        if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
+        const result = applyTodoTool(botId, "items" in body ? { items: body.items } : {});
+        return json(res, 200, result);
+      }
       return json(res, 404, { error: "unknown internal endpoint" });
     }
 
@@ -583,7 +612,7 @@ const server = createServer(async (req, res) => {
     // ── bots ──
     if (method === "GET" && path === "/api/bots") {
       return json(res, 200, {
-        bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId) })),
+        bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId), todos: listTodos(b.id) })),
       });
     }
     if (method === "POST" && path === "/api/bots") {
@@ -805,6 +834,19 @@ const server = createServer(async (req, res) => {
         dir: memoryDir(bot.id),
         desk: deskPath(bot.id),
       });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/todos$/);
+    if (m && method === "GET") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      return json(res, 200, { items: listTodos(bot.id) });
+    }
+    if (m && method === "PUT") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      const result = applyTodoTool(bot.id, { items: Array.isArray(body.items) ? body.items : [] });
+      return json(res, result.isError ? 400 : 200, result);
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/desk$/);
     if (m && method === "GET") {

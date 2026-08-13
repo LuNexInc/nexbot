@@ -108,3 +108,15 @@ describe("optimistic send and nonce reconcile", () => {
     expect(next.bots[0].messages[0].status).toBe("failed");
   });
 });
+
+describe("todosUpdated", () => {
+  it("sets the live checklist on the bot", () => {
+    const state = {
+      ...initialState,
+      bots: [bot({ id: "spec", name: "Research" })],
+    };
+    const items = [{ id: "td-1", content: "Draft", status: "in_progress" as const }];
+    const next = reducer(state, { type: "todosUpdated", botId: "spec", items });
+    expect(next.bots[0].todos).toEqual(items);
+  });
+});

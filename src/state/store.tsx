@@ -25,6 +25,7 @@ export type {
   NexColor,
   OptionCardData,
   Routine,
+  TodoItem,
 } from "./types";
 
 const StoreContext = createContext<{
@@ -305,6 +306,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "usage":
           if (frame.botId && frame.usage) {
             rawDispatch({ type: "botPatched", bot: { id: frame.botId, usage: frame.usage } });
+          }
+          break;
+        case "todos":
+          if (frame.botId && Array.isArray(frame.items)) {
+            rawDispatch({ type: "todosUpdated", botId: frame.botId, items: frame.items });
           }
           break;
         // a key changed and the fleet hot-reloaded — refresh the picker so

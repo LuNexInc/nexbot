@@ -132,10 +132,11 @@ export function reducer(state: AppState, action: Action): AppState {
           memberIds: incoming.memberIds,
           usage: incoming.usage,
           lastTtfrMs: incoming.lastTtfrMs,
+          todos: incoming.todos,
         };
         return { ...next, bots: [bot, ...next.bots] };
       }
-      return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
+      return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages, todos: action.bot.todos ?? b.todos }));
     }
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -221,6 +222,8 @@ export function reducer(state: AppState, action: Action): AppState {
           [action.threadId]: (state.streaming[action.threadId] ?? "") + action.delta,
         },
       };
+    case "todosUpdated":
+      return updateBot(state, action.botId, (b) => ({ ...b, todos: action.items }));
     case "streamClear": {
       const { [action.threadId]: _, ...rest } = state.streaming;
       return { ...state, streaming: rest };

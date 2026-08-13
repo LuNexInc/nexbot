@@ -37,6 +37,14 @@ export interface Message {
   files?: Array<{ name: string; data?: string; path?: string }>;
 }
 
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: TodoStatus;
+}
+
 export interface ModelSelection {
   instanceId: string;
   model: string;
@@ -66,6 +74,8 @@ export interface Bot {
   usage?: { input: number; output: number };
   /** Time to first token in milliseconds from last turn */
   lastTtfrMs?: number;
+  /** Live durable checklist from the todo tool. */
+  todos?: TodoItem[];
   messages: Message[];
 }
 
@@ -158,6 +168,7 @@ export type Action =
   | { type: "retryMessage"; botId: string; clientNonce: string }
   | { type: "streamDelta"; threadId: string; delta: string }
   | { type: "streamClear"; threadId: string }
+  | { type: "todosUpdated"; botId: string; items: TodoItem[] }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "setModel"; botId: string; selection: ModelSelection }

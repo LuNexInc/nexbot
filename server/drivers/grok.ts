@@ -201,7 +201,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       (async () => {
         try {
           const tools = turn.botId ? [TODO_OPENAI_TOOL] : [];
-          let usageSum: { input: number; output: number } | null = null;
+          let inTok = 0;
+          let outTok = 0;
           let lastText = "";
           for (let round = 0; round < 8; round++) {
             const { text, reasoning, usage, tool_calls } = await complete(messages, turn.model || MODELS.default, {
@@ -215,10 +216,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
             });
             lastText = text;
             if (usage) {
-              usageSum = {
-                input: (usageSum?.input ?? 0) + usage.input,
-                output: (usageSum?.output ?? 0) + usage.output,
-              };
+              inTok += usage.input;
+              outTok += usage.output;
             }
             if (!tool_calls.length) break;
             const assistant = preserveReasoningOnAssistant(
@@ -249,7 +248,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
                 } catch {
                   args = {};
                 }
-                const applied = applyTodoTool(turn.botId, args as { items?: [] });
+                const applied = applyTodoTool(turn.botId, args as { items?: import("../todo.ts").TodoInput[] });
                 result = applied.text;
                 ok = !applied.isError;
               }
@@ -263,12 +262,12 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
               });
             }
           }
-          appendNative(threadId, { dir: "in", source: "xai.chat.completions", msg: { text: lastText, usage: usageSum } });
+          appendNative(threadId, { dir: "in", source: "xai.chat.completions", msg: { text: lastText, usage: { input: inTok, output: outTok } } });
           if (lastText.trim()) {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: lastText });
           }
-          if (usageSum) {
-            emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...usageSum });
+          if (inTok || outTok) {
+            emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", input: inTok, output: outTok });
           }
           active.delete(threadId);
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: null, cost: null });

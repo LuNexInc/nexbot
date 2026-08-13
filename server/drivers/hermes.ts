@@ -43,7 +43,7 @@ function mergeAssistant<T extends HermesMessage>(a: T, b: T): T {
   else delete merged.reasoning_content;
   if (toolCalls.length) merged.tool_calls = toolCalls;
   else delete merged.tool_calls;
-  return merged;
+  return merged as T;
 }
 
 /** Collapse adjacent assistant messages (union tool_calls, concat content + reasoning). */
@@ -73,10 +73,10 @@ export function reasoningContentFromDelta(delta: Record<string, unknown> | null 
 }
 
 /** Echo reasoning_content on an assistant message so thinking-mode replay stays valid. */
-export function preserveReasoningOnAssistant<T extends HermesMessage>(
-  message: T,
+export function preserveReasoningOnAssistant(
+  message: HermesMessage,
   reasoning?: string | null,
-): T {
+): HermesMessage {
   const text =
     (reasoning ?? "").trim() ||
     (typeof message.reasoning_content === "string" ? message.reasoning_content : "");

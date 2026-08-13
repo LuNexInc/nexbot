@@ -4,6 +4,7 @@ import { useStore, formatTime, type Bot, type Message } from "@/state/store";
 import { NexAvatar } from "./Avatar";
 import { OptionCard } from "./OptionCard";
 import { Composer } from "./Composer";
+import { TodoChecklist } from "./TodoChecklist";
 import { ThreadHeader } from "./ThreadHeader";
 import { cn } from "@/lib/cn";
 import { isGutsActivity, stripWorkingNarration } from "@/lib/activity";
@@ -259,6 +260,7 @@ export function ChatView({ bot }: { bot: Bot }) {
         </div>
       </div>
 
+      <TodoChecklist items={bot.todos ?? []} />
       <Composer bot={bot} />
     </main>
   );

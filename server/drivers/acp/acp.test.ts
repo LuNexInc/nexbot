@@ -141,7 +141,8 @@ describe("ACP turns (fake CLI)", () => {
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId: "t-environ", text: "go" });
     const err = await recorder.until((e) => e.type === "runtime.error");
-    expect(err.message).toMatch(/process environment secrets/);
+    expect(err).toMatchObject({ type: "runtime.error" });
+    if (err.type === "runtime.error") expect(err.message).toMatch(/process environment secrets/);
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
