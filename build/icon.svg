@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">NexBot</title>
+  <desc id="desc">Four-node construction N on a dark glass tile.</desc>
+  <defs>
+    <clipPath id="mac-tile">
+      <rect width="1024" height="1024" rx="224" />
+    </clipPath>
+    <radialGradient id="tile" cx="32%" cy="22%" r="90%">
+      <stop offset="0" stop-color="#1A1C20" />
+      <stop offset="0.55" stop-color="#0C0D10" />
+      <stop offset="1" stop-color="#07080A" />
+    </radialGradient>
+    <linearGradient id="silver" x1="30%" y1="8%" x2="78%" y2="92%">
+      <stop offset="0" stop-color="#F4F6F8" />
+      <stop offset="0.45" stop-color="#C8CED6" />
+      <stop offset="1" stop-color="#8E959E" />
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#mac-tile)">
+    <rect width="1024" height="1024" fill="url(#tile)" />
+    <rect x="10" y="10" width="1004" height="1004" rx="214" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="2" />
+    <g transform="translate(152 152) scale(3)">
+      <g stroke="url(#silver)" stroke-opacity="0.22" stroke-width="1.25" fill="none">
+        <circle cx="120" cy="120" r="86" />
+        <path d="M120 28 V212 M28 120 H212" />
+      </g>
+      <g stroke="url(#silver)" stroke-width="10" stroke-linecap="round" fill="none">
+        <path d="M76 64 V176" />
+        <path d="M164 64 V176" />
+        <path d="M76 64 L164 176" />
+      </g>
+      <g fill="url(#silver)">
+        <circle cx="76" cy="64" r="16" />
+        <circle cx="164" cy="64" r="16" />
+        <circle cx="76" cy="176" r="16" />
+        <circle cx="164" cy="176" r="16" />
+        <circle cx="76" cy="120" r="5" fill-opacity="0.55" />
+        <circle cx="164" cy="120" r="5" fill-opacity="0.55" />
+        <circle cx="120" cy="120" r="5" fill-opacity="0.55" />
+      </g>
+    </g>
+  </g>
+</svg>

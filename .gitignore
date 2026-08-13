@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-electron
+*.local
+.DS_Store
+*.tsbuildinfo
+electron/resources/speech-helper
+release
+vendor/cua-driver/
+_upstream_cmp/
+
+_upstream_cmp/
+
+
+dist-server

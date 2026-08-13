@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NexBot · screen</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #e8eaee; color: #1d1d1f; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+      .bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.72); border-bottom: 1px solid rgba(0,0,0,0.08); }
+      .name { font-weight: 600; letter-spacing: -0.02em; }
+      .meta { color: rgba(29,29,31,0.55); }
+      .stage { height: calc(100% - 42px); display: grid; place-items: center; }
+      img { max-width: 100%; max-height: 100%; object-fit: contain; }
+      .empty { color: rgba(29,29,31,0.55); }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <span class="name" id="name">NexBot</span>
+      <span class="meta" id="meta">waiting for a frame…</span>
+    </div>
+    <div class="stage">
+      <img id="frame" alt="" hidden />
+      <div class="empty" id="empty">This PC screen will show here when the bot works.</div>
+    </div>
+    <script>
+      const botId = new URLSearchParams(location.search).get("bot") || "";
+      const nameEl = document.getElementById("name");
+      const metaEl = document.getElementById("meta");
+      const img = document.getElementById("frame");
+      const empty = document.getElementById("empty");
+      function show(src) {
+        img.src = src;
+        img.hidden = false;
+        empty.hidden = true;
+        metaEl.textContent = "live";
+      }
+      fetch("/api/bots").then((r) => r.json()).then((d) => {
+        const bot = (d.bots || []).find((b) => b.id === botId) || (d.bots || [])[0];
+        if (bot) {
+          nameEl.textContent = bot.name + " · this PC";
+          const last = [...(bot.messages || [])].reverse().find((m) => m.kind === "screen" && m.png);
+          if (last) show("data:" + (last.mime || "image/png") + ";base64," + last.png);
+        }
+      }).catch(() => {});
+      const es = new EventSource("/api/events");
+      es.onmessage = (raw) => {
+        let frame;
+        try { frame = JSON.parse(raw.data); } catch { return; }
+        if (frame.kind === "screen" && (!botId || frame.botId === botId) && frame.png) {
+          show("data:" + (frame.mime || "image/png") + ";base64," + frame.png);
+        }
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,82 @@
+appId: com.lunexinc.nexbot
+productName: NexBot
+artifactName: NexBot-${version}-${arch}.${ext}
+
+directories:
+  buildResources: build
+  output: release
+
+# Three self-contained pieces, no node_modules at runtime:
+# Electron main/preload, Vite UI, compiled harness server.
+files:
+  - electron/**
+  - "!electron/resources/speech-helper"
+  - "!**/node_modules/**"
+  - package.json
+
+asar: true
+
+extraResources:
+  - from: dist
+    to: ui
+  - from: dist-server
+    to: server
+  - from: scripts/install-autostart.ps1
+    to: install-autostart.ps1
+  # Staged by scripts/stage-cua-driver.mjs when the host has cua-driver installed
+  - from: vendor/cua-driver
+    to: .
+    filter:
+      - "**/*"
+
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: NexBot uses the microphone for voice dictation into the composer.
+    NSSpeechRecognitionUsageDescription: NexBot transcribes your voice on-device to type messages for you.
+  notarize: false
+
+dmg:
+  sign: true
+  artifactName: NexBot-${version}.dmg
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  # electron-builder accepts PNG and generates multi-size ICO
+  icon: build/icon-1024.png
+  artifactName: NexBot-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NexBot
+  uninstallDisplayName: NexBot
+
+portable:
+  artifactName: NexBot-Portable-${version}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Utility
+  icon: build/icon-1024.png
