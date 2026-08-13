@@ -11,7 +11,7 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 3. **Watch** — Computer panel, Open in window, or `/watch.html`.
 4. **Leave** — close the window; tray keeps cron, webhook, and file-watch routines. Toast when a turn finishes.
 5. **Do not** sleep, log off, or Quit if the job must finish.
-6. **After reboot** — task `NexBot keepalive` starts `--hidden`. Overdue routines and `pending-turns.json` replay. Chat transcripts persist in `messages-<threadId>.json`.
+6. **After reboot** — task `NexBot keepalive` starts `--hidden`. Overdue routines replay. `pending-turns.json` orphans are settled before HTTP/SSE. Chat transcripts persist in `~/.nexbot/store.db` (SQLite WAL + FTS5; JSON imported on first start).
 
 ## How to preview
 

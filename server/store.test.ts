@@ -1,20 +1,24 @@
-// Store persistence contract: bots.json + messages-<threadId>.json are
-// the durable record — everything here must survive a process restart
+// Store persistence contract: ~/.nexbot/store.db is the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
+import { closeStoreDb, dbExists } from "./db.ts";
 import type { ModelSelection } from "./contracts.ts";
-import { Store, mentionedBots, teamSeedMatches, isChiefOfStaffName, uniqueCosIdentity, handoffThreadIds, findChiefOfStaffBot, clipForTurn, TRANSCRIPT_WINDOW, TRANSCRIPT_TEXT_CAP, type BotRecord } from "./store.ts";
+import { Store, mentionedBots, teamSeedMatches, isChiefOfStaffName, uniqueCosIdentity, handoffThreadIds, findChiefOfStaffBot, clipForTurn, TRANSCRIPT_WINDOW, TRANSCRIPT_TEXT_CAP } from "./store.ts";
 import { ROLE_CARD_OPTIONS } from "./roles.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
 describe("Store", () => {
   beforeEach(() => {
+    closeStoreDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    closeStoreDb();
   });
 
   it("createBot seeds a greeting and an onboarding card", () => {
@@ -47,7 +51,7 @@ describe("Store", () => {
     expect(back.name).toBe("Testy");
     expect(back.busy).toBe(false);
     expect(reloaded.messagesFor(bot.threadId).some((m) => m.text === "hi there")).toBe(true);
-    expect(existsSync(join(DATA_DIR, `messages-${bot.threadId}.json`))).toBe(true);
+    expect(dbExists()).toBe(true);
   });
 
   it("patchMessage merges card patches and returns null for unknown ids", () => {
@@ -62,16 +66,19 @@ describe("Store", () => {
     expect(store.patchMessage(bot.threadId, "nope", {})).toBeNull();
   });
 
-  it("deleteBot removes the bot and its transcript file", () => {
+  it("deleteBot removes the bot and its transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const file = join(DATA_DIR, `messages-${bot.threadId}.json`);
-    expect(existsSync(file)).toBe(true);
+    const threadId = bot.threadId;
+    expect(store.messagesFor(threadId).length).toBeGreaterThan(0);
 
     expect(store.deleteBot(bot.id)).toBe(true);
     expect(store.bot(bot.id)).toBeNull();
-    expect(existsSync(file)).toBe(false);
+    expect(store.messagesFor(threadId)).toEqual([]);
     expect(store.deleteBot(bot.id)).toBe(false);
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)).toBeNull();
+    expect(reloaded.messagesFor(threadId)).toEqual([]);
   });
 
   it("setResumeCursor is a no-op (history off)", () => {
@@ -161,21 +168,19 @@ describe("Store", () => {
     expect(named[0].memoryEnabled).toBe(true);
   });
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
-    const store = new Store(selection);
-    store.createBot();
+  it("tolerates a corrupt bots.json by starting empty when sqlite is empty", () => {
+    closeStoreDb();
+    mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
-
-    const reloaded = new Store(selection);
-    expect(reloaded.bots).toEqual([]);
+    const store = new Store(selection);
+    expect(store.bots).toEqual([]);
   });
 
-  it("busy is wiped even when bots.json says otherwise", () => {
+  it("busy is wiped on reload even when sqlite stored it", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const raw: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
-    raw.find((b) => b.id === bot.id)!.busy = true;
-    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+    store.patchBot(bot.id, { busy: true });
+    expect(store.bot(bot.id)?.busy).toBe(true);
 
     const reloaded = new Store(selection);
     expect(reloaded.bot(bot.id)?.busy).toBe(false);
@@ -230,7 +235,11 @@ describe("Store", () => {
 
 describe("one Chief of Staff", () => {
   beforeEach(() => {
+    closeStoreDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    closeStoreDb();
   });
 
   it("ROLE_CARD_OPTIONS never offers Chief of Staff as a new-bot job", () => {

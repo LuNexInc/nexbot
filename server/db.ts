@@ -1,0 +1,192 @@
+// SQLite WAL store. better-sqlite3 when installed; node:sqlite (Node 24 / Electron) otherwise.
+// FTS5 unicode61. Packaged app has no node_modules — node:sqlite is the Windows electron-builder path.
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { DATA_DIR } from "./config.ts";
+import type { Routine } from "./routines.ts";
+import type { BotRecord, Message } from "./store.ts";
+
+export const dbFile = (): string => join(DATA_DIR, "store.db");
+
+const SCHEMA = `
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, bot_id TEXT, at INTEGER NOT NULL, text TEXT NOT NULL DEFAULT "", json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS messages_thread_at ON messages(thread_id, at);
+CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, json TEXT NOT NULL);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, content='messages', content_rowid='rowid', tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text); END;
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text); END;
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text); INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text); END;
+`;
+type Cache = { path: string; db: DatabaseSync };
+let cache: Cache | null = null;
+
+export function closeStoreDb(): void {
+  if (!cache) return;
+  try { cache.db.close(); } catch { /* already closed */ }
+  cache = null;
+}
+
+function wal(db: DatabaseSync): void {
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+}
+
+export function openStoreDb(): DatabaseSync {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const path = dbFile();
+  if (cache && cache.path === path) {
+    try { cache.db.prepare("SELECT 1").get(); return cache.db; } catch { closeStoreDb(); }
+  } else if (cache) { closeStoreDb(); }
+  const db = new DatabaseSync(path);
+  wal(db);
+  db.exec(SCHEMA);
+  cache = { path, db };
+  return db;
+}
+
+function parseJsonArray(raw: string): unknown[] {
+  try { const data = JSON.parse(raw); return Array.isArray(data) ? data : []; } catch { return []; }
+}
+
+function ftsText(m: Message): string {
+  if (m.kind === "screen") return "";
+  return (m.text ?? "").trim();
+}
+export function persistBots(bots: BotRecord[]): void {
+  const db = openStoreDb();
+  db.exec("BEGIN");
+  try {
+    db.exec("DELETE FROM bots");
+    const ins = db.prepare("INSERT INTO bots (id, json) VALUES (?, ?)");
+    for (const b of bots) ins.run(b.id, JSON.stringify(b));
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+}
+
+export function persistMessages(threadId: string, messages: Message[], botId?: string): void {
+  const db = openStoreDb();
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM messages WHERE thread_id = ?").run(threadId);
+    const ins = db.prepare("INSERT INTO messages (id, thread_id, bot_id, at, text, json) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const m of messages) {
+      const slim = m.kind === "screen" ? { ...m, png: undefined } : m;
+      ins.run(m.id, threadId, botId ?? null, m.at, ftsText(m), JSON.stringify(slim));
+    }
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+}
+
+export function persistRoutines(routines: Routine[]): void {
+  const db = openStoreDb();
+  db.exec("BEGIN");
+  try {
+    db.exec("DELETE FROM routines");
+    const ins = db.prepare("INSERT INTO routines (id, bot_id, json) VALUES (?, ?, ?)");
+    for (const r of routines) ins.run(r.id, r.botId, JSON.stringify(r));
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+}
+
+export function deleteThread(threadId: string): void {
+  openStoreDb().prepare("DELETE FROM messages WHERE thread_id = ?").run(threadId);
+}
+
+export function deleteBotRow(id: string): void {
+  openStoreDb().prepare("DELETE FROM bots WHERE id = ?").run(id);
+}
+
+export function loadRoutinesFromDb(): Routine[] {
+  const rows = openStoreDb().prepare("SELECT json FROM routines").all() as Array<{ json: string }>;
+  const out: Routine[] = [];
+  for (const row of rows) {
+    try { out.push(JSON.parse(row.json) as Routine); } catch { /* skip */ }
+  }
+  return out;
+}
+
+export function loadBotsFromDb(): BotRecord[] {
+  const rows = openStoreDb().prepare("SELECT json FROM bots").all() as Array<{ json: string }>;
+  const out: BotRecord[] = [];
+  for (const row of rows) { try { out.push(JSON.parse(row.json) as BotRecord); } catch { /* skip */ } }
+  return out;
+}
+
+export function loadMessagesFromDb(): Map<string, Message[]> {
+  const rows = openStoreDb().prepare("SELECT thread_id, json FROM messages ORDER BY at ASC").all() as Array<{ thread_id: string; json: string }>;
+  const map = new Map<string, Message[]>();
+  for (const row of rows) {
+    try {
+      const msg = JSON.parse(row.json) as Message;
+      const list = map.get(row.thread_id) ?? [];
+      list.push(msg);
+      map.set(row.thread_id, list);
+    } catch { /* skip */ }
+  }
+  return map;
+}
+
+export type SearchHit = { messageId: string; threadId: string; botId: string | null; text: string; at: number };
+
+export function ftsMatchQuery(q: string): string | null {
+  const tokens = q.replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).filter(Boolean).slice(0, 12);
+  if (!tokens.length) return null;
+  return tokens.map((t) => `"${t}"`).join(" AND ");
+}
+
+export function searchMessages(q: string, limit = 50): SearchHit[] {
+  const match = ftsMatchQuery(q);
+  if (!match) return [];
+  const rows = openStoreDb().prepare(`SELECT m.id AS messageId, m.thread_id AS threadId, m.bot_id AS botId, m.text AS text, m.at AS at FROM messages_fts f JOIN messages m ON m.rowid = f.rowid WHERE messages_fts MATCH ? LIMIT ?`).all(match, limit) as Array<{ messageId: string; threadId: string; botId: string | null; text: string; at: number }>;
+  return rows.map((r) => ({ messageId: r.messageId, threadId: r.threadId, botId: r.botId, text: r.text, at: r.at }));
+}
+function metaGet(key: string): string | null {
+  const row = openStoreDb().prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+function metaSet(key: string, value: string): void {
+  openStoreDb().prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+}
+function importBotsJson(): BotRecord[] {
+  try { const data = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")); return Array.isArray(data) ? (data as BotRecord[]) : []; } catch { return []; }
+}
+function importMessageFiles(): Map<string, Message[]> {
+  const map = new Map<string, Message[]>();
+  let names: string[] = [];
+  try { names = readdirSync(DATA_DIR); } catch { return map; }
+  for (const name of names) {
+    const m = name.match(/^messages-(.+)\.json$/);
+    if (!m) continue;
+    try {
+      const list = parseJsonArray(readFileSync(join(DATA_DIR, name), "utf8")) as Message[];
+      map.set(m[1], list.filter((row) => row && typeof row === "object" && typeof row.id === "string"));
+    } catch { /* skip */ }
+  }
+  return map;
+}
+function importRoutinesJson(): Routine[] {
+  try { const data = JSON.parse(readFileSync(join(DATA_DIR, "routines.json"), "utf8")); return Array.isArray(data) ? (data as Routine[]) : []; } catch { return []; }
+}
+
+export function importJsonIfNeeded(): { bots: number; messages: number; routines: number } {
+  openStoreDb();
+  if (metaGet("imported_json") === "1") return { bots: 0, messages: 0, routines: 0 };
+  const existing = openStoreDb().prepare("SELECT COUNT(*) AS n FROM bots").get() as { n: number };
+  if (existing.n > 0) { metaSet("imported_json", "1"); return { bots: 0, messages: 0, routines: 0 }; }
+  const bots = importBotsJson();
+  const threads = importMessageFiles();
+  const routines = importRoutinesJson();
+  if (bots.length) persistBots(bots);
+  let messageCount = 0;
+  const botByThread = new Map(bots.map((b) => [b.threadId, b.id]));
+  for (const [threadId, list] of threads) { persistMessages(threadId, list, botByThread.get(threadId)); messageCount += list.length; }
+  if (routines.length) persistRoutines(routines);
+  metaSet("imported_json", "1");
+  return { bots: bots.length, messages: messageCount, routines: routines.length };
+}
+
+export function dbExists(): boolean { return existsSync(dbFile()); }

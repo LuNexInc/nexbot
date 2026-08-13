@@ -19,7 +19,9 @@ import { ProviderRegistry } from "./harness/registry.ts";
 import { buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory, inboxPath, MEMORY_FILE_MAX, memoryDir, memoryPrompt, readLog, readProfile, writeInboxFile, writeLog, writeProfile } from "./desk.ts";
 import { isForbiddenSecretAccess } from "./environ-guard.ts";
 import { json, readBody, serveStatic, portBusyHint } from "./http-util.ts";
-import { forgetTurn, listPending, rememberTurn } from "./pending.ts";
+import { searchMessages } from "./db.ts";
+import { forgetTurn, rememberTurn } from "./pending.ts";
+import { sessionDeathSettlement } from "./recovery.ts";
 import {
   createRoutine,
   deleteRoutine,
@@ -1061,6 +1063,15 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/health") {
       return json(res, 200, { app: "nexbot", pid: process.pid, static: Boolean(STATIC_DIR) });
     }
+    if (method === "GET" && path === "/api/search") {
+      const q = (url.searchParams.get("q") ?? "").trim();
+      if (!q) return json(res, 400, { error: "q required" });
+      const results = searchMessages(q).map((hit) => {
+        const bot = hit.botId ? store.bot(hit.botId) : store.botByThread(hit.threadId);
+        return { ...hit, botId: bot?.id ?? hit.botId, botName: bot?.name };
+      });
+      return json(res, 200, { results });
+    }
 
     // ── provider instances (model picker) ──
     if (method === "GET" && path === "/api/instances") {
@@ -1237,12 +1248,9 @@ function runDueRoutines() {
 
 function recoverAfterBoot() {
   runDueRoutines();
-  for (const p of listPending()) {
-    const bot = store.bot(p.botId);
-    if (!bot || bot.busy) continue;
-    void startTurn(p.botId, p.text, { replay: true }).catch(() => {});
-  }
 }
+
+sessionDeathSettlement(store);
 
 const BIND = process.env.NEXBOT_BIND || "127.0.0.1";
 server.on("error", (err: NodeJS.ErrnoException) => {

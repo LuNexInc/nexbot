@@ -2,8 +2,8 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { deleteThread, importJsonIfNeeded, loadBotsFromDb, loadMessagesFromDb, openStoreDb, persistBots, persistMessages } from "./db.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
@@ -97,9 +97,6 @@ export interface BotRecord {
   lastTtfrMs?: number;
   createdAt: number;
 }
-
-const BOTS_FILE = join(DATA_DIR, "bots.json");
-const messagesFile = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
 
 const COLORS: NexColor[] = [
   "green",
@@ -244,41 +241,25 @@ export class Store {
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    try {
-      this.bots = JSON.parse(readFileSync(BOTS_FILE, "utf8"));
-    } catch {
-      this.bots = [];
-    }
+    openStoreDb();
+    importJsonIfNeeded();
+    this.bots = loadBotsFromDb();
     // busy never survives a restart — no turn does either.
-    // unread DOES: saveBots writes the whole BotRecord; do not strip it here.
+    // unread DOES: persistBots writes the whole BotRecord; do not strip it here.
     for (const b of this.bots) {
       b.busy = false;
       b.resumeCursors = {};
     }
-    this.loadTranscripts();
-  }
-
-  /** Load persisted chat logs. Screen frames drop their png (too large). */
-  private loadTranscripts() {
-    for (const b of this.bots) {
-      try {
-        const raw = JSON.parse(readFileSync(messagesFile(b.threadId), "utf8"));
-        if (Array.isArray(raw)) this.messages.set(b.threadId, raw);
-      } catch {
-        /* first run or missing file */
-      }
-    }
+    this.messages = loadMessagesFromDb();
   }
 
   private saveMessages(threadId: string) {
-    const list = this.messages.get(threadId) ?? [];
-    const slim = list.map((m) => (m.kind === "screen" ? { ...m, png: undefined } : m));
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(messagesFile(threadId), JSON.stringify(slim));
+    const bot = this.botByThread(threadId);
+    persistMessages(threadId, this.messages.get(threadId) ?? [], bot?.id);
   }
 
   private saveBots() {
-    writeFileSync(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    persistBots(this.bots);
   }
 
   messagesFor(threadId: string): Message[] {
@@ -378,9 +359,7 @@ export class Store {
     this.bots = this.bots.filter((b) => b.id !== id);
     this.messages.delete(bot.threadId);
     this.saveBots();
-    try {
-      unlinkSync(messagesFile(bot.threadId));
-    } catch {}
+    deleteThread(bot.threadId);
     return true;
   }
 
