@@ -51,3 +51,60 @@ describe("botPatched", () => {
     expect(next.bots).toHaveLength(1);
   });
 });
+
+
+describe("optimistic send and nonce reconcile", () => {
+  it("send appends a pending user message", () => {
+    const state = {
+      ...initialState,
+      bots: [bot({ id: "b1", threadId: "t1" })],
+    };
+    const next = reducer(state, {
+      type: "send",
+      botId: "b1",
+      text: "hello",
+      clientNonce: "n1",
+    });
+    expect(next.bots[0].messages).toHaveLength(1);
+    expect(next.bots[0].messages[0]).toMatchObject({
+      id: "optimistic:n1",
+      role: "user",
+      kind: "text",
+      text: "hello",
+      status: "pending",
+      clientNonce: "n1",
+    });
+  });
+
+  it("messageAdded with matching clientNonce replaces pending and does not duplicate", () => {
+    let state = {
+      ...initialState,
+      bots: [bot({ id: "b1", threadId: "t1" })],
+    };
+    state = reducer(state, { type: "send", botId: "b1", text: "hello", clientNonce: "n1" });
+    const confirmed: Message = {
+      id: "server-1",
+      role: "user",
+      kind: "text",
+      text: "hello",
+      at: 99,
+      clientNonce: "n1",
+    };
+    const next = reducer(state, { type: "messageAdded", threadId: "t1", message: confirmed });
+    expect(next.bots[0].messages).toHaveLength(1);
+    expect(next.bots[0].messages[0].id).toBe("server-1");
+    expect(next.bots[0].messages[0].status).toBe("confirmed");
+    expect(next.bots[0].messages[0].clientNonce).toBe("n1");
+  });
+
+  it("messageFailed marks the optimistic row failed", () => {
+    let state = {
+      ...initialState,
+      bots: [bot({ id: "b1", threadId: "t1" })],
+    };
+    state = reducer(state, { type: "send", botId: "b1", text: "hello", clientNonce: "n1" });
+    const next = reducer(state, { type: "messageFailed", threadId: "t1", clientNonce: "n1" });
+    expect(next.bots[0].messages).toHaveLength(1);
+    expect(next.bots[0].messages[0].status).toBe("failed");
+  });
+});

@@ -60,6 +60,10 @@ export interface Message {
   /** teammate speaking in this thread (ask_bot / A2A) */
   fromBot?: { id: string; name: string; color?: string };
   at: number;
+  /** client nonce for optimistic send and deduplication */
+  clientNonce?: string;
+  /** delivery status for optimistic UI */
+  status?: "pending" | "confirmed" | "failed";
 }
 
 export interface BotRecord {
@@ -89,6 +93,8 @@ export interface BotRecord {
   kind?: "bot" | "group";
   memberIds?: string[];
   usage?: { input: number; output: number };
+  /** Time to first token in milliseconds from last turn */
+  lastTtfrMs?: number;
   createdAt: number;
 }
 

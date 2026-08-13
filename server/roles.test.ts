@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COS_PROMPT, isForbiddenSelfFight, isForbiddenFightAsk } from "./roles.ts";
+import { COS_PROMPT, GOAP_PROMPT, isForbiddenSelfFight, isForbiddenFightAsk, withRolePrompt } from "./roles.ts";
 
 describe("isForbiddenSelfFight", () => {
   const research = { name: "Research", title: "Research" };
@@ -72,5 +72,20 @@ describe("COS_PROMPT", () => {
     expect(COS_PROMPT).toMatch(/Never ask_bot X to write the critique of itself/);
     expect(COS_PROMPT).toMatch(/contractions/);
     expect(COS_PROMPT).toMatch(/Don.t dump the roster unprompted/);
+  });
+});
+
+describe("GOAP_PROMPT", () => {
+  it("is Hermes Goal-Action-Observation-Reflection for specialists only", () => {
+    expect(GOAP_PROMPT).toMatch(/Goal/);
+    expect(GOAP_PROMPT).toMatch(/Action/);
+    expect(GOAP_PROMPT).toMatch(/Observation/);
+    expect(GOAP_PROMPT).toMatch(/Reflection/);
+    expect(COS_PROMPT).not.toMatch(/GOAP/);
+    expect(COS_PROMPT).not.toMatch(/Observation/);
+    expect(withRolePrompt({ name: "Luna", title: "Chief of Staff" }, "p")).toContain(COS_PROMPT);
+    expect(withRolePrompt({ name: "Luna", title: "Chief of Staff" }, "p")).not.toContain(GOAP_PROMPT);
+    expect(withRolePrompt({ name: "Research", title: "Research" }, "p")).toContain(GOAP_PROMPT);
+    expect(withRolePrompt({ name: "Research", title: "Research" }, "p")).not.toContain(COS_PROMPT);
   });
 });

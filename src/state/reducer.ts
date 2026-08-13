@@ -131,6 +131,7 @@ export function reducer(state: AppState, action: Action): AppState {
           kind: incoming.kind,
           memberIds: incoming.memberIds,
           usage: incoming.usage,
+          lastTtfrMs: incoming.lastTtfrMs,
         };
         return { ...next, bots: [bot, ...next.bots] };
       }
@@ -139,11 +140,30 @@ export function reducer(state: AppState, action: Action): AppState {
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
       if (!bot) return state;
-      const next = updateBot(state, bot.id, (b) =>
-        b.messages.some((m) => m.id === action.message.id)
-          ? b
-          : { ...b, messages: [...b.messages, action.message] },
-      );
+      const incoming = action.message;
+      const hasOptimistic = incoming.clientNonce
+        ? bot.messages.some(
+            (m) =>
+              m.clientNonce === incoming.clientNonce ||
+              m.id === `optimistic:${incoming.clientNonce}`,
+          )
+        : false;
+
+      const nextMessages = hasOptimistic
+        ? bot.messages.map((m) =>
+            m.clientNonce === incoming.clientNonce ||
+            m.id === `optimistic:${incoming.clientNonce}`
+              ? { ...incoming, status: "confirmed" as const }
+              : m,
+          )
+        : bot.messages.some((m) => m.id === incoming.id)
+          ? bot.messages
+          : [...bot.messages, { ...incoming, status: incoming.status ?? "confirmed" }];
+
+      const next = updateBot(state, bot.id, (b) => ({
+        ...b,
+        messages: nextMessages,
+      }));
       const motion =
         action.message.kind === "options"
           ? "thinking"
@@ -163,6 +183,18 @@ export function reducer(state: AppState, action: Action): AppState {
         return { ...animated, streaming: rest };
       }
       return animated;
+    }
+    case "messageFailed": {
+      const bot = state.bots.find((b) => b.threadId === action.threadId);
+      if (!bot) return state;
+      return updateBot(state, bot.id, (b) => ({
+        ...b,
+        messages: b.messages.map((m) =>
+          m.clientNonce === action.clientNonce || m.id === `optimistic:${action.clientNonce}`
+            ? { ...m, status: "failed" as const }
+            : m,
+        ),
+      }));
     }
     case "messagePatched": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -267,15 +299,44 @@ export function reducer(state: AppState, action: Action): AppState {
         : state;
       return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
     }
-    // handled entirely by the async wrapper
-    case "send":
-      return withMascotMotion(state, action.botId, "working");
+    // optimistic user bubble — SSE messageAdded with the same clientNonce replaces it
+    case "send": {
+      const bot = state.bots.find((b) => b.id === action.botId);
+      const nonce = action.clientNonce;
+      if (!bot || !nonce) return withMascotMotion(state, action.botId, "working");
+      if (bot.messages.some((m) => m.clientNonce === nonce || m.id === `optimistic:${nonce}`)) {
+        return withMascotMotion(state, action.botId, "working");
+      }
+      return withMascotMotion(
+        updateBot(state, action.botId, (b) => ({
+          ...b,
+          messages: [
+            ...b.messages,
+            {
+              id: `optimistic:${nonce}`,
+              role: "user" as const,
+              kind: "text" as const,
+              text: action.text,
+              at: Date.now(),
+              status: "pending" as const,
+              clientNonce: nonce,
+              files: action.files,
+            },
+          ],
+        })),
+        action.botId,
+        "working",
+      );
+    }
     case "interrupt":
       // optimistic: unlock the composer immediately even if the provider
       // interrupt is slow or throws — server still always clears busy.
       return updateBot(state, action.botId, (b) => ({ ...b, busy: false }));
     case "newBot":
     case "duplicateBot":
+    case "retryMessage":
+      return state;
+    default:
       return state;
   }
 }

@@ -30,4 +30,28 @@ describe("watchdog", () => {
     expect(isComputerToolName("screenshot")).toBe(true);
     expect(isComputerToolName("ask_bot")).toBe(false);
   });
+
+  it("records ttfrMs from sendTimeMs to first content.delta", () => {
+    const w = createWatchdog({ stallMs: 45_000 });
+    w.start("a");
+    const send = w.get("a")!.sendTimeMs;
+    expect(w.poke("a", "item.started")).toBeUndefined();
+    expect(w.get("a")?.ttfrMs).toBeUndefined();
+    const ttfr = w.poke("a", "content.delta", { isChunk: true });
+    expect(ttfr).toBeTypeOf("number");
+    expect(w.get("a")?.firstTokenTimeMs).toBeGreaterThanOrEqual(send);
+    expect(w.get("a")?.ttfrMs).toBe(ttfr);
+    expect(w.poke("a", "content.delta", { isChunk: true })).toBeUndefined();
+  });
+
+  it("warns once when no token arrives within stallMs", () => {
+    const w = createWatchdog({ stallMs: 40 });
+    w.start("a");
+    const t0 = w.get("a")!.sendTimeMs;
+    expect(w.stalledBots(40, t0 + 10)).toHaveLength(0);
+    const stalled = w.stalledBots(40, t0 + 50);
+    expect(stalled).toHaveLength(1);
+    expect(stalled[0].stalled).toBe(true);
+    expect(w.stalledBots(40, t0 + 80)).toHaveLength(0);
+  });
 });

@@ -224,6 +224,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 ok: item.status !== "failed" && item.status !== "declined",
               });
             } else if (item.type === "reasoning") {
+              const think = String(item.text ?? item.summary ?? item.content ?? item.reasoning_content ?? "").trim();
+              if (think) {
+                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: think });
+              }
               emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
             }
             break;

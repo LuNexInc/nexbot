@@ -67,6 +67,23 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "POST" && req.url === "/api/internal/todos") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        const body = JSON.parse(data || "{}");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            text: Array.isArray(body.items)
+              ? `[>] td-1 ${body.items[0]?.content ?? "item"} (in_progress)`
+              : "Checklist is empty.",
+            items: body.items ?? [],
+          }),
+        );
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -108,7 +125,7 @@ describe("agents-proxy MCP surface", () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["list_bots", "ask_bot"]);
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["list_bots", "ask_bot", "todo"]);
     const ask = list.result.tools.find((t: { name: string }) => t.name === "ask_bot");
     expect(ask.description).toMatch(/never create a second Chief of Staff/i);
     expect(ask.description).toMatch(/never ask_bot X to write the critique/i);
@@ -169,5 +186,11 @@ describe("agents-proxy MCP surface", () => {
     const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
     expect(res.result.isError).toBeFalsy();
     expect(res.result.content[0].text).toMatch(/still working/i);
+  });
+  it("todo lists and replaces the checklist via the harness", async () => {
+    const listed = await callTool("todo", {});
+    expect(listed.result.content[0].text).toMatch(/empty/i);
+    const wrote = await callTool("todo", { items: [{ content: "Draft brief", status: "in_progress" }] });
+    expect(wrote.result.content[0].text).toContain("Draft brief");
   });
 });

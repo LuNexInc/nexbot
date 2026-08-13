@@ -78,6 +78,21 @@ export function withCosPrompt(bot: { name: string; title?: string }, persona: st
   return isChiefOfStaffRole(bot.name, bot.title) ? `${persona}\n\n${COS_PROMPT}` : persona;
 }
 
+/** Hermes GOAP for specialists only — never dumped into CoS voice. */
+export const GOAP_PROMPT = `Structure private reasoning as Hermes GOAP: Goal -> Action -> Observation -> Reflection.
+Goal: the outcome this turn must produce.
+Action: the next concrete step (a tool call or a write).
+Observation: what that step returned.
+Reflection: whether the goal is closer; if not, change the Action.
+
+Do not print this loop in the chat bubble unless the user asked for a plan. The bubble is the result, not the worksheet.`
+
+/** CoS keeps the short human prompt. Specialists get GOAP. */
+export function withRolePrompt(bot: { name: string; title?: string }, persona: string): string {
+  if (isChiefOfStaffRole(bot.name, bot.title)) return withCosPrompt(bot, persona);
+  return `${persona}\n\n${GOAP_PROMPT}`;
+}
+
 const FIGHT_RE = /\b(fight|challenge|critique|rebut|red-?team)\b/;
 
 function escapeRe(s: string): string {

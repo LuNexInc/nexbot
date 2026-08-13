@@ -41,6 +41,29 @@ const TOOLS = [
       required: ["bot_id", "message"],
     },
   },
+  {
+    name: "todo",
+    description:
+      "Durable checklist for this bot's current job. Call with no items to list. Call with items to replace the list (reuse ids when updating). Statuses: pending, in_progress, completed, cancelled. Keep exactly one item in_progress while you work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description: "Replace the checklist with these items. Omit to only list.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              content: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+            },
+            required: ["content", "status"],
+          },
+        },
+      },
+    },
+  },
 ];
 
 type Json = Record<string, unknown>;
@@ -93,6 +116,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return { text: reply || ASK_BOT_STILL_WORKING };
     }
     return { text: `${r.botName ?? "Bot"} replied:\n${reply}` };
+  }
+  if (name === "todo") {
+    const payload: Record<string, unknown> = { botId: BOT_ID };
+    if ("items" in args) payload.items = args.items;
+    const r = await api(`/api/internal/todos`, { method: "POST", body: JSON.stringify(payload) });
+    return { text: String(r.text ?? ""), isError: Boolean(r.isError) };
   }
   return { text: `Unknown tool: ${name}`, isError: true };
 }

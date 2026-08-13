@@ -29,6 +29,12 @@ export interface Message {
   /** teammate speaking in this thread (ask_bot / A2A) */
   fromBot?: { id: string; name: string; color?: string };
   at: number;
+  /** client nonce for optimistic send and deduplication */
+  clientNonce?: string;
+  /** delivery status for optimistic UI */
+  status?: "pending" | "confirmed" | "failed";
+  /** attached files kept for retry */
+  files?: Array<{ name: string; data?: string; path?: string }>;
 }
 
 export interface ModelSelection {
@@ -58,6 +64,8 @@ export interface Bot {
   kind?: "bot" | "group";
   memberIds?: string[];
   usage?: { input: number; output: number };
+  /** Time to first token in milliseconds from last turn */
+  lastTtfrMs?: number;
   messages: Message[];
 }
 
@@ -135,7 +143,7 @@ export type Action =
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "select"; id: string }
-  | { type: "send"; botId: string; text: string; files?: Array<{ name: string; data?: string; path?: string }> }
+  | { type: "send"; botId: string; text: string; clientNonce?: string; files?: Array<{ name: string; data?: string; path?: string }> }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
   | { type: "newBot"; name?: string; title?: string; description?: string; kind?: "bot" | "group"; memberIds?: string[] }
@@ -146,6 +154,8 @@ export type Action =
   | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
+  | { type: "messageFailed"; threadId: string; clientNonce: string }
+  | { type: "retryMessage"; botId: string; clientNonce: string }
   | { type: "streamDelta"; threadId: string; delta: string }
   | { type: "streamClear"; threadId: string }
   | { type: "screenFrame"; botId: string; png: string; mime: string }

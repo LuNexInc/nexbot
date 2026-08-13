@@ -87,6 +87,8 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 // carrying the provider-native continuation (e.g. a claude session id).
 export interface SendTurnInput {
   threadId: ThreadId;
+  /** Owning bot — used by in-process tools (todo). */
+  botId?: string;
   text: string;
   model?: string;
   resumeCursor?: unknown;
@@ -108,6 +110,8 @@ export interface SendTurnInput {
      * through the harness so this bot can message other bots. The harness
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
+    /** Durable checklist MCP (todo tool). Always attached so specialists can plan. */
+    todos?: { command: string; args: string[]; env: Record<string, string> };
   };
   cwd?: string;
 }

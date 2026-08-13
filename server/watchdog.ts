@@ -1,56 +1,101 @@
 // Turn progress tracker. A busy bot with no events is stuck.
 // Empty-queue reclaim: drop busy after stuckMs with no events.
+// Stream stall: warn if no token/chunk within stallMs during an active turn.
 
 export type TurnWatch = {
   botId: string;
+  /** Wall clock when the user send / startTurn began. */
+  sendTimeMs: number;
+  /** Alias of sendTimeMs (older callers). */
   startedAt: number;
   lastEventAt: number;
+  firstTokenTimeMs?: number;
+  firstTokenAt?: number;
+  ttfrMs?: number;
+  lastChunkAt?: number;
   events: number;
   tokens: { input: number; output: number };
   computerTools: boolean;
   stuck: boolean;
+  stalled: boolean;
+  stallWarned?: boolean;
 };
 
 export type Watchdog = {
   start(botId: string): void;
-  poke(botId: string, eventType?: string, extra?: { tokens?: { input: number; output: number }; computerTool?: boolean }): void;
+  recordFirstToken(botId: string): number | undefined;
+  poke(
+    botId: string,
+    eventType?: string,
+    extra?: { tokens?: { input: number; output: number }; computerTool?: boolean; isChunk?: boolean },
+  ): number | undefined;
   end(botId: string): TurnWatch | null;
   get(botId: string): TurnWatch | null;
   stuckBots(now?: number): TurnWatch[];
+  stalledBots(stallThresholdMs?: number, now?: number): TurnWatch[];
 };
 
 export const DEFAULT_STUCK_MS = 90_000;
+export const DEFAULT_STALL_MS = 45_000;
 
-export function createWatchdog(opts?: { stuckMs?: number }): Watchdog {
+export function createWatchdog(opts?: { stuckMs?: number; stallMs?: number }): Watchdog {
   const stuckMs = opts?.stuckMs ?? DEFAULT_STUCK_MS;
+  const stallMs = opts?.stallMs ?? DEFAULT_STALL_MS;
   const turns = new Map<string, TurnWatch>();
 
   function start(botId: string) {
     const now = Date.now();
     turns.set(botId, {
       botId,
+      sendTimeMs: now,
       startedAt: now,
       lastEventAt: now,
       events: 0,
       tokens: { input: 0, output: 0 },
       computerTools: false,
       stuck: false,
+      stalled: false,
     });
+  }
+
+  function recordFirstToken(botId: string): number | undefined {
+    const row = turns.get(botId);
+    if (!row || row.firstTokenTimeMs !== undefined) return undefined;
+    const now = Date.now();
+    row.firstTokenTimeMs = now;
+    row.firstTokenAt = now;
+    row.lastChunkAt = now;
+    row.ttfrMs = now - row.sendTimeMs;
+    return row.ttfrMs;
   }
 
   function poke(
     botId: string,
     eventType?: string,
-    extra?: { tokens?: { input: number; output: number }; computerTool?: boolean },
-  ) {
+    extra?: { tokens?: { input: number; output: number }; computerTool?: boolean; isChunk?: boolean },
+  ): number | undefined {
     const row = turns.get(botId);
-    if (!row) return;
-    row.lastEventAt = Date.now();
+    if (!row) return undefined;
+    const now = Date.now();
+    row.lastEventAt = now;
+    let justTtfr: number | undefined;
+    if (extra?.isChunk || eventType === "content.delta") {
+      row.lastChunkAt = now;
+      if (row.firstTokenTimeMs === undefined) {
+        row.firstTokenTimeMs = now;
+        row.firstTokenAt = now;
+        row.ttfrMs = now - row.sendTimeMs;
+        justTtfr = row.ttfrMs;
+      }
+    }
     row.events += 1;
     row.stuck = false;
+    row.stalled = false;
+    row.stallWarned = false;
     if (extra?.tokens) row.tokens = extra.tokens;
     if (extra?.computerTool) row.computerTools = true;
     if (eventType && /computer|cua|screenshot|desktop/i.test(eventType)) row.computerTools = true;
+    return justTtfr;
   }
 
   function end(botId: string): TurnWatch | null {
@@ -74,7 +119,21 @@ export function createWatchdog(opts?: { stuckMs?: number }): Watchdog {
     return out;
   }
 
-  return { start, poke, end, get, stuckBots };
+  function stalledBots(customStallMs = stallMs, now = Date.now()): TurnWatch[] {
+    const out: TurnWatch[] = [];
+    for (const row of turns.values()) {
+      if (row.stallWarned) continue;
+      const last = row.lastChunkAt ?? row.sendTimeMs;
+      if (now - last >= customStallMs) {
+        row.stalled = true;
+        row.stallWarned = true;
+        out.push(row);
+      }
+    }
+    return out;
+  }
+
+  return { start, recordFirstToken, poke, end, get, stuckBots, stalledBots };
 }
 
 export function isComputerToolName(name: string | undefined): boolean {

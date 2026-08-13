@@ -1,6 +1,11 @@
 // Built-in driver registration — upstream builtInDrivers.ts: a static
 // array, nothing more. Adding a driver = write drivers/<x>.ts, append.
 import type { AnyProviderDriver } from "../contracts.ts";
+export {
+  mergeConsecutiveAssistant,
+  preserveReasoningOnAssistant,
+  reasoningContentFromDelta,
+} from "./hermes.ts";
 import { BoxAgentDriver } from "./boxagent.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";

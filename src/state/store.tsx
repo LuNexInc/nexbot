@@ -55,15 +55,56 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      if (action.type === "send") {
+        const nonce = action.clientNonce ?? `cn_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        const sendAct = { ...action, clientNonce: nonce };
+        rawDispatch(sendAct);
+        const bot = stateRef.current.bots.find((b) => b.id === sendAct.botId);
+        rawDispatch({ type: "toggleComputer", open: true });
+        api(`/api/bots/${sendAct.botId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ text: sendAct.text, files: sendAct.files, clientNonce: nonce }),
+        }).catch((e) => {
+          if (bot) {
+            rawDispatch({ type: "messageFailed", threadId: bot.threadId, clientNonce: nonce });
+          }
+          showError(e);
+        });
+        return;
+      }
       rawDispatch(action);
       switch (action.type) {
-        case "send":
-          rawDispatch({ type: "toggleComputer", open: true });
+        case "retryMessage": {
+          const bot = stateRef.current.bots.find((b) => b.id === action.botId);
+          if (!bot) break;
+          const msg = bot.messages.find(
+            (m) =>
+              m.clientNonce === action.clientNonce ||
+              m.id === `optimistic:${action.clientNonce}`,
+          );
+          if (!msg) break;
+          rawDispatch({
+            type: "messagePatched",
+            threadId: bot.threadId,
+            message: { ...msg, status: "pending" },
+          });
           api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
-            body: JSON.stringify({ text: action.text, files: action.files }),
-          }).catch(showError);
+            body: JSON.stringify({
+              text: msg.text,
+              files: msg.files,
+              clientNonce: action.clientNonce,
+            }),
+          }).catch((e) => {
+            rawDispatch({
+              type: "messageFailed",
+              threadId: bot.threadId,
+              clientNonce: action.clientNonce,
+            });
+            showError(e);
+          });
           break;
+        }
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
@@ -257,6 +298,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "stuck":
           rawDispatch({ type: "error", message: frame.body ?? "A bot is stuck — no progress." });
           if (window.nexbot?.notify) void window.nexbot.notify(frame.name ?? "NexBot", frame.body ?? "");
+          break;
+        case "warning":
+          rawDispatch({ type: "error", message: frame.body ?? "Stream stalled — no token yet." });
           break;
         case "usage":
           if (frame.botId && frame.usage) {

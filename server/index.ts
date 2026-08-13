@@ -39,6 +39,7 @@ import { clipForTurn, handoffThreadIds, mentionedBots, Store, type Message } fro
 import { roleByTitle, SLEEP_WARNING, COS_PROMPT, isChiefOfStaffRole, isForbiddenFightAsk } from "./roles.ts";
 import { deleteSkill, listSkills, saveSkill, skillFromTurn, skillsPrompt } from "./skills.ts";
 import { checkSteerToken, loadSteerToken, rotateSteerToken, tokenFromRequest } from "./steer.ts";
+import { createNonceCache } from "./nonce.ts";
 import { createWatchdog, isComputerToolName } from "./watchdog.ts";
 import { pickDefaultSelection } from "./selection.ts";
 
@@ -92,7 +93,10 @@ type StartTurnOpts = {
   groupId?: string;
   fromBot?: { id: string; name: string; color?: string };
   chatText?: string;
+  clientNonce?: string;
 };
+
+const nonceCache = createNonceCache(60_000);
 
 function askBotAndWait(targetBotId: string, message: string, depth: number, extra?: Pick<StartTurnOpts, "fromBot" | "chatText">): Promise<string> {
   const target = store.bot(targetBotId);
@@ -168,7 +172,7 @@ bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
   const bot = store.botByThread(event.threadId);
   if (!bot) return;
-  const extra: { tokens?: { input: number; output: number }; computerTool?: boolean } = {};
+  const extra: { tokens?: { input: number; output: number }; computerTool?: boolean; isChunk?: boolean } = {};
   if (event.type === "thread.token-usage.updated") {
     extra.tokens = { input: event.input ?? 0, output: event.output ?? 0 };
     store.patchBot(bot.id, { usage: extra.tokens });
@@ -177,7 +181,12 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "item.started" && event.itemType === "tool") {
     extra.computerTool = isComputerToolName(event.title);
   }
-  watchdog.poke(bot.id, event.type, extra);
+  if (event.type === "content.delta") extra.isChunk = true;
+  const ttfrJustNow = watchdog.poke(bot.id, event.type, extra);
+  if (ttfrJustNow !== undefined) {
+    store.patchBot(bot.id, { lastTtfrMs: ttfrJustNow });
+    broadcast({ kind: "bot", bot: store.bot(bot.id) });
+  }
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, m);
@@ -219,12 +228,13 @@ bus.subscribe((event: RuntimeEvent) => {
         screens.poke(bot.id);
       }
       break;
-    case "item.started":
+    case "item.started": {
       if (event.itemType === "tool") {
         const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
         if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
       }
       break;
+    }
     case "request.opened": {
       if (event.requestType === "permission" && event.requestId) {
         const instance = registry.get(bot.modelSelection.instanceId);
@@ -270,7 +280,7 @@ bus.subscribe((event: RuntimeEvent) => {
       if (frame && meta?.computerTools) {
         pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
       }
-      store.patchBot(bot.id, { busy: false, unread: true });
+      store.patchBot(bot.id, { busy: false, unread: true, ...(meta?.ttfrMs !== undefined ? { lastTtfrMs: meta.ttfrMs } : {}) });
       turnGroup.delete(bot.id);
       forgetTurn(bot.id);
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
@@ -306,7 +316,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
   if (bot.kind === "group") {
     const members = (bot.memberIds ?? []).map((id) => store.bot(id)).filter(Boolean);
     if (members.length < 2) throw Object.assign(new Error("a group needs 2 to 6 teammates"), { status: 400 });
-    const userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+    const userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text, clientNonce: opts?.clientNonce });
     broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
     for (const member of members) {
       if (!member || member.busy) continue;
@@ -330,7 +340,12 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         text: opts.chatText ?? text,
         fromBot: opts.fromBot,
       })
-    : store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+    : store.appendMessage(bot.threadId, {
+        role: "user",
+        kind: "text",
+        text,
+        clientNonce: opts?.clientNonce,
+      });
   broadcast({ kind: "message", threadId: bot.threadId, message: incoming });
 
   // Last-30 text messages, each capped so huge strings cannot blow context.
@@ -408,6 +423,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
 
       await instance.adapter.sendTurn({
         threadId: bot.threadId,
+        botId: bot.id,
         text,
         model: bot.modelSelection.model,
         resumeCursor: undefined,
@@ -677,6 +693,10 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       const body = await readBody(req);
+      const clientNonce = typeof body.clientNonce === "string" ? body.clientNonce.trim() : undefined;
+      if (clientNonce && nonceCache.isDuplicate(m[1], clientNonce)) {
+        return json(res, 200, { ok: true, duplicate: true });
+      }
       let text = String(body.text ?? "").trim();
       const files = Array.isArray(body.files) ? body.files : [];
       if (files.length) {
@@ -693,8 +713,14 @@ const server = createServer(async (req, res) => {
         text = `${text}\n\nAttached files are in ${inboxPath(m[1])}.`.trim();
       }
       if (!text) return json(res, 400, { error: "text required" });
-      await startTurn(m[1], text);
-      return json(res, 202, { ok: true });
+      nonceCache.record(m[1], clientNonce);
+      try {
+        await startTurn(m[1], text, { clientNonce });
+      } catch (err) {
+        nonceCache.forget(m[1], clientNonce);
+        throw err;
+      }
+      return json(res, 202, { ok: true, clientNonce });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
@@ -1193,6 +1219,16 @@ server.listen(PORT, BIND, () => {
 
 setInterval(runDueRoutines, 30_000);
 setInterval(() => {
+  for (const row of watchdog.stalledBots()) {
+    const bot = store.bot(row.botId);
+    if (!bot?.busy) continue;
+    broadcast({
+      kind: "warning",
+      botId: bot.id,
+      name: bot.name,
+      body: `${bot.name} has not produced a token in 45s.`,
+    });
+  }
   for (const row of watchdog.stuckBots()) {
     const bot = store.bot(row.botId);
     if (!bot?.busy) {
