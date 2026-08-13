@@ -23,6 +23,7 @@ describe("skills", () => {
     });
     expect(saved.valid).toBe(true);
     expect(saved.slug).toBe("monday-report");
+    expect(saved.path.replaceAll("\\", "/")).toMatch(/skills\/monday-report\/SKILL.md$/);
     const listed = listSkills();
     expect(listed.some((s) => s.slug === "monday-report")).toBe(true);
     expect(deleteSkill("monday-report")).toBe(true);

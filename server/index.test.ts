@@ -538,4 +538,13 @@ describe("harness HTTP API", () => {
 
     await api("DELETE", `/api/bots/${id}`);
   });
+
+  it("GET /api/search hits FTS5 transcript text", async () => {
+    const found = await api("GET", "/api/search?q=" + encodeURIComponent("sleeps"));
+    expect(found.status).toBe(200);
+    expect(found.body.results.length).toBeGreaterThan(0);
+    expect(found.body.results.some((h: { text?: string }) => /sleep/i.test(h.text ?? ""))).toBe(true);
+    const empty = await api("GET", "/api/search?q=");
+    expect(empty.status).toBe(400);
+  });
 });

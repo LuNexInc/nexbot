@@ -229,7 +229,6 @@ export function skillFromTurn(input: {
 
 
 /** Distill a SKILL.md under ~/.nexbot/skills/<slug>/ from a multi-tool success turn. */
-export const autoDistillFromTurn = distillSkillFromTurn;
 export function distillSkillFromTurn(input: {
   name?: string;
   userText: string;
@@ -247,6 +246,8 @@ export function distillSkillFromTurn(input: {
 }
 
 /** null/missing = every valid desk skill; string[] = only those slugs. */
+export const autoDistillFromTurn = distillSkillFromTurn;
+
 export function skillsForBot(enabledSlugs?: string[] | null): SkillRecord[] {
   const all = listSkills().filter((s) => s.valid);
   if (enabledSlugs == null) return all;

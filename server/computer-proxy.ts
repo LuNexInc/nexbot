@@ -1,4 +1,4 @@
-import { isForbiddenSecretAccess } from "./environ-guard.ts";
+import { preToolHook } from "./tool-hooks.ts";
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
 // computer (box.ascii.dev) as CUA-grade tools.
@@ -211,8 +211,9 @@ async function call(id: unknown, name: string, args: any) {
   }
   if (name === "computer_exec") {
     const command = String(args.command ?? "").slice(0, 4000);
-    if (isForbiddenSecretAccess({ command })) {
-      return text(id, "NexBot: blocked a request to read process environment secrets", true);
+    const hook = preToolHook({ name: "computer_exec", command });
+    if (!hook.allow) {
+      return text(id, "NexBot: " + (hook.reason ?? "blocked a request to read process environment secrets"), true);
     }
     const out = await runOnBox(command, 120_000);
     return text(

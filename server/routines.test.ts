@@ -2,10 +2,13 @@ import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { createRoutine, deleteRoutinesForBot, dueRoutines, listRoutines, markRan, nextRunAfter, parseDailyAt, routineCreateError, watchPathEscapes } from "./routines.ts";
+import { closeStoreDb } from "./db.ts";
+import { createRoutine, deleteRoutine, deleteRoutinesForBot, dueRoutines, listRoutines, markRan, nextRunAfter, parseDailyAt, routineCreateError, watchPathEscapes } from "./routines.ts";
 
 describe("routines", () => {
   afterEach(() => {
+    for (const r of listRoutines()) deleteRoutine(r.id);
+    closeStoreDb();
     try {
       unlinkSync(join(DATA_DIR, "routines.json"));
     } catch {}
