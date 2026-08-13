@@ -6,7 +6,7 @@ import { OptionCard } from "./OptionCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
-import { isGutsActivity } from "@/lib/activity";
+import { isGutsActivity, stripWorkingNarration } from "@/lib/activity";
 import type { NexColor } from "@/lib/mascot";
 
 // Minimal markdown for bot bubbles: **bold**, `code`, headings, lists.
@@ -72,12 +72,20 @@ function Markdownish({ text }: { text: string }) {
   );
 }
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({
+  message,
+  onRetry,
+}: {
+  message: Message;
+  onRetry?: (message: Message) => void;
+}) {
   const fromBot = message.fromBot;
   const user = message.role === "user" && !fromBot;
+  const isPending = message.status === "pending";
+  const isFailed = message.status === "failed";
   return (
     <div className={cn("flex w-full", user ? "justify-end" : "justify-start")}>
-      <div className="flex max-w-[70%] flex-col gap-1">
+      <div className={cn("flex max-w-[70%] flex-col gap-1", isPending && "opacity-60")}>
         {fromBot && (
           <div className="flex items-center gap-1.5 px-0.5">
             <NexAvatar color={(fromBot.color as NexColor) ?? "green"} name={fromBot.name} size={18} />
@@ -87,11 +95,26 @@ function Bubble({ message }: { message: Message }) {
         <div
           className={cn(
             "rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
-            user ? "whitespace-pre-wrap bg-black/12 text-ink" : "bg-black/6 text-ink",
+            user
+              ? isFailed
+                ? "whitespace-pre-wrap border border-danger/30 bg-danger/10 text-danger"
+                : "whitespace-pre-wrap bg-black/12 text-ink"
+              : "bg-black/6 text-ink",
           )}
         >
           {user ? message.text : <Markdownish text={message.text ?? ""} />}
         </div>
+        {isFailed && onRetry && (
+          <div className="flex items-center justify-end gap-1 px-1 text-[11px] text-danger">
+            <span>Failed to send.</span>
+            <button
+              onClick={() => onRetry(message)}
+              className="font-medium underline hover:text-danger/80"
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -141,6 +164,19 @@ function StreamingBubble({ text }: { text: string }) {
       <div className="max-w-[70%] rounded-2xl bg-black/6 px-4 py-2.5 text-[15px] leading-relaxed text-ink">
         <Markdownish text={text} />
         <span className="ml-0.5 inline-block h-[14px] w-[2px] animate-pulse bg-ink-secondary align-middle" />
+      </div>
+    </div>
+  );
+}
+
+
+function BusyDots() {
+  return (
+    <div className="flex justify-start">
+      <div className="flex items-center gap-1.5 rounded-2xl bg-raised px-4 py-3">
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms]" />
       </div>
     </div>
   );
@@ -245,8 +281,14 @@ export function ChatView({ bot }: { bot: Bot }) {
                 return isGutsActivity(m) ? null : <ActivityChip key={m.id} message={m} />;
               case "screen":
                 return m.png ? <ScreenFrame key={m.id} png={m.png} mime={m.mime} /> : null;
-              default:
+              default: {
+                if (m.role === "bot") {
+                  const shown = stripWorkingNarration(m.text ?? "");
+                  if (!shown) return null;
+                  return <Bubble key={m.id} message={shown === m.text ? m : { ...m, text: shown }} />;
+                }
                 return <Bubble key={m.id} message={m} />;
+              }
             }
           })}
           {provisioning && (
@@ -258,17 +300,13 @@ export function ChatView({ bot }: { bot: Bot }) {
             </div>
           )}
           {streaming ? (
-            <StreamingBubble text={streaming} />
-          ) : (
-            bot.busy && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-1.5 rounded-2xl bg-raised px-4 py-3">
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms]" />
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms]" />
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms]" />
-                </div>
-              </div>
+            stripWorkingNarration(streaming) ? (
+              <StreamingBubble text={stripWorkingNarration(streaming)} />
+            ) : (
+              bot.busy && <BusyDots />
             )
+          ) : (
+            bot.busy && <BusyDots />
           )}
         </div>
       </div>

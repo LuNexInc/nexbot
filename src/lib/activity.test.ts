@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGutsActivity } from "./activity";
+import { isGutsActivity, isWorkingNarration, stripWorkingNarration } from "./activity";
 
 describe("isGutsActivity", () => {
   it("hides listed internal tool pills", () => {
@@ -40,5 +40,27 @@ describe("isGutsActivity", () => {
     ).toBe(false);
     expect(isGutsActivity({ kind: "text", tool: { name: "list_dir" } })).toBe(false);
     expect(isGutsActivity({ kind: "text" })).toBe(false);
+  });
+});
+
+describe("stripWorkingNarration", () => {
+  it("hides a bubble that is only I'll-pull / updating-the-note", () => {
+    expect(isWorkingNarration("I'll pull the current workspace state.")).toBe(true);
+    expect(stripWorkingNarration("I'll pull the current workspace state.")).toBe("");
+    expect(stripWorkingNarration("Updating the day log and writing a short handoff.")).toBe("");
+    expect(stripWorkingNarration("Checking the desk.")).toBe("");
+    expect(stripWorkingNarration("Let me see.")).toBe("");
+  });
+
+  it("keeps a real answer and strips leading preamble", () => {
+    expect(
+      stripWorkingNarration(
+        "I'll pull the current workspace state first so I can give you a real status, not a recap.Updating the day log and writing a short handoff so this status ping is on the record.Quiet night. Two things on the board.",
+      ),
+    ).toBe("Quiet night. Two things on the board.");
+    expect(stripWorkingNarration("Quiet night. Two things on the board.")).toBe(
+      "Quiet night. Two things on the board.",
+    );
+    expect(isWorkingNarration("Hey. Nothing's on fire.")).toBe(false);
   });
 });
