@@ -52,6 +52,18 @@ describe("stripWorkingNarration", () => {
     expect(stripWorkingNarration("Let me see.")).toBe("");
   });
 
+  it("hides I'll-confirm / day-note / I'll-give-you working-narration", () => {
+    expect(stripWorkingNarration("I'll confirm nothing newer landed.")).toBe("");
+    expect(stripWorkingNarration("Updating the day note.")).toBe("");
+    expect(stripWorkingNarration("I'll give you the short version.")).toBe("");
+    expect(stripWorkingNarration("I'll give you the two items.")).toBe("");
+    expect(
+      stripWorkingNarration(
+        "Two open items from today - I'll confirm nothing newer landed…Updating the day note, then I'll give you the two items…",
+      ),
+    ).toBe("");
+  });
+
   it("keeps a real answer and strips leading preamble", () => {
     expect(
       stripWorkingNarration(
@@ -62,5 +74,13 @@ describe("stripWorkingNarration", () => {
       "Quiet night. Two things on the board.",
     );
     expect(isWorkingNarration("Hey. Nothing's on fire.")).toBe(false);
+    expect(
+      stripWorkingNarration(
+        "I'll give you the short version. Two things: Bloominary still needs a look and Basiliskos is the other item.",
+      ),
+    ).toBe("Two things: Bloominary still needs a look and Basiliskos is the other item.");
+    expect(
+      stripWorkingNarration("Two things: Bloominary… Basiliskos still needs a human check."),
+    ).toBe("Two things: Bloominary… Basiliskos still needs a human check.");
   });
 });

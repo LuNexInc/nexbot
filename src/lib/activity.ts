@@ -51,21 +51,28 @@ export function isGutsActivity(message: ActivityLike): boolean {
   return true;
 }
 
-/** CoS working-narration that must not render as its own bubble. */
-const NARRATION_RE =
-  /^(?:i['’]ll\s+(?:pull|check|look first)\b|checking\b|updating the (?:note|day log|dated note|session note)\b|writing a short handoff\b|let me see\b)/i;
+/** Leading working-narration: I'll-pull / I'll-confirm / updating-the-note / I'll-give-you. */
+const NARRATION_HEAD =
+  /^(?:i['’]ll\s+(?:pull|check|look first|confirm|give you)\b|checking\b|updating the (?:note|day note|day log|dated note|session note)\b|writing a short handoff\b|let me see\b)/i;
 
-/** Drop leading I'll-pull / checking / updating-the-note sentences. Empty = hide the bubble. */
+/** Same phrases after a dash or mid-sentence so concatenated preamble still drops. */
+const NARRATION_INNER =
+  /\b(?:i['’]ll\s+(?:pull|check|look first|confirm|give you)\b|updating the (?:note|day note|day log|dated note|session note)\b|writing a short handoff\b)/i;
+
+function isNarrationSentence(sentence: string): boolean {
+  const t = sentence.trim();
+  if (!t) return true;
+  return NARRATION_HEAD.test(t) || NARRATION_INNER.test(t);
+}
+
+/** Drop I'll-pull / I'll-confirm / updating-the-note / I'll-give-you sentences. Empty = hide the bubble. */
 export function stripWorkingNarration(text: string): string {
-  let rest = text.trim();
-  while (rest && NARRATION_RE.test(rest)) {
-    const cut = rest.match(/^[^.!?]*[.!?]?(?:\s+|(?=[A-Z"“])|$)/);
-    if (!cut?.[0]) break;
-    const next = rest.slice(cut[0].length).trim();
-    if (!next || next === rest) return "";
-    rest = next;
-  }
-  return rest;
+  const rest = text
+    .trim()
+    .replace(/([.!?])(?=[A-Z"“])/g, "$1 ")
+    .replace(/…\s*(?=i['’]ll\b|updating\b|checking\b|writing a short handoff\b|let me see\b)/gi, ". ");
+  const parts = rest.split(/(?<=[.!?])\s+/).filter((p) => p.trim());
+  return parts.filter((p) => !isNarrationSentence(p)).join(" ").trim();
 }
 
 /** True when the whole text is working narration (no real answer left). */
