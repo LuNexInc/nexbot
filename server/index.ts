@@ -573,7 +573,9 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && path === "/api/bots") {
       const body = await readBody(req).catch(() => ({}));
       const kind = body.kind === "group" ? "group" : "bot";
-      const memberIds = Array.isArray(body.memberIds) ? [...new Set(body.memberIds.map(String))] : [];
+      const memberIds: string[] = Array.isArray(body.memberIds)
+        ? [...new Set((body.memberIds as unknown[]).map((id) => String(id)))]
+        : [];
       if (kind === "group") {
         const invalid = groupMemberError(memberIds);
         if (invalid) return json(res, 400, { error: invalid });
@@ -846,7 +848,8 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/routines\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
-      const existing = listRoutines().find((row) => row.id === m[1]);
+      const routineId = m[1];
+      const existing = listRoutines().find((row) => row.id === routineId);
       if (!existing) return json(res, 404, { error: "no such routine" });
       const merged = { ...existing, ...body };
       const invalid = routineCreateError({
