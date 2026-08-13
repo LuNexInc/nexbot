@@ -323,26 +323,12 @@ bus.subscribe((event: RuntimeEvent) => {
         const assistantText = [...msgs].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "";
         autoDistillFromTurn({ userText, assistantText, toolNames: used.okNames });
       }
-      if (bot.memoryEnabled) enqueueMemoryJob(bot.id);
       turnGroup.delete(bot.id);
       forgetTurn(bot.id);
       if (bot.memoryEnabled) {
         const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
         enqueueMemoryJob(bot.id, last?.text);
       }
-      try {
-        const msgs = store.messagesFor(bot.threadId);
-        let lastUser = 0;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
-        }
-        const slice = msgs.slice(lastUser);
-        distillSkillFromTurn({
-          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
-          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
-          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
-        });
-      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       if (bot.notifications !== false) {
         broadcast({ kind: "notify", botId: bot.id, title: bot.name, body: `${bot.name} finished.` });
@@ -522,23 +508,6 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       watchdog.end(bot.id);
       turnGroup.delete(bot.id);
       forgetTurn(bot.id);
-      if (bot.memoryEnabled) {
-        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
-        enqueueMemoryJob(bot.id, last?.text);
-      }
-      try {
-        const msgs = store.messagesFor(bot.threadId);
-        let lastUser = 0;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
-        }
-        const slice = msgs.slice(lastUser);
-        distillSkillFromTurn({
-          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
-          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
-          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
-        });
-      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
     }
   })();
@@ -837,23 +806,6 @@ const server = createServer(async (req, res) => {
       turnGroup.delete(bot.id);
       store.patchBot(bot.id, { busy: false });
       forgetTurn(bot.id);
-      if (bot.memoryEnabled) {
-        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
-        enqueueMemoryJob(bot.id, last?.text);
-      }
-      try {
-        const msgs = store.messagesFor(bot.threadId);
-        let lastUser = 0;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === "user" && msgs[i].kind === "text") { lastUser = i; break; }
-        }
-        const slice = msgs.slice(lastUser);
-        distillSkillFromTurn({
-          userText: slice.find((m) => m.role === "user" && m.kind === "text")?.text ?? "",
-          assistantText: [...slice].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "",
-          toolNames: slice.filter((m) => m.kind === "activity" && m.tool?.name).map((m) => m.tool!.name),
-        });
-      } catch { /* distill is best-effort */ }
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       return json(res, 200, { ok: true });
     }
