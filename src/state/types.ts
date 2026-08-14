@@ -76,8 +76,6 @@ export interface Bot {
   /** Time to first token in milliseconds from last turn */
   lastTtfrMs?: number;
   proactiveEnabled?: boolean;
-  proactiveIntervalMinutes?: number;
-  proactiveLastAt?: number;
   completionPings?: boolean;
   /** Live durable checklist from the todo tool. */
   todos?: TodoItem[];
@@ -192,7 +190,7 @@ export type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "proactiveIntervalMinutes" | "completionPings"
+          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings"
         >
       >;
     };

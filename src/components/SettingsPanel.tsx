@@ -181,7 +181,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "proactiveIntervalMinutes" | "completionPings">
+      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings">
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const [profile, setProfile] = useState("");
@@ -421,8 +421,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   <div className="text-[15px] font-medium text-ink">Proactive work</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
                     {bot.name.toLowerCase() === "luna" || bot.title.toLowerCase().includes("chief of staff")
-                      ? "Luna checks the desk more often and sends completion reports."
-                      : "This teammate checks active work and can send useful updates without a prompt."}
+                      ? "Luna takes the lead when tasks change and sends completion reports."
+                      : "This teammate acts when a task changes or needs follow-up."}
                   </div>
                 </div>
                 <button
@@ -441,20 +441,6 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     )}
                   />
                 </button>
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-[13px] text-ink-secondary">Check every</span>
-                <select
-                  className="rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13px] text-ink"
-                  value={bot.proactiveIntervalMinutes ?? (bot.name.toLowerCase() === "luna" ? 15 : 60)}
-                  onChange={(e) => patch({ proactiveIntervalMinutes: Number(e.target.value) })}
-                >
-                  {[5, 15, 30, 60, 120, 240].map((minutes) => (
-                    <option key={minutes} value={minutes}>
-                      {minutes < 60 ? `${minutes} minutes` : `${minutes / 60} hour${minutes === 60 ? "" : "s"}`}
-                    </option>
-                  ))}
-                </select>
               </div>
               <div className="mt-3 flex items-center justify-between gap-4 border-t border-hairline/30 pt-3">
                 <div>
