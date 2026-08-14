@@ -1,3 +1,12 @@
+import {
+  Blocks,
+  Compass,
+  ListChecks,
+  MessageCircle,
+  Search,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react";
 import { NEX_COLORS, type NexColor, type NexExpression, type NexMotion } from "@/lib/mascot";
 
 export function botInitials(name?: string): string {
@@ -7,6 +16,22 @@ export function botInitials(name?: string): string {
   if (words.length >= 2) return `${words[0]![0]!}${words[1]![0]!}`.toUpperCase();
   return n.slice(0, 1).toUpperCase();
 }
+
+/**
+ * Role marks stay recognizable when the bot name is one of the seeded roles.
+ * Custom names keep initials until the user gives them a known role name.
+ */
+export function botLogoForName(name?: string): LucideIcon | null {
+  const profile = name?.trim().toLowerCase() ?? "";
+  if (/\b(chief of staff|luna|staff)\b/.test(profile)) return Compass;
+  if (/\b(research|researcher|index|brief|writing|knowledge)\b/.test(profile)) return Search;
+  if (/\b(builder|forge|build|project|engineer)\b/.test(profile)) return Blocks;
+  if (/\b(communication|communications|comms|message|outreach)\b/.test(profile)) return MessageCircle;
+  if (/\b(operation|operations|ops|desk|inbox)\b/.test(profile)) return ListChecks;
+  if (/\b(creative|spark|design|idea)\b/.test(profile)) return Sparkles;
+  return null;
+}
+
 export function NexAvatar({
   color,
   size = 44,
@@ -25,6 +50,7 @@ export function NexAvatar({
 }) {
   const fill = NEX_COLORS[color] ?? NEX_COLORS.green;
   const initials = botInitials(name ?? label);
+  const Logo = botLogoForName(name ?? label);
 
   const isThinking = motion === "thinking" || motion === "working";
   const isActing = motion === "launch" || motion === "blink";
@@ -81,7 +107,16 @@ export function NexAvatar({
         />
       )}
 
-      <span className="relative z-10 font-semibold">{initials}</span>
+      {Logo ? (
+        <Logo
+          className="relative z-10"
+          size={Math.max(15, Math.round(size * 0.46))}
+          strokeWidth={1.85}
+          aria-hidden="true"
+        />
+      ) : (
+        <span className="relative z-10 font-semibold">{initials}</span>
+      )}
     </div>
   );
 }

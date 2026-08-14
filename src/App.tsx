@@ -15,8 +15,10 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ComputerHUD } from "@/components/ComputerHUD";
 
 function Shell() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [commandOpen, setCommandOpen] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.innerWidth <= 900);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900);
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
   // Windows titleBarOverlay draws caption buttons over the top of the window;
   // pad content so App Settings / chat header are not under the drag strip.
@@ -33,11 +35,30 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const onResize = () => {
+      const nextNarrow = window.innerWidth <= 900;
+      setNarrow(nextNarrow);
+      if (nextNarrow) setSidebarOpen(false);
+      else setSidebarOpen(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   return (
     <div className={`relative flex h-full bg-transparent ${winPad ? "pt-9" : ""}`}>
-      <Sidebar />
+      {narrow && sidebarOpen && (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-black/20 max-[900px]:block"
+          aria-label="Close sidebar"
+        />
+      )}
+      <Sidebar open={sidebarOpen} />
       {bot ? (
-        <ChatView bot={bot} />
+        <ChatView bot={bot} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           {state.connected ? (
@@ -47,6 +68,20 @@ function Shell() {
                 The desk starts with Chief of Staff and Research. Use the sidebar
                 plus (Meet a teammate) to add more.
               </p>
+              <button
+                type="button"
+                onClick={() =>
+                  dispatch({
+                    type: "newBot",
+                    name: "Research",
+                    title: "Research & briefings",
+                    description: "Find sources and write concise briefings. Leave useful notes in your desk.",
+                  })
+                }
+                className="pressable rounded-lg bg-ink px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90"
+              >
+                Add Research
+              </button>
             </>
           ) : (
             <>
