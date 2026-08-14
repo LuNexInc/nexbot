@@ -181,7 +181,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds">
+      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "proactiveIntervalMinutes" | "completionPings">
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const [profile, setProfile] = useState("");
@@ -413,6 +413,73 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           </div>
 
           <AgentSkills bot={bot} patch={patch} />
+
+          {bot.kind !== "group" && (
+            <div className="rounded-xl bg-card p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-[15px] font-medium text-ink">Proactive work</div>
+                  <div className="mt-0.5 text-[13px] text-ink-secondary">
+                    {bot.name.toLowerCase() === "luna" || bot.title.toLowerCase().includes("chief of staff")
+                      ? "Luna checks the desk more often and sends completion reports."
+                      : "This teammate checks active work and can send useful updates without a prompt."}
+                  </div>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={bot.proactiveEnabled !== false}
+                  onClick={() => patch({ proactiveEnabled: bot.proactiveEnabled === false })}
+                  className={cn(
+                    "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                    bot.proactiveEnabled !== false ? "bg-accent" : "bg-raised",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                      bot.proactiveEnabled !== false ? "left-[21px]" : "left-[3px]",
+                    )}
+                  />
+                </button>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-[13px] text-ink-secondary">Check every</span>
+                <select
+                  className="rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13px] text-ink"
+                  value={bot.proactiveIntervalMinutes ?? (bot.name.toLowerCase() === "luna" ? 15 : 60)}
+                  onChange={(e) => patch({ proactiveIntervalMinutes: Number(e.target.value) })}
+                >
+                  {[5, 15, 30, 60, 120, 240].map((minutes) => (
+                    <option key={minutes} value={minutes}>
+                      {minutes < 60 ? `${minutes} minutes` : `${minutes / 60} hour${minutes === 60 ? "" : "s"}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-4 border-t border-hairline/30 pt-3">
+                <div>
+                  <div className="text-[13px] font-medium text-ink">Report completed tasks to CoS</div>
+                  <div className="mt-0.5 text-[12px] text-ink-secondary">Luna receives a concise result or blocker.</div>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={bot.completionPings !== false}
+                  onClick={() => patch({ completionPings: bot.completionPings === false })}
+                  className={cn(
+                    "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                    bot.completionPings !== false ? "bg-accent" : "bg-raised",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                      bot.completionPings !== false ? "left-[21px]" : "left-[3px]",
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>

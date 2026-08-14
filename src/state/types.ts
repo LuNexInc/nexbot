@@ -14,7 +14,6 @@ export interface OptionCardData {
   /** Mask the free-text answer (API keys, tokens). */
   secret?: boolean;
 }
-
 export interface Message {
   id: string;
   role: "bot" | "user";
@@ -22,12 +21,14 @@ export interface Message {
   text?: string;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  tool?: { name: string; ok?: boolean; durationMs?: number; output?: string; error?: string; input?: unknown };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
   /** teammate speaking in this thread (ask_bot / A2A) */
   fromBot?: { id: string; name: string; color?: string };
+  /** why an internal message was added to the transcript */
+  source?: "user" | "agent" | "routine" | "proactive" | "completion";
   at: number;
   /** client nonce for optimistic send and deduplication */
   clientNonce?: string;
@@ -74,6 +75,10 @@ export interface Bot {
   usage?: { input: number; output: number };
   /** Time to first token in milliseconds from last turn */
   lastTtfrMs?: number;
+  proactiveEnabled?: boolean;
+  proactiveIntervalMinutes?: number;
+  proactiveLastAt?: number;
+  completionPings?: boolean;
   /** Live durable checklist from the todo tool. */
   todos?: TodoItem[];
   messages: Message[];
@@ -187,7 +192,7 @@ export type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds"
+          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "proactiveIntervalMinutes" | "completionPings"
         >
       >;
     };

@@ -17,7 +17,7 @@ import {
   Users,
   BookOpen,
 } from "lucide-react";
-import { useStore, formatTime, type Bot } from "@/state/store";
+import { useStore, type Bot } from "@/state/store";
 import { NexAvatar, InitialsAvatar } from "./Avatar";
 import { NexMark } from "./NexMark";
 import { cn } from "@/lib/cn";
@@ -29,7 +29,6 @@ function isChiefOfStaffBot(bot: Bot): boolean {
   const t = (bot.title ?? "").trim().toLowerCase();
   return n === "chief of staff" || n === "luna" || t.includes("chief of staff");
 }
-
 /** "Ada Lovelace" → "AL", "ada" → "A", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
   const name = profile?.name?.trim();
@@ -165,10 +164,42 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
   );
 }
 
-function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
+function renderSubtitle(bot: Bot) {
+  const pendingCard = bot.messages.find((m) => m.kind === "options" && m.card && !m.card.answered && !m.card.dismissed);
+  if (pendingCard?.card) {
+    return (
+      <span className="truncate text-[12px] font-medium text-amber-600 dark:text-amber-400">
+        Approval required: {pendingCard.card.title}
+      </span>
+    );
+  }
+  if (bot.busy) {
+    const lastUser = [...bot.messages].reverse().find((m) => m.role === "user");
+    return (
+      <span className="truncate text-[12px] text-ink-secondary italic">
+        Draft: {lastUser?.text ? lastUser.text.slice(0, 30) : "in progress…"}
+      </span>
+    );
+  }
+  return (
+    <span className="truncate text-[12px] text-ink-secondary font-normal">
+      {preview(bot)}
+    </span>
+  );
+}
+
+function BotListItem({
+  bot,
+  index,
+  onMenu,
+}: {
+  bot: Bot;
+  index?: number;
+  onMenu: (menu: MenuState) => void;
+}) {
   const { state, dispatch } = useStore();
   const selected = state.selectedId === bot.id;
-  const last = bot.messages[bot.messages.length - 1];
+  const mascot = state.mascotMotion?.botId === bot.id ? state.mascotMotion : undefined;
   return (
     <button
       onClick={() => dispatch({ type: "select", id: bot.id })}
@@ -177,35 +208,47 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
         onMenu({ botId: bot.id, x: e.clientX, y: e.clientY });
       }}
       className={cn(
-        "pressable flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left",
-        selected ? "bg-black/6" : "hover:bg-black/4",
+        "pressable relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all",
+        selected
+          ? "bg-black/8 shadow-sm font-semibold"
+          : "hover:bg-black/4",
       )}
     >
-      <NexAvatar color={bot.color} name={bot.name} size={40} />
+      <div className="relative">
+        <NexAvatar
+          color={bot.color}
+          name={bot.name}
+          size={38}
+          motion={mascot?.kind}
+          motionKey={mascot?.nonce}
+        />
+        {bot.busy && (
+          <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-white bg-emerald-500 animate-pulse" />
+        )}
+      </div>
+
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
-            {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-[14px] font-semibold text-ink">
+            {bot.pinned && <Pin size={11} className="shrink-0 text-ink-secondary" />}
             <span className="truncate">{bot.name}</span>
           </span>
-          {selected && last && (
-            <span className="shrink-0 text-xs text-ink-secondary">
-              {formatTime(last.at)}
-            </span>
+          {index !== undefined && index < 9 && (
+            <kbd className="shrink-0 rounded border border-black/8 bg-black/4 px-1 text-[10px] font-mono text-ink-secondary opacity-60">
+              {index + 1}
+            </kbd>
           )}
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] text-ink-secondary">
-            {preview(bot)}
-          </span>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          {renderSubtitle(bot)}
           <span className="flex shrink-0 items-center gap-1">
             {bot.busy && (
-              <span className="glass rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none text-ink">
-                Busy
+              <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                Live
               </span>
             )}
             {bot.unread && (
-              <span className="glass rounded-full bg-ink/8 px-1.5 py-0.5 text-[10px] font-medium leading-none text-ink">
+              <span className="rounded-full bg-ink px-1.5 py-0.5 text-[9px] font-semibold text-white animate-spring-pop">
                 New
               </span>
             )}
@@ -304,15 +347,20 @@ export function Sidebar() {
           <>
             <SectionLabel>Pinned</SectionLabel>
             <div className="flex flex-col gap-0.5">
-              {pinnedBots.map((b) => (
-                <BotListItem key={b.id} bot={b} onMenu={setMenu} />
+              {pinnedBots.map((b, i) => (
+                <BotListItem key={b.id} bot={b} index={i} onMenu={setMenu} />
               ))}
             </div>
           </>
         )}
         <div className={cn("flex flex-col gap-0.5", pinnedBots.length > 0 && "mt-1")}>
-          {restBots.map((b) => (
-            <BotListItem key={b.id} bot={b} onMenu={setMenu} />
+          {restBots.map((b, i) => (
+            <BotListItem
+              key={b.id}
+              bot={b}
+              index={pinnedBots.length + i}
+              onMenu={setMenu}
+            />
           ))}
         </div>
       </div>

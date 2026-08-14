@@ -11,12 +11,28 @@ import { ComputerPanel } from "@/components/ComputerPanel";
 import { AppSettingsPanel } from "@/components/AppSettingsPanel";
 import { SkillsPanel } from "@/components/SkillsPanel";
 
+import { CommandPalette } from "@/components/CommandPalette";
+import { ComputerHUD } from "@/components/ComputerHUD";
+
 function Shell() {
   const { state } = useStore();
+  const [commandOpen, setCommandOpen] = useState(false);
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
   // Windows titleBarOverlay draws caption buttons over the top of the window;
   // pad content so App Settings / chat header are not under the drag strip.
   const winPad = window.nexbot?.platform === "win32";
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className={`relative flex h-full bg-transparent ${winPad ? "pt-9" : ""}`}>
       <Sidebar />
@@ -45,13 +61,14 @@ function Shell() {
       )}
       {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
       {state.computerOpen && bot && <ComputerPanel bot={bot} />}
+      {bot && <ComputerHUD bot={bot} />}
       {state.appSettingsOpen && <AppSettingsPanel />}
       {state.pluginsOpen && <PluginsPanel />}
       {state.skillsOpen && <SkillsPanel />}
+      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
     </div>
   );
 }
-
 export default function App() {
   const [gated, setGated] = useState(() => !emailGateDone());
   useEffect(() => {
