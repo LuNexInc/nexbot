@@ -52,6 +52,10 @@ public final class MainActivity extends AppCompatActivity {
 
     private SharedPreferences preferences;
     private WebView webView;
+    private FrameLayout shellRoot;
+    private ImageView connectionFab;
+    private MaterialCardView connectionSheet;
+    private MaterialButton unpairButton;
     private WireGuardTunnelController vpnController;
     private ExecutorService vpnExecutor;
 
@@ -111,6 +115,7 @@ public final class MainActivity extends AppCompatActivity {
         if (link.token != null) {
             savePairing(link);
             showShell();
+            showPairingToast();
         } else {
             showPairing(null);
             fillPairingFields(link);
@@ -526,6 +531,7 @@ public final class MainActivity extends AppCompatActivity {
             if (link.token != null) {
                 savePairing(link);
                 showShell();
+                showPairingToast();
             } else {
                 fillPairingFields(link);
                 openManualPanel(true);
@@ -547,11 +553,16 @@ public final class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     savePairing(exchanged);
                     showShell();
+                    showPairingToast();
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> showPairingError(error));
             }
         });
+    }
+
+    private void showPairingToast() {
+        android.widget.Toast.makeText(this, "Paired — opening Messages", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void addShellHeader(LinearLayout parent) {
@@ -583,7 +594,7 @@ public final class MainActivity extends AppCompatActivity {
         vpnStatusDot.setBackground(circle(color(R.color.nexbot_warning)));
         content.addView(vpnStatusDot, params(dp(10), dp(10), 0, 0, 10, 0));
         LinearLayout copy = column();
-        copy.addView(eyebrow("CONNECTION"));
+        copy.addView(eyebrow("VPN"));
         vpnStatus = heading("Off", 15);
         copy.addView(vpnStatus, params(-1, -2, 0, 2, 0, 0));
         vpnHint = text("Local connection", 11, color(R.color.nexbot_on_surface_secondary));
@@ -632,6 +643,93 @@ public final class MainActivity extends AppCompatActivity {
         ((LinearLayout.LayoutParams) webView.getLayoutParams()).weight = 1f;
     }
 
+    private void addWorkspace(FrameLayout parent) {
+        webView = new WebView(this);
+        webView.setBackgroundColor(color(R.color.nexbot_background));
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.getSettings().setJavaScriptEnabled(true);
+        webView.getSettings().setDomStorageEnabled(true);
+        webView.getSettings().setBuiltInZoomControls(false);
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri target = request.getUrl();
+                Uri base = Uri.parse(savedBaseUrl());
+                boolean sameHost = base.getHost() != null && base.getHost().equalsIgnoreCase(target.getHost());
+                if (sameHost || (vpnActive && "10.77.0.1".equals(target.getHost()))) return false;
+                startActivity(new Intent(Intent.ACTION_VIEW, target));
+                return true;
+            }
+        });
+        parent.addView(webView, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void addConnectionOverlay(FrameLayout parent) {
+        connectionSheet = card(color(R.color.nexbot_surface));
+        connectionSheet.setVisibility(View.GONE);
+        connectionSheet.setElevation(dp(18));
+        LinearLayout sheetContent = column();
+        sheetContent.setPadding(dp(14), dp(14), dp(14), dp(14));
+
+        LinearLayout titleRow = row();
+        LinearLayout titleCopy = column();
+        titleCopy.addView(heading("Connection", 16));
+        titleCopy.addView(text("Private access to this workspace", 11, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 3, 0, 0));
+        titleRow.addView(titleCopy, params(0, -2, 0, 0, 8, 0));
+        MaterialButton close = textButton("Close");
+        titleRow.addView(close, params(-2, dp(40)));
+        close.setOnClickListener(v -> setConnectionSheetVisible(false));
+        sheetContent.addView(titleRow);
+
+        addVpnCard(sheetContent);
+
+        unpairButton = textButton("Unpair this phone");
+        unpairButton.setTextColor(color(R.color.nexbot_error));
+        sheetContent.addView(unpairButton, params(-1, dp(42), 0, 6, 0, 0));
+        unpairButton.setOnClickListener(v -> {
+            setConnectionSheetVisible(false);
+            disconnectVpn();
+            preferences.edit().clear().apply();
+            if (webView != null) webView.destroy();
+            showPairing(null);
+        });
+
+        connectionSheet.addView(sheetContent, new ViewGroup.LayoutParams(-1, -2));
+        FrameLayout.LayoutParams sheetParams = new FrameLayout.LayoutParams(dp(292), -2, Gravity.BOTTOM | Gravity.END);
+        sheetParams.setMargins(dp(16), dp(16), dp(16), dp(156));
+        parent.addView(connectionSheet, sheetParams);
+
+        connectionFab = new ImageView(this);
+        connectionFab.setImageResource(R.drawable.ic_shield);
+        connectionFab.setPadding(dp(14), dp(14), dp(14), dp(14));
+        connectionFab.setBackground(circle(color(R.color.nexbot_accent_soft)));
+        connectionFab.setColorFilter(color(R.color.nexbot_accent_strong));
+        connectionFab.setContentDescription("Connection settings");
+        connectionFab.setClickable(true);
+        connectionFab.setFocusable(true);
+        connectionFab.setElevation(dp(12));
+        connectionFab.setOnClickListener(v -> setConnectionSheetVisible(connectionSheet.getVisibility() != View.VISIBLE));
+        FrameLayout.LayoutParams fabParams = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.BOTTOM | Gravity.END);
+        fabParams.setMargins(dp(16), dp(16), dp(18), dp(92));
+        parent.addView(connectionFab, fabParams);
+    }
+
+    private void setConnectionSheetVisible(boolean visible) {
+        if (connectionSheet == null) return;
+        if (visible) {
+            connectionSheet.setVisibility(View.VISIBLE);
+            connectionSheet.setAlpha(0f);
+            connectionSheet.setTranslationY(dp(12));
+            connectionSheet.animate().alpha(1f).translationY(0).setDuration(180).start();
+        } else {
+            connectionSheet.animate().alpha(0f).translationY(dp(12)).setDuration(140).withEndAction(() -> {
+                connectionSheet.setVisibility(View.GONE);
+                connectionSheet.setAlpha(1f);
+                connectionSheet.setTranslationY(0);
+            }).start();
+        }
+    }
+
     private String displayHost(boolean throughVpn) {
         if (throughVpn) return "10.77.0.1 · private tunnel";
         Uri base = Uri.parse(savedBaseUrl() == null ? "http://host" : savedBaseUrl());
@@ -639,13 +737,11 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void showShell() {
-        LinearLayout root = column();
-        root.setBackgroundColor(color(R.color.nexbot_background));
-        root.setPadding(0, dp(4), 0, 0);
-        addShellHeader(root);
-        addVpnCard(root);
-        addWorkspace(root);
-        setContentView(root);
+        shellRoot = new FrameLayout(this);
+        shellRoot.setBackgroundColor(color(R.color.nexbot_background));
+        addWorkspace(shellRoot);
+        addConnectionOverlay(shellRoot);
+        setContentView(shellRoot);
         loadShellUrl(false);
         refreshVpnState();
     }
@@ -821,6 +917,10 @@ public final class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
+        if (connectionSheet != null && connectionSheet.getVisibility() == View.VISIBLE) {
+            setConnectionSheetVisible(false);
+            return;
+        }
         if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
     }
