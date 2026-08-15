@@ -359,7 +359,7 @@ public final class MainActivity extends AppCompatActivity {
         pairingHostInput.setSingleLine(true);
         pairingHostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         pairingHostInput.setTextSize(16);
-        hostLayout.addView(pairingHostInput, new ViewGroup.LayoutParams(-1, dp(56)));
+        hostLayout.addView(pairingHostInput, new LinearLayout.LayoutParams(-1, dp(56)));
         manualPanel.addView(hostLayout, params(-1, -2, 0, 18, 0, 0));
 
         TextInputLayout codeLayout = new TextInputLayout(this);
@@ -372,7 +372,7 @@ public final class MainActivity extends AppCompatActivity {
         pairingCodeInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
         pairingCodeInput.setTextSize(20);
         pairingCodeInput.setLetterSpacing(0.16f);
-        codeLayout.addView(pairingCodeInput, new ViewGroup.LayoutParams(-1, dp(56)));
+        codeLayout.addView(pairingCodeInput, new LinearLayout.LayoutParams(-1, dp(56)));
         manualPanel.addView(codeLayout, params(-1, -2, 0, 10, 0, 0));
 
         pairingButton = button("Pair this phone", true);
