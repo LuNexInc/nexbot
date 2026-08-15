@@ -1,5 +1,15 @@
 # NexBot — DECISIONS
 
+## 2026-08-15 — Android Connect companion uses a native shell
+
+- **Choice:** Build Connect as a native Android app that stores pairing data
+  locally and embeds the NexBot client. Include the official WireGuard tunnel
+  library, but require a host-issued configuration before activating a tunnel.
+- **Why:** The phone needs a real Android VPN permission flow. A browser PWA
+  cannot own that flow or safely provision a peer.
+- **Reverse if:** Charles chooses a browser-only LAN product and drops remote
+  access.
+
 ## 2026-08-14 — Interrupted turns are durable and resumable
 
 - **Choice:** Every provider turn gets a SQLite job row. `session.started` checkpoints the provider cursor. A process exit marks running jobs interrupted and shows Resume / Retry actions. Resume uses Claude/Codex native cursors and transcript replay for Grok; ordinary new turns still start without a cursor.

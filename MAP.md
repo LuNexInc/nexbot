@@ -1,6 +1,6 @@
 # NexBot — MAP
 
-Last verified: 2026-08-14
+Last verified: 2026-08-15
 
 ## Stay-local workflow
 
@@ -42,6 +42,7 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 | Analytics stubs | `src/lib/analytics.ts` |
 | Builder | `electron-builder.yml` → `com.lunexinc.nexbot` |
 | Windows installer | `pnpm package:win` → `release\NexBot-Setup-*.exe` |
+| Android Connect | `connect-android\` → native pairing shell and WireGuard adapter |
 
 | Skills | `server/skills.ts` → `~/.nexbot/skills` |
 | Connectors | `src/components/PluginsPanel.tsx` (Composio catalog) |
