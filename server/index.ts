@@ -55,11 +55,15 @@ import {
 } from "./harness-auth.ts";
 import {
   authenticateRemoteToken,
+  consumePairingCode,
+  createPairingCode,
   createRemoteDevice,
+  pairingCodeUrls,
   pairingMobileUrls,
   pairingUrls,
   remoteAccessEnabled,
   remoteAccessStatus,
+  listRemoteDevices,
   revokeRemoteDevice,
   rotateRemoteDevice,
 } from "./remote-access.ts";
@@ -992,7 +996,8 @@ const server = createServer(async (req, res) => {
     // active. Loopback clients remain trusted by the existing harness gate.
     const remoteDevice = remoteAccessEnabled(cfg, BIND) ? authenticateRemoteToken(providedToken) : null;
     const gate = authorizeHarnessRequest(req, method, path, providedToken, checkSteerToken(providedToken));
-    if (!gate.ok && !remoteDevice) return json(res, 401, { error: gate.error });
+    const isPairingExchange = method === "POST" && path === "/api/remote-access/pair";
+    if (!gate.ok && !remoteDevice && !isPairingExchange) return json(res, 401, { error: gate.error });
 
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
@@ -1808,6 +1813,27 @@ const server = createServer(async (req, res) => {
       const urls = pairingUrls(created.token, WEB_PORT);
       const mobileUrls = pairingMobileUrls(created.token, WEB_PORT);
       return json(res, 201, { device: created.device, token: created.token, pairingUrl: urls[0], pairingUrls: urls, mobileUrl: mobileUrls[0], mobileUrls });
+    }
+    if (path === "/api/remote-access/codes" && method === "POST") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Pairing code setup is available on the host app only" });
+      if (!bindIsOffLoopback(BIND)) return json(res, 409, { error: "Restart NexBot after enabling Private LAN mode before creating a code" });
+      const body = await readBody(req);
+      const requestedDeviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+      if (requestedDeviceId && !listRemoteDevices().some((device) => device.id === requestedDeviceId && device.active)) {
+        return json(res, 404, { error: "no active device with that id" });
+      }
+      const created = createPairingCode(body.label, requestedDeviceId || undefined);
+      const urls = pairingCodeUrls(created.code, WEB_PORT);
+      return json(res, 201, { code: created.code, label: created.label, deviceId: created.deviceId, createdAt: created.createdAt, expiresAt: created.expiresAt, pairingUrl: urls[0], pairingUrls: urls });
+    }
+    if (path === "/api/remote-access/pair" && method === "POST") {
+      if (!bindIsOffLoopback(BIND)) return json(res, 409, { error: "NexBot Connect is not listening on the LAN" });
+      const body = await readBody(req);
+      const pairing = consumePairingCode(body.code);
+      if (!pairing) return json(res, 401, { error: "The pairing code is invalid or expired" });
+      const created = pairing.deviceId ? rotateRemoteDevice(pairing.deviceId) : createRemoteDevice(body.label || pairing.label);
+      if (!created) return json(res, 404, { error: "the device is no longer available" });
+      return json(res, 201, { device: created.device, token: created.token });
     }
     m = path.match(/^\/api\/remote-access\/devices\/([\w-]+)\/rotate$/);
     if (m && method === "POST") {

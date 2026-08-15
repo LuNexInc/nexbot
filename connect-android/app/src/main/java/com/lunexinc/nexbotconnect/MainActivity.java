@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Bundle;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,7 +19,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.appcompat.app.AppCompatActivity;
+
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,6 +45,7 @@ public final class MainActivity extends AppCompatActivity {
     private TextView vpnStatus;
     private String pendingVpnConfig;
     private boolean vpnActive;
+    private ActivityResultLauncher<ScanOptions> qrScanner;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -47,10 +53,14 @@ public final class MainActivity extends AppCompatActivity {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         vpnController = new WireGuardTunnelController(this);
         vpnExecutor = Executors.newSingleThreadExecutor();
+        qrScanner = registerForActivityResult(new ScanContract(), result -> {
+            if (result.getContents() != null) pairFromScanned(result.getContents());
+        });
         PairingLink incoming = pairingFromIntent(getIntent());
-        if (incoming != null) savePairing(incoming);
+        if (incoming != null && incoming.token != null) savePairing(incoming);
         if (savedBaseUrl() != null && savedToken() != null) showShell();
         else showPairing(null);
+        if (incoming != null && incoming.code != null) pairFromInput(incoming, null);
     }
 
     @Override
@@ -59,8 +69,12 @@ public final class MainActivity extends AppCompatActivity {
         setIntent(intent);
         PairingLink link = pairingFromIntent(intent);
         if (link == null) return;
-        savePairing(link);
-        showShell();
+        if (link.token != null) {
+            savePairing(link);
+            showShell();
+        } else {
+            pairFromInput(link, null);
+        }
     }
 
     private PairingLink pairingFromIntent(Intent intent) {
@@ -111,28 +125,43 @@ public final class MainActivity extends AppCompatActivity {
         subtitleParams.topMargin = dp(8);
         root.addView(subtitle, subtitleParams);
 
-        EditText input = new EditText(this);
-        input.setHint("Paste the pairing link");
-        input.setSingleLine(false);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(100));
-        inputParams.topMargin = dp(28);
-        root.addView(input, inputParams);
+        EditText hostInput = new EditText(this);
+        hostInput.setHint("Host address · http://192.168.x.x:5199");
+        hostInput.setSingleLine(true);
+        hostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        LinearLayout.LayoutParams hostParams = new LinearLayout.LayoutParams(-1, -2);
+        hostParams.topMargin = dp(28);
+        root.addView(hostInput, hostParams);
+
+        EditText codeInput = new EditText(this);
+        codeInput.setHint("6-digit pairing code");
+        codeInput.setSingleLine(true);
+        codeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        codeInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
+        LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(-1, -2);
+        codeParams.topMargin = dp(10);
+        root.addView(codeInput, codeParams);
+
+        Button scan = new Button(this);
+        scan.setText("Scan QR code");
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(-1, -2);
+        scanParams.topMargin = dp(12);
+        root.addView(scan, scanParams);
+        scan.setOnClickListener(v -> {
+            ScanOptions options = new ScanOptions();
+            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+            options.setPrompt("Scan the NexBot pairing QR");
+            options.setBeepEnabled(true);
+            options.setOrientationLocked(false);
+            qrScanner.launch(options);
+        });
 
         Button pair = new Button(this);
         pair.setText("Pair this device");
         LinearLayout.LayoutParams pairParams = new LinearLayout.LayoutParams(-1, -2);
-        pairParams.topMargin = dp(12);
+        pairParams.topMargin = dp(4);
         root.addView(pair, pairParams);
-        pair.setOnClickListener(v -> {
-            try {
-                PairingLink link = PairingLink.parse(input.getText().toString());
-                savePairing(link);
-                showShell();
-            } catch (IllegalArgumentException parseError) {
-                input.setError(parseError.getMessage());
-            }
-        });
+        pair.setOnClickListener(v -> pairFromInput(hostInput.getText().toString(), codeInput.getText().toString(), pair));
 
         if (error != null) {
             TextView message = text(error, 14, Color.rgb(170, 50, 50));
@@ -141,6 +170,57 @@ public final class MainActivity extends AppCompatActivity {
             root.addView(message, messageParams);
         }
         setContentView(root);
+    }
+
+    private void pairFromInput(String host, String code, Button pairButton) {
+        try {
+            PairingLink link = PairingLink.code(host, code);
+            pairFromInput(link, pairButton);
+        } catch (IllegalArgumentException parseError) {
+            if (pairButton != null) pairButton.setError(parseError.getMessage());
+            else Toast.makeText(this, parseError.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void pairFromScanned(String raw) {
+        try {
+            PairingLink link = PairingLink.parse(raw);
+            if (link.token != null) {
+                savePairing(link);
+                showShell();
+            } else {
+                pairFromInput(link, null);
+            }
+        } catch (IllegalArgumentException error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void pairFromInput(PairingLink link, Button pairButton) {
+        if (link == null || link.code == null) return;
+        if (pairButton != null) {
+            pairButton.setEnabled(false);
+            pairButton.setText("Pairing…");
+        }
+        vpnExecutor.execute(() -> {
+            try {
+                PairingLink exchanged = PairingProvisioner.exchange(link.baseUrl, link.code);
+                runOnUiThread(() -> {
+                    savePairing(exchanged);
+                    showShell();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (pairButton != null) {
+                        pairButton.setEnabled(true);
+                        pairButton.setText("Pair this device");
+                        pairButton.setError(error.getMessage());
+                    } else {
+                        Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
     }
 
     private void showShell() {

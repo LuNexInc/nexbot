@@ -1,6 +1,7 @@
 // App-level settings: profile, connection keys, agent CLI status,
 // desktop permissions, About. No third-party product analytics.
-import { Check, Copy, ExternalLink, Link2, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi, X } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useStore, type Bot, type InstanceInfo, type RemoteAccessStatus, type WireGuardStatus } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
@@ -393,14 +394,14 @@ function SteerSection() {
   );
 }
 
-type PairingResult = { device: { id: string; label: string }; token: string; pairingUrl: string; pairingUrls?: string[] };
+type PairingCodeResult = { code: string; label: string; createdAt: number; expiresAt: number; pairingUrl: string; pairingUrls?: string[] };
 
 function ConnectSection() {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
   const [wireguard, setWireguard] = useState<WireGuardStatus | null>(null);
   const [endpoint, setEndpoint] = useState("");
   const [label, setLabel] = useState("Phone");
-  const [pairing, setPairing] = useState<PairingResult | null>(null);
+  const [pairingCode, setPairingCode] = useState<PairingCodeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inputClass = "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
@@ -425,15 +426,15 @@ function ConnectSection() {
   };
   const create = () => {
     setBusy(true); setError("");
-    void fetch("/api/remote-access/devices", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) })
-      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not create pairing link"); return body as PairingResult; })
-      .then((body) => { setPairing(body); setLabel(""); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+    void fetch("/api/remote-access/codes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not create pairing code"); return body as PairingCodeResult; })
+      .then((body) => { setPairingCode(body); setLabel(""); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
-  const rotate = (id: string) => {
+  const rotate = (id: string, label: string) => {
     setBusy(true); setError("");
-    void fetch(`/api/remote-access/devices/${id}/rotate`, { method: "POST" })
-      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not rotate device token"); return body as PairingResult; })
-      .then((body) => { setPairing(body); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+    void fetch("/api/remote-access/codes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label, deviceId: id }) })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not create pairing code"); return body as PairingCodeResult; })
+      .then((body) => { setPairingCode(body); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
   const revoke = (id: string) => {
     setBusy(true); setError("");
@@ -466,8 +467,8 @@ function ConnectSection() {
             {wireguard.configured && <div className="mt-2 text-[11px] text-ink-secondary">{wireguard.active ? "VPN service is active" : "VPN is configured; service is not running"} · {wireguard.peerCount} active {wireguard.peerCount === 1 ? "device" : "devices"} · {wireguard.endpoint}</div>}
           </>}
         </div>
-        {status.enabled && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Pair a device</div><div className="flex gap-2"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Device name" className={inputClass} /><button disabled={busy || !label.trim()} onClick={create} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"><Link2 size={14} /> Create link</button></div>{pairing && <div className="mt-3 rounded-lg border border-hairline/50 bg-white/70 p-3"><div className="flex items-center gap-1.5 text-[12px] font-medium text-ink"><QrCode size={14} /> QR-compatible pairing link</div><div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">The link contains the new device token. Copy it now; NexBot does not show the token again.</div><code className="mt-2 block break-all rounded-md bg-inset px-2 py-2 text-[11px] text-ink">{pairing.pairingUrl}</code><button onClick={() => copy(pairing.pairingUrl)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"><Copy size={13} /> Copy pairing link</button></div>}</div>}
-        {status.devices.length > 0 && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Devices</div><div className="flex flex-col gap-2">{status.devices.map((device) => <div key={device.id} className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-[12px] text-ink">{device.label}</div><div className="text-[11px] text-ink-secondary">{device.active ? `Token ${device.tokenPrefix}…` : "Revoked"}</div></div>{device.active && <><button title="Rotate token" disabled={busy} onClick={() => rotate(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-ink"><RotateCw size={14} /></button><button title="Revoke device" disabled={busy} onClick={() => revoke(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-red-700"><Trash2 size={14} /></button></>}</div>)}</div></div>}
+        {status.enabled && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Pair a device</div><div className="flex gap-2"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Device name" className={inputClass} /><button disabled={busy || !label.trim()} onClick={create} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"><QrCode size={14} /> Create code</button></div>{pairingCode && <div className="mt-3 flex items-center gap-4 rounded-lg border border-hairline/50 bg-white/70 p-3"><div className="shrink-0 rounded-md bg-white p-2"><QRCodeSVG value={pairingCode.pairingUrl} size={112} level="M" includeMargin /></div><div className="min-w-0"><div className="text-[12px] font-medium text-ink">Enter this code or scan the QR</div><div className="mt-1 font-mono text-[30px] font-semibold tracking-[0.22em] text-ink">{pairingCode.code}</div><div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">Expires in 10 minutes. NexBot Connect uses the code once, then stores a device token securely.</div><button onClick={() => copy(pairingCode.code)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"><Copy size={13} /> Copy code</button></div></div>}</div>}
+        {status.devices.length > 0 && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Devices</div><div className="flex flex-col gap-2">{status.devices.map((device) => <div key={device.id} className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-[12px] text-ink">{device.label}</div><div className="text-[11px] text-ink-secondary">{device.active ? `Token ${device.tokenPrefix}…` : "Revoked"}</div></div>{device.active && <><button title="Create new pairing code" disabled={busy} onClick={() => rotate(device.id, device.label)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-ink"><RotateCw size={14} /></button><button title="Revoke device" disabled={busy} onClick={() => revoke(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-red-700"><Trash2 size={14} /></button></>}</div>)}</div></div>}
       </>}
       {error && <div className="mt-3 text-[12px] text-red-700">{error}</div>}
     </div>

@@ -13,11 +13,13 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Pair
 
-Open the app and paste a NexBot Connect pairing link from the desktop app.
-The app saves the host URL and device token in private Android storage, then
-opens the full NexBot client in a WebView.
+In the desktop app, enable **Private LAN mode**, restart NexBot, and choose
+**Settings → Connect → Create code**. Enter the six-digit code in the Android
+app with the host address, or use **Scan QR code**. The QR payload contains the
+host address and short-lived code. The code is exchanged once for a device
+token, which the app stores in private Android storage.
 
-The `nexbot://pair?url=...` deep link is also supported.
+Legacy `nexbot://pair?url=...&token=...` links remain supported.
 
 ## VPN status
 

@@ -24,9 +24,27 @@ export interface RemoteDeviceStatus extends Omit<RemoteDevice, "tokenHash"> {
   active: boolean;
 }
 
+export interface CreatedPairingCode {
+  code: string;
+  label: string;
+  deviceId?: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface PendingPairingCode {
+  codeHash: string;
+  label: string;
+  deviceId?: string;
+  createdAt: number;
+  expiresAt: number;
+  attempts: number;
+}
+
 interface RemoteAccessFile {
   version: 1;
   devices: RemoteDevice[];
+  pairingCodes?: PendingPairingCode[];
 }
 
 export interface RemoteAccessStatus {
@@ -51,12 +69,16 @@ function readFile(): RemoteAccessFile {
   try {
     const parsed = JSON.parse(readFileSync(REMOTE_ACCESS_FILE, "utf8")) as Partial<RemoteAccessFile>;
     if (parsed.version === 1 && Array.isArray(parsed.devices)) {
-      return { version: 1, devices: parsed.devices.filter(isDevice) };
+      return {
+        version: 1,
+        devices: parsed.devices.filter(isDevice),
+        pairingCodes: Array.isArray(parsed.pairingCodes) ? parsed.pairingCodes.filter(isPairingCode) : [],
+      };
     }
   } catch {
     // First run or a partially written file.
   }
-  return { version: 1, devices: [] };
+  return { version: 1, devices: [], pairingCodes: [] };
 }
 
 function isDevice(value: unknown): value is RemoteDevice {
@@ -68,6 +90,19 @@ function isDevice(value: unknown): value is RemoteDevice {
     typeof row.createdAt === "number" &&
     typeof row.tokenPrefix === "string" &&
     typeof row.tokenHash === "string"
+  );
+}
+
+function isPairingCode(value: unknown): value is PendingPairingCode {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<PendingPairingCode>;
+  return (
+    typeof row.codeHash === "string" &&
+    typeof row.label === "string" &&
+    (row.deviceId === undefined || typeof row.deviceId === "string") &&
+    typeof row.createdAt === "number" &&
+    typeof row.expiresAt === "number" &&
+    typeof row.attempts === "number"
   );
 }
 
@@ -113,6 +148,50 @@ export function createRemoteDevice(label?: unknown): CreatedRemoteDevice {
   file.devices.push(device);
   writeFile(file);
   return { device: publicDevice(device), token };
+}
+
+export const PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
+const PAIRING_CODE_MAX_ATTEMPTS = 5;
+
+function sixDigitCode(): string {
+  return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, "0");
+}
+
+function prunePairingCodes(file: RemoteAccessFile, now = Date.now()): void {
+  file.pairingCodes = (file.pairingCodes ?? []).filter((row) => row.expiresAt > now && row.attempts < PAIRING_CODE_MAX_ATTEMPTS);
+}
+
+/** Create a short-lived code. Only its digest is stored on disk. */
+export function createPairingCode(label?: unknown, deviceId?: string): CreatedPairingCode {
+  const file = readFile();
+  const now = Date.now();
+  prunePairingCodes(file, now);
+  let code = sixDigitCode();
+  while ((file.pairingCodes ?? []).some((row) => sameDigest(row.codeHash, digest(code)))) code = sixDigitCode();
+  const normalizedLabel = normalizeLabel(label, "Android device");
+  const expiresAt = now + PAIRING_CODE_TTL_MS;
+  file.pairingCodes!.push({ codeHash: digest(code), label: normalizedLabel, deviceId, createdAt: now, expiresAt, attempts: 0 });
+  writeFile(file);
+  return { code, label: normalizedLabel, deviceId, createdAt: now, expiresAt };
+}
+
+/** Consume a code once, returning its suggested label and optional device id. */
+export function consumePairingCode(rawCode: unknown): { label: string; deviceId?: string } | null {
+  const code = typeof rawCode === "string" ? rawCode.trim() : "";
+  if (!/^\d{6}$/.test(code)) return null;
+  const file = readFile();
+  const now = Date.now();
+  prunePairingCodes(file, now);
+  const index = file.pairingCodes!.findIndex((row) => sameDigest(row.codeHash, digest(code)));
+  if (index < 0) {
+    writeFile(file);
+    return null;
+  }
+  const pending = file.pairingCodes![index];
+  pending.attempts += 1;
+  file.pairingCodes!.splice(index, 1);
+  writeFile(file);
+  return { label: pending.label, deviceId: pending.deviceId };
 }
 
 export function rotateRemoteDevice(id: string): CreatedRemoteDevice | null {
@@ -197,6 +276,23 @@ export function pairingUrls(token: string, port: number, addresses = localIpv4Ad
 export function pairingMobileUrls(token: string, port: number, addresses = localIpv4Addresses()): string[] {
   const hosts = addresses.length ? addresses : ["127.0.0.1"];
   return hosts.map((host) => `http://${host}:${port}/m.html?token=${encodeURIComponent(token)}`);
+}
+
+/** QR payloads for the native Connect app. They carry a host and short code, never a device token. */
+export function pairingCodeUrls(code: string, port: number, addresses = localIpv4Addresses()): string[] {
+  const hosts = addresses.length ? [...addresses].sort((a, b) => addressPriority(a) - addressPriority(b)) : ["127.0.0.1"];
+  return hosts.map((host) => {
+    const base = `http://${host}:${port}`;
+    return `nexbot://pair?url=${encodeURIComponent(base)}&code=${encodeURIComponent(code)}`;
+  });
+}
+
+function addressPriority(address: string): number {
+  if (address.startsWith("192.168.")) return 0;
+  if (address.startsWith("10.")) return 1;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(address)) return 2;
+  if (address.startsWith("100.")) return 3;
+  return 4;
 }
 
 export function remoteAccessFileExists(): boolean {

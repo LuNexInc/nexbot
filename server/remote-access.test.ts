@@ -1,13 +1,17 @@
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import {
   authenticateRemoteToken,
+  consumePairingCode,
+  createPairingCode,
   createRemoteDevice,
+  pairingCodeUrls,
   listRemoteDevices,
   pairingMobileUrls,
   pairingUrls,
+  REMOTE_ACCESS_FILE,
   remoteAccessStatus,
   revokeRemoteDevice,
   rotateRemoteDevice,
@@ -41,6 +45,18 @@ describe("NexBot Connect device access", () => {
     expect(authenticateRemoteToken(rotated.token)).toBeNull();
     expect(authenticateRemoteToken(second.token)?.id).toBe(second.device.id);
     expect(rotateRemoteDevice(first.device.id)).toBeNull();
+  });
+
+  it("creates one-time six-digit codes without storing the raw code", () => {
+    const created = createPairingCode("Charles phone");
+    expect(created.code).toMatch(/^\d{6}$/);
+    expect(created.expiresAt - created.createdAt).toBe(10 * 60 * 1000);
+    expect(readFileSync(REMOTE_ACCESS_FILE, "utf8")).not.toContain(created.code);
+    expect(consumePairingCode(created.code)).toMatchObject({ label: "Charles phone" });
+    expect(consumePairingCode(created.code)).toBeNull();
+    expect(pairingCodeUrls(created.code, 5199, ["100.81.167.4", "192.168.100.8"])[0]).toBe(
+      `nexbot://pair?url=${encodeURIComponent("http://192.168.100.8:5199")}&code=${created.code}`,
+    );
   });
 
   it("builds QR-compatible app and mobile links without exposing a token in status", () => {
