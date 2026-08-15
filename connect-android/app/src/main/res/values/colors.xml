@@ -4,14 +4,14 @@
     <color name="nexbot_surface_alt">#EDF2F5</color>
     <color name="nexbot_on_surface">#102A32</color>
     <color name="nexbot_on_surface_secondary">#5B6B73</color>
-    <color name="nexbot_accent">#0B6E69</color>
-    <color name="nexbot_accent_strong">#09544F</color>
-    <color name="nexbot_accent_soft">#DDF2EF</color>
+    <color name="nexbot_accent">#007AFF</color>
+    <color name="nexbot_accent_strong">#005FCC</color>
+    <color name="nexbot_accent_soft">#E7F1FF</color>
     <color name="nexbot_border">#D6E1E3</color>
     <color name="nexbot_success">#207A5B</color>
     <color name="nexbot_error">#B42318</color>
     <color name="nexbot_error_soft">#FDECEC</color>
     <color name="nexbot_warning">#8A5A00</color>
-    <color name="nexbot_hero_start">#E8F7F3</color>
-    <color name="nexbot_hero_end">#EAF0FA</color>
+    <color name="nexbot_hero_start">#E7F1FF</color>
+    <color name="nexbot_hero_end">#F3F4FA</color>
 </resources>

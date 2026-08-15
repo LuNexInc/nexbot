@@ -565,6 +565,21 @@ public final class MainActivity extends AppCompatActivity {
         android.widget.Toast.makeText(this, "Paired — opening Messages", android.widget.Toast.LENGTH_SHORT).show();
     }
 
+    private void openLatestApk() {
+        String base = savedBaseUrl();
+        if (base == null || base.isBlank()) {
+            android.widget.Toast.makeText(this, "Pair this phone before updating", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Uri apkUrl = Uri.parse(base).buildUpon().path("/nexbot-connect-debug.apk").clearQuery().fragment(null).build();
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, apkUrl));
+            android.widget.Toast.makeText(this, "Opening the latest NexBot Connect APK", android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Exception error) {
+            android.widget.Toast.makeText(this, "No browser is available to download the update", android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void addShellHeader(LinearLayout parent) {
         LinearLayout header = row();
         header.setPadding(dp(20), dp(12), dp(16), dp(8));
@@ -680,6 +695,11 @@ public final class MainActivity extends AppCompatActivity {
         titleRow.addView(close, params(-2, dp(40)));
         close.setOnClickListener(v -> setConnectionSheetVisible(false));
         sheetContent.addView(titleRow);
+
+        MaterialButton update = textButton("Update app");
+        update.setTextColor(color(R.color.nexbot_accent_strong));
+        sheetContent.addView(update, params(-1, dp(42), 0, 8, 0, 2));
+        update.setOnClickListener(v -> openLatestApk());
 
         addVpnCard(sheetContent);
 
