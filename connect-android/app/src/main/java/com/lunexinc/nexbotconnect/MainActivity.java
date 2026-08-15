@@ -249,12 +249,15 @@ public final class MainActivity extends AppCompatActivity {
 
     private LinearLayout.LayoutParams params(int width, int height, int left, int top, int right, int bottom) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, height);
+        if (width == 0 || height == 0) params.weight = 1f;
         params.setMargins(dp(left), dp(top), dp(right), dp(bottom));
         return params;
     }
 
     private LinearLayout.LayoutParams params(int width, int height) {
-        return new LinearLayout.LayoutParams(width, height);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, height);
+        if (width == 0 || height == 0) params.weight = 1f;
+        return params;
     }
 
     private ImageView brandMark(int size) {
