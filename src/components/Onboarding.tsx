@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Loader2, Mic } from "lucide-react";
+import { Check, Loader2, Mic, RefreshCw } from "lucide-react";
 import { NexMark } from "./NexMark";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 
@@ -71,6 +71,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [cosError, setCosError] = useState<string | null>(null);
   const [instances, setInstances] = useState<InstanceRow[] | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigRow | null>(null);
+  const [checkingProviders, setCheckingProviders] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [perms, setPerms] = useState<{ mic: string } | null>(null);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const chosenCosJob = cosCustomJob.trim() || cosJob.trim();
@@ -93,6 +95,27 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setStep(1);
   };
 
+  const refreshProviders = async () => {
+    setCheckingProviders(true);
+    setProviderError(null);
+    try {
+      const [instancesResponse, configResponse] = await Promise.all([
+        fetch("/api/instances"),
+        fetch("/api/config"),
+      ]);
+      if (!instancesResponse.ok) throw new Error("Could not check local providers.");
+      const instanceBody = (await instancesResponse.json()) as { instances?: InstanceRow[] };
+      setInstances(Array.isArray(instanceBody.instances) ? instanceBody.instances : []);
+      if (configResponse.ok) setConfigStatus((await configResponse.json()) as ConfigRow);
+      else setConfigStatus({});
+    } catch (error) {
+      setInstances([]);
+      setProviderError(error instanceof Error ? error.message : "Could not check local providers.");
+    } finally {
+      setCheckingProviders(false);
+    }
+  };
+
   useEffect(() => {
     track("onboarding_step", { step });
     if (step === 1 && !cosLoaded) {
@@ -110,16 +133,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         .catch(() => setCosLoaded(true));
     }
     if (step === 2 && !instances) {
-      fetch("/api/instances")
-        .then((r) => r.json())
-        .then((d) => setInstances(d.instances ?? []))
-        .catch(() => setInstances([]));
-    }
-    if (step === 2 && !configStatus) {
-      fetch("/api/config")
-        .then((r) => r.json())
-        .then((d) => setConfigStatus(d as ConfigRow))
-        .catch(() => setConfigStatus({}));
+      void refreshProviders();
     }
     if (step === 4 && isElectron) {
       const poll = () => window.nexbot?.permStatus?.().then(setPerms).catch(() => {});
@@ -287,12 +301,26 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         {step === 2 && (
           <div className="flex flex-col">
-            <h1 className="text-[18px] font-semibold text-ink">Your providers</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Bots can use the AI tools installed on this computer. Add or sign in to any provider you want to use.
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h1 className="text-[18px] font-semibold text-ink">Your providers</h1>
+                <p className="mt-1 text-[13.5px] text-ink-secondary">
+                  Bots can use the AI tools installed on this computer. Add or sign in to any provider you want to use.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshProviders()}
+                disabled={checkingProviders}
+                className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+                title="Refresh provider checks"
+                aria-label="Refresh provider checks"
+              >
+                <RefreshCw size={16} className={checkingProviders ? "animate-spin" : ""} />
+              </button>
+            </div>
             <div className="mt-4 flex flex-col gap-2.5">
-              {!instances ? (
+              {!instances || checkingProviders ? (
                 <div className="flex items-center gap-2 py-6 text-ink-secondary">
                   <Loader2 size={16} className="animate-spin" /> Checking…
                 </div>
@@ -352,6 +380,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   {instances.length > 0 && instances.every((instance) => instance.snapshot.state !== "available") && (
                     <div className="rounded-xl border border-warning/25 bg-warning/8 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
                       No provider is ready yet. NexBot can finish setup, but it cannot answer until you install and sign in to a supported CLI or configure an API provider.
+                    </div>
+                  )}
+                  {providerError && (
+                    <div className="rounded-xl border border-danger/20 bg-danger/8 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
+                      {providerError} Use the refresh button after the bot server is ready.
                     </div>
                   )}
                 </>
