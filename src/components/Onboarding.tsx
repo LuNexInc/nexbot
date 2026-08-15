@@ -15,9 +15,11 @@ type InstanceRow = {
 };
 
 type BotRow = {
+  id?: string;
   name: string;
   title?: string;
   description?: string;
+  messages?: Array<{ id: string; role: "bot" | "user"; kind: string; text?: string; status?: string }>;
 };
 
 type ConfigRow = {
@@ -31,6 +33,7 @@ const COS_JOB_OPTIONS = [
 ] as const;
 
 const isElectron = navigator.userAgent.includes("Electron");
+const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 function StatusRow({
   ok,
@@ -73,6 +76,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [configStatus, setConfigStatus] = useState<ConfigRow | null>(null);
   const [checkingProviders, setCheckingProviders] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [cosBotId, setCosBotId] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<"idle" | "sending" | "passed" | "failed">("idle");
+  const [testError, setTestError] = useState<string | null>(null);
   const [perms, setPerms] = useState<{ mic: string } | null>(null);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const chosenCosJob = cosCustomJob.trim() || cosJob.trim();
@@ -125,6 +131,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           const bots = (Array.isArray(d.bots) ? d.bots : []) as BotRow[];
           const cos = bots.find((bot) => /chief of staff/i.test(`${bot.name} ${bot.title ?? ""}`));
           if (cos) {
+            if (cos.id) setCosBotId(cos.id);
             setCosName(cos.name || "Chief of Staff");
             if (cos.description && !/^manages your other bots/i.test(cos.description)) setCosCustomJob(cos.description);
           }
@@ -135,14 +142,24 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     if (step === 2 && !instances) {
       void refreshProviders();
     }
-    if (step === 4 && isElectron) {
+    if (step === 3 && !cosBotId) {
+      fetch("/api/bots")
+        .then((r) => r.json())
+        .then((d) => {
+          const bots = (Array.isArray(d.bots) ? d.bots : []) as BotRow[];
+          const cos = bots.find((bot) => /chief of staff/i.test(`${bot.name} ${bot.title ?? ""}`));
+          if (cos?.id) setCosBotId(cos.id);
+        })
+        .catch(() => {});
+    }
+    if (step === 5 && isElectron) {
       const poll = () => window.nexbot?.permStatus?.().then(setPerms).catch(() => {});
       poll();
       // keep polling — the user may grant in System Settings and come back
       const t = setInterval(poll, 2000);
       return () => clearInterval(t);
     }
-  }, [step, instances, cosLoaded, configStatus]);
+  }, [step, instances, cosLoaded, configStatus, cosBotId]);
 
   const saveChiefOfStaff = async () => {
     if (!cosName.trim() || !chosenCosJob) return;
@@ -154,14 +171,65 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: cosName.trim(), job: chosenCosJob }),
       });
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      const body = (await response.json().catch(() => ({}))) as { error?: string; bot?: { id?: string } };
       if (!response.ok) throw new Error(body.error || "Could not set up the Chief of Staff.");
+      if (body.bot?.id) setCosBotId(body.bot.id);
       track("onboarding_cos_setup");
       setStep(2);
     } catch (error) {
       setCosError(error instanceof Error ? error.message : String(error));
     } finally {
       setCosBusy(false);
+    }
+  };
+
+  const sendReadinessCheck = async () => {
+    if (!cosBotId || testStatus === "sending") return;
+    setTestStatus("sending");
+    setTestError(null);
+    const clientNonce = `onboarding-check-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      const beforeResponse = await fetch(`/api/bots/${cosBotId}`);
+      if (!beforeResponse.ok) throw new Error("Could not read the Chief of Staff thread.");
+      const beforeBody = (await beforeResponse.json()) as { bot?: BotRow };
+      const beforeBot = beforeBody.bot;
+      const existingMessageIds = new Set((beforeBot?.messages ?? []).map((message) => message.id));
+
+      const response = await fetch(`/api/bots/${cosBotId}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text: "Reply with one short sentence so I know setup works.",
+          clientNonce,
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not send the test message.");
+
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await sleep(500);
+        const checkResponse = await fetch(`/api/bots/${cosBotId}`);
+        if (!checkResponse.ok) continue;
+        const checkBody = (await checkResponse.json()) as { bot?: BotRow };
+        const reply = (checkBody.bot?.messages ?? []).find(
+          (message) =>
+            !existingMessageIds.has(message.id) &&
+            message.role === "bot" &&
+            message.kind === "text" &&
+            message.status !== "failed" &&
+            Boolean(message.text?.trim()),
+        );
+        if (reply) {
+          setTestStatus("passed");
+          track("onboarding_readiness_check", { result: "passed" });
+          return;
+        }
+      }
+      throw new Error("The Chief of Staff did not reply within 30 seconds. You can continue and try again in chat.");
+    } catch (error) {
+      setTestStatus("failed");
+      setTestError(error instanceof Error ? error.message : "The readiness check failed.");
+      track("onboarding_readiness_check", { result: "failed" });
     }
   };
 
@@ -401,6 +469,47 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         {step === 3 && (
           <div className="flex flex-col">
+            <h1 className="text-[18px] font-semibold text-ink">Check your first message</h1>
+            <p className="mt-1 text-[13.5px] leading-relaxed text-ink-secondary">
+              Send one short test to your Chief of Staff. NexBot will wait for a reply so you know the selected provider is ready before you start.
+            </p>
+            {testStatus === "passed" ? (
+              <div className="mt-5 flex items-start gap-3 rounded-xl border border-[#00c97233] bg-[#00c97212] p-3.5 text-[13px] text-ink">
+                <Check size={18} className="mt-0.5 shrink-0 text-[#38d591]" />
+                <div>
+                  <div className="font-medium">Chief of Staff replied</div>
+                  <div className="mt-0.5 text-ink-secondary">Your first message is ready. You can continue setup.</div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-xl bg-card p-3.5 text-[13px] leading-relaxed text-ink-secondary">
+                This sends: <span className="font-medium text-ink">“Reply with one short sentence so I know setup works.”</span>
+              </div>
+            )}
+            {testError && <div className="mt-3 text-[12px] text-danger">{testError}</div>}
+            {!cosBotId && <div className="mt-3 text-[12px] text-ink-secondary">Chief of Staff is not set up yet. You can skip this check.</div>}
+            <button
+              onClick={() => (testStatus === "passed" ? setStep(4) : void sendReadinessCheck())}
+              disabled={!cosBotId || testStatus === "sending"}
+              className="pressable mt-4 flex min-h-10 w-full items-center justify-center rounded-full bg-ink py-2.5 text-[15px] font-medium text-app disabled:opacity-40"
+            >
+              {testStatus === "sending" ? <><Loader2 size={16} className="mr-2 animate-spin" /> Waiting for reply…</> : testStatus === "passed" ? "Continue" : testStatus === "failed" ? "Try again" : "Send test message"}
+            </button>
+            <button
+              onClick={() => {
+                track("onboarding_readiness_check", { result: "skipped" });
+                setStep(4);
+              }}
+              disabled={testStatus === "sending"}
+              className="mt-3 text-[12px] text-ink-secondary hover:text-ink disabled:opacity-50"
+            >
+              Skip for now
+            </button>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="flex flex-col">
             <h1 className="text-[18px] font-semibold text-ink">This PC is the computer</h1>
             <p className="mt-1 text-[13.5px] leading-relaxed text-ink-secondary">
               Work dies if this PC sleeps, logs off, or you Quit NexBot. Close the
@@ -418,7 +527,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               <div className="rounded-xl bg-card p-3.5">Creative — design and direction</div>
             </div>
             <button
-              onClick={() => (isElectron ? setStep(4) : finish())}
+              onClick={() => (isElectron ? setStep(5) : finish())}
               className="pressable mt-5 w-full rounded-full bg-ink py-2.5 text-[15px] font-medium text-app"
             >
               Continue
@@ -426,7 +535,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           </div>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <div className="flex flex-col">
             <h1 className="text-[18px] font-semibold text-ink">Permissions</h1>
             <p className="mt-1 text-[13.5px] text-ink-secondary">

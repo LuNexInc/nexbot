@@ -1201,6 +1201,12 @@ const server = createServer(async (req, res) => {
         bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId), todos: listTodos(b.id) })),
       });
     }
+    const botPathMatch = path.match(/^\/api\/bots\/([\w-]+)$/);
+    if (method === "GET" && botPathMatch) {
+      const bot = store.bot(botPathMatch[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      return json(res, 200, { bot: { ...bot, messages: store.messagesFor(bot.threadId), todos: listTodos(bot.id) } });
+    }
     if (method === "POST" && path === "/api/onboarding/chief-of-staff") {
       const body = await readBody(req).catch((): Record<string, unknown> => ({}));
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 120) : "";

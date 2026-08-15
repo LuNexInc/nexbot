@@ -97,6 +97,15 @@ describe("harness HTTP API", () => {
     expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("reads one bot and its thread without listing every transcript", async () => {
+    const list = await api("GET", "/api/bots");
+    const botId = list.body.bots[0].id;
+    const { status, body } = await api("GET", `/api/bots/${botId}`);
+    expect(status).toBe(200);
+    expect(body.bot.id).toBe(botId);
+    expect(Array.isArray(body.bot.messages)).toBe(true);
+  });
+
   it("sets up the seeded Chief of Staff from onboarding", async () => {
     const before = await api("GET", "/api/bots");
     const cos = before.body.bots.find((b: { name: string; title?: string }) => /chief of staff/i.test(`${b.name} ${b.title ?? ""}`));
