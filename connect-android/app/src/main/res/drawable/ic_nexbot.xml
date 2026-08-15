@@ -4,9 +4,9 @@
     android:viewportWidth="48"
     android:viewportHeight="48">
     <path
-        android:fillColor="#2E7D6B"
+        android:fillColor="@color/nexbot_accent"
         android:pathData="M10,8 L24,20 L38,8 L38,40 L24,28 L10,40 Z" />
     <path
-        android:fillColor="#F5F6F8"
+        android:fillColor="@color/nexbot_surface"
         android:pathData="M16,16 L24,23 L32,16 L32,32 L24,25 L16,32 Z" />
 </vector>

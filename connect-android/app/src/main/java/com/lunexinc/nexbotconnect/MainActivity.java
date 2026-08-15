@@ -2,6 +2,7 @@ package com.lunexinc.nexbotconnect;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -16,22 +17,30 @@ import android.view.ViewGroup;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.Space;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/** The native shell for the NexBot Connect pairing and secure-tunnel flow. */
 public final class MainActivity extends AppCompatActivity {
     private static final String PREFS = "connect";
     private static final String BASE_URL = "baseUrl";
@@ -45,15 +54,29 @@ public final class MainActivity extends AppCompatActivity {
     private WebView webView;
     private WireGuardTunnelController vpnController;
     private ExecutorService vpnExecutor;
-    private Button vpnButton;
+
+    private MaterialButton vpnButton;
+    private MaterialButton vpnDetailsButton;
     private TextView vpnStatus;
+    private TextView vpnHint;
+    private TextView vpnHost;
+    private TextView vpnDetail;
     private ProgressBar vpnProgress;
-    private EditText pairingHostInput;
-    private EditText pairingCodeInput;
-    private Button pairingButton;
-    private Button pairingScanButton;
+    private View vpnStatusDot;
+    private MaterialCardView vpnCard;
+    private boolean vpnDetailVisible;
+
+    private TextInputEditText pairingHostInput;
+    private TextInputEditText pairingCodeInput;
+    private MaterialButton pairingButton;
+    private MaterialButton pairingScanButton;
+    private MaterialButton manualToggleButton;
     private TextView pairingStatus;
     private ProgressBar pairingProgress;
+    private View pairingStatusDot;
+    private MaterialCardView pairingStatusCard;
+    private LinearLayout manualPanel;
+
     private String pendingVpnConfig;
     private boolean vpnActive;
     private ActivityResultLauncher<ScanOptions> qrScanner;
@@ -67,12 +90,14 @@ public final class MainActivity extends AppCompatActivity {
         qrScanner = registerForActivityResult(new ScanContract(), result -> {
             if (result.getContents() != null) pairFromScanned(result.getContents());
         });
+
         PairingLink incoming = pairingFromIntent(getIntent());
         if (incoming != null && incoming.token != null) savePairing(incoming);
         if (savedBaseUrl() != null && savedToken() != null) showShell();
         else showPairing(null);
         if (incoming != null && incoming.code != null) {
             fillPairingFields(incoming);
+            openManualPanel(true);
             pairFromInput(incoming, pairingButton);
         }
     }
@@ -89,6 +114,7 @@ public final class MainActivity extends AppCompatActivity {
         } else {
             showPairing(null);
             fillPairingFields(link);
+            openManualPanel(true);
             pairFromInput(link, pairingButton);
         }
     }
@@ -99,7 +125,7 @@ public final class MainActivity extends AppCompatActivity {
         try {
             return PairingLink.parse(data.toString());
         } catch (IllegalArgumentException error) {
-            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+            showPairingError(error);
             return null;
         }
     }
@@ -111,124 +137,317 @@ public final class MainActivity extends AppCompatActivity {
     private String savedBaseUrl() { return preferences.getString(BASE_URL, null); }
     private String savedToken() { return preferences.getString(TOKEN, null); }
 
+    private int color(int resource) { return ContextCompat.getColor(this, resource); }
+
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private TextView text(String value, float size, int color) {
+    private TextView text(String value, float size, int textColor) {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(size);
-        view.setTextColor(color);
+        view.setTextColor(textColor);
+        view.setIncludeFontPadding(false);
         return view;
     }
 
-    private GradientDrawable surface(int fill, int stroke) {
+    private TextView heading(String value, float size) {
+        TextView view = text(value, size, color(R.color.nexbot_on_surface));
+        view.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        view.setLetterSpacing(-0.015f);
+        return view;
+    }
+
+    private TextView eyebrow(String value) {
+        TextView view = text(value, 11, color(R.color.nexbot_accent_strong));
+        view.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        view.setLetterSpacing(0.12f);
+        return view;
+    }
+
+    private GradientDrawable rounded(int fill, int stroke, float radius) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(fill);
-        drawable.setCornerRadius(dp(16));
-        drawable.setStroke(dp(1), stroke);
+        if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), stroke);
+        drawable.setCornerRadius(dp(radius));
         return drawable;
     }
 
-    private Button actionButton(String label) {
-        Button button = new Button(this);
+    private GradientDrawable gradient(int start, int end, float radius) {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{start, end}
+        );
+        drawable.setCornerRadius(dp(radius));
+        return drawable;
+    }
+
+    private GradientDrawable circle(int fill) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setShape(GradientDrawable.OVAL);
+        return drawable;
+    }
+
+    private MaterialCardView card(int fill) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setCardBackgroundColor(fill);
+        card.setRadius(dp(24));
+        card.setCardElevation(0);
+        card.setStrokeWidth(dp(1));
+        card.setStrokeColor(ColorStateList.valueOf(color(R.color.nexbot_border)));
+        return card;
+    }
+
+    private MaterialButton button(String label, boolean primary) {
+        MaterialButton button = new MaterialButton(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setMinHeight(dp(48));
+        button.setTextSize(14);
+        button.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        button.setMinHeight(dp(52));
+        button.setMinWidth(dp(48));
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setCornerRadius(dp(16));
         button.setPadding(dp(16), 0, dp(16), 0);
+        button.setRippleColor(ColorStateList.valueOf(color(primary ? R.color.nexbot_accent_soft : R.color.nexbot_surface_alt)));
+        if (primary) {
+            button.setTextColor(color(R.color.nexbot_surface));
+            button.setBackgroundTintList(ColorStateList.valueOf(color(R.color.nexbot_accent)));
+        } else {
+            button.setTextColor(color(R.color.nexbot_accent_strong));
+            button.setBackgroundTintList(ColorStateList.valueOf(color(R.color.nexbot_surface)));
+            button.setStrokeWidth(dp(1));
+            button.setStrokeColor(ColorStateList.valueOf(color(R.color.nexbot_border)));
+        }
         return button;
     }
 
-    private TextView fieldLabel(String value) {
-        TextView label = text(value, 12, Color.rgb(85, 91, 99));
-        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        return label;
+    private MaterialButton textButton(String label) {
+        MaterialButton button = button(label, false);
+        button.setMinHeight(dp(44));
+        button.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+        button.setStrokeWidth(0);
+        button.setPadding(dp(8), 0, dp(8), 0);
+        return button;
     }
 
     private LinearLayout column() {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(24), dp(28), dp(24), dp(24));
-        layout.setBackgroundColor(Color.rgb(245, 246, 248));
         return layout;
     }
 
-    private void showPairing(String error) {
-        LinearLayout root = column();
-        TextView title = text("NexBot Connect", 28, Color.rgb(32, 33, 36));
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView subtitle = text("Connect this phone to your NexBot host.", 16, Color.DKGRAY);
-        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
-        subtitleParams.topMargin = dp(8);
-        root.addView(subtitle, subtitleParams);
+    private LinearLayout row() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.HORIZONTAL);
+        layout.setGravity(Gravity.CENTER_VERTICAL);
+        return layout;
+    }
 
-        pairingStatus = text(error == null ? "Scan the QR code shown in NexBot Settings to begin." : error,
-                14, error == null ? Color.rgb(65, 73, 82) : Color.rgb(168, 48, 48));
-        pairingStatus.setPadding(dp(16), dp(14), dp(16), dp(14));
-        pairingStatus.setBackground(surface(Color.rgb(232, 238, 242), Color.rgb(210, 218, 224)));
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
-        statusParams.topMargin = dp(24);
-        root.addView(pairingStatus, statusParams);
+    private LinearLayout.LayoutParams params(int width, int height, int left, int top, int right, int bottom) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, height);
+        params.setMargins(dp(left), dp(top), dp(right), dp(bottom));
+        return params;
+    }
 
+    private LinearLayout.LayoutParams params(int width, int height) {
+        return new LinearLayout.LayoutParams(width, height);
+    }
+
+    private ImageView brandMark(int size) {
+        ImageView image = new ImageView(this);
+        image.setImageResource(R.drawable.ic_nexbot);
+        image.setPadding(dp(9), dp(9), dp(9), dp(9));
+        image.setBackground(circle(color(R.color.nexbot_accent_soft)));
+        image.setContentDescription("NexBot");
+        image.setLayoutParams(params(dp(size), dp(size)));
+        return image;
+    }
+
+    private void addBrandHeader(LinearLayout parent) {
+        LinearLayout brand = row();
+        brand.addView(brandMark(48));
+        LinearLayout labels = column();
+        labels.addView(heading("NexBot Connect", 16));
+        TextView sub = text("PRIVATE DEVICE ACCESS", 10, color(R.color.nexbot_on_surface_secondary));
+        sub.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        sub.setLetterSpacing(0.11f);
+        labels.addView(sub, params(-1, -2, 0, 3, 0, 0));
+        brand.addView(labels, params(0, -2, 12, 0, 0, 0));
+        parent.addView(brand);
+    }
+
+    private void addPairingHero(LinearLayout parent) {
+        MaterialCardView hero = card(Color.TRANSPARENT);
+        hero.setCardBackgroundColor(Color.TRANSPARENT);
+        hero.setBackground(gradient(color(R.color.nexbot_hero_start), color(R.color.nexbot_hero_end), 26));
+        LinearLayout content = column();
+        content.setPadding(dp(20), dp(20), dp(20), dp(20));
+
+        LinearLayout step = row();
+        TextView stepNumber = text("01", 11, color(R.color.nexbot_accent_strong));
+        stepNumber.setGravity(Gravity.CENTER);
+        stepNumber.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        stepNumber.setBackground(circle(color(R.color.nexbot_surface)));
+        step.addView(stepNumber, params(dp(32), dp(32)));
+        step.addView(eyebrow("PAIR THIS PHONE"), params(-1, -2, 10, 0, 0, 0));
+        content.addView(step);
+
+        content.addView(heading("Scan once. Stay connected.", 25), params(-1, -2, 0, 22, 0, 0));
+        TextView copy = text("Use the QR code in NexBot Settings. Your phone gets a private device token and keeps it on this device.", 15, color(R.color.nexbot_on_surface_secondary));
+        copy.setLineSpacing(dp(3), 1f);
+        content.addView(copy, params(-1, -2, 0, 8, 0, 0));
+
+        pairingScanButton = button("Scan pairing QR", true);
+        pairingScanButton.setIconResource(R.drawable.ic_qr);
+        pairingScanButton.setIconTint(ColorStateList.valueOf(color(R.color.nexbot_surface)));
+        pairingScanButton.setIconPadding(dp(10));
+        content.addView(pairingScanButton, params(-1, dp(52), 0, 20, 0, 0));
+        pairingScanButton.setOnClickListener(v -> launchScanner());
+
+        manualToggleButton = textButton("Enter a code manually");
+        content.addView(manualToggleButton, params(-1, dp(44), 0, 4, 0, 0));
+        manualToggleButton.setOnClickListener(v -> openManualPanel(manualPanel == null || manualPanel.getVisibility() != View.VISIBLE));
+
+        hero.addView(content, new ViewGroup.LayoutParams(-1, -2));
+        parent.addView(hero, params(-1, -2, 0, 28, 0, 0));
+    }
+
+    private void addStatusCard(LinearLayout parent) {
+        pairingStatusCard = card(color(R.color.nexbot_surface));
+        LinearLayout content = row();
+        content.setPadding(dp(16), dp(14), dp(16), dp(14));
+        pairingStatusDot = new View(this);
+        pairingStatusDot.setBackground(circle(color(R.color.nexbot_accent)));
+        content.addView(pairingStatusDot, params(dp(10), dp(10)));
+        pairingStatus = text("Ready to pair. Scan the QR code on your host.", 13, color(R.color.nexbot_on_surface_secondary));
+        pairingStatus.setLineSpacing(dp(2), 1f);
+        content.addView(pairingStatus, params(0, -2, 12, 0, 0, 0));
+        pairingStatusCard.addView(content, new ViewGroup.LayoutParams(-1, -2));
+        parent.addView(pairingStatusCard, params(-1, -2, 0, 14, 0, 0));
         pairingProgress = new ProgressBar(this);
         pairingProgress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(28), dp(28));
+        LinearLayout.LayoutParams progressParams = params(dp(28), dp(28), 0, 10, 0, 0);
         progressParams.gravity = Gravity.CENTER_HORIZONTAL;
-        progressParams.topMargin = dp(12);
-        root.addView(pairingProgress, progressParams);
+        parent.addView(pairingProgress, progressParams);
+    }
 
-        pairingScanButton = actionButton("Scan pairing QR");
-        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(-1, -2);
-        scanParams.topMargin = dp(16);
-        root.addView(pairingScanButton, scanParams);
-        pairingScanButton.setOnClickListener(v -> {
-            ScanOptions options = new ScanOptions();
-            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
-            options.setPrompt("Scan the NexBot pairing QR");
-            options.setBeepEnabled(true);
-            options.setOrientationLocked(false);
-            qrScanner.launch(options);
-        });
+    private void addManualPanel(LinearLayout parent) {
+        manualPanel = column();
+        manualPanel.setPadding(dp(18), dp(18), dp(18), dp(18));
+        manualPanel.setBackground(rounded(color(R.color.nexbot_surface), color(R.color.nexbot_border), 22));
+        manualPanel.setVisibility(View.GONE);
 
-        TextView manualLabel = text("Or enter the host details manually", 14, Color.rgb(85, 91, 99));
-        manualLabel.setGravity(Gravity.CENTER_HORIZONTAL);
-        LinearLayout.LayoutParams manualParams = new LinearLayout.LayoutParams(-1, -2);
-        manualParams.topMargin = dp(20);
-        root.addView(manualLabel, manualParams);
+        LinearLayout header = row();
+        LinearLayout titles = column();
+        titles.addView(heading("Enter pairing details", 17));
+        titles.addView(text("Use the host address and six-digit code from Settings.", 12, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 4, 0, 0));
+        header.addView(titles, params(0, -2, 0, 0, 8, 0));
+        MaterialButton close = textButton("Use QR");
+        header.addView(close, params(-2, dp(44)));
+        close.setOnClickListener(v -> openManualPanel(false));
+        manualPanel.addView(header);
 
-        root.addView(fieldLabel("HOST ADDRESS"), marginParams(0, 12, 0, 0));
-        pairingHostInput = new EditText(this);
-        pairingHostInput.setHint("http://192.168.x.x:5199");
+        TextInputLayout hostLayout = new TextInputLayout(this);
+        hostLayout.setHint("Host address");
+        hostLayout.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
+        hostLayout.setBoxCornerRadii(dp(14), dp(14), dp(14), dp(14));
+        pairingHostInput = new TextInputEditText(this);
         pairingHostInput.setSingleLine(true);
         pairingHostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        pairingHostInput.setMinHeight(dp(52));
-        root.addView(pairingHostInput, new LinearLayout.LayoutParams(-1, -2));
+        pairingHostInput.setTextSize(16);
+        hostLayout.addView(pairingHostInput, new ViewGroup.LayoutParams(-1, dp(56)));
+        manualPanel.addView(hostLayout, params(-1, -2, 0, 18, 0, 0));
 
-        root.addView(fieldLabel("6-DIGIT CODE"), marginParams(0, 12, 0, 0));
-        pairingCodeInput = new EditText(this);
-        pairingCodeInput.setHint("000000");
+        TextInputLayout codeLayout = new TextInputLayout(this);
+        codeLayout.setHint("Six-digit pairing code");
+        codeLayout.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
+        codeLayout.setBoxCornerRadii(dp(14), dp(14), dp(14), dp(14));
+        pairingCodeInput = new TextInputEditText(this);
         pairingCodeInput.setSingleLine(true);
         pairingCodeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         pairingCodeInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
-        pairingCodeInput.setMinHeight(dp(52));
-        pairingCodeInput.setGravity(Gravity.CENTER_VERTICAL);
-        pairingCodeInput.setLetterSpacing(0.18f);
-        root.addView(pairingCodeInput, new LinearLayout.LayoutParams(-1, -2));
+        pairingCodeInput.setTextSize(20);
+        pairingCodeInput.setLetterSpacing(0.16f);
+        codeLayout.addView(pairingCodeInput, new ViewGroup.LayoutParams(-1, dp(56)));
+        manualPanel.addView(codeLayout, params(-1, -2, 0, 10, 0, 0));
 
-        pairingButton = actionButton("Pair phone");
-        LinearLayout.LayoutParams pairParams = new LinearLayout.LayoutParams(-1, -2);
-        pairParams.topMargin = dp(16);
-        root.addView(pairingButton, pairParams);
+        pairingButton = button("Pair this phone", true);
+        pairingButton.setIconResource(R.drawable.ic_link);
+        pairingButton.setIconTint(ColorStateList.valueOf(color(R.color.nexbot_surface)));
+        pairingButton.setIconPadding(dp(10));
+        manualPanel.addView(pairingButton, params(-1, dp(52), 0, 16, 0, 0));
         pairingButton.setOnClickListener(v -> pairFromInput(pairingHostInput.getText().toString(), pairingCodeInput.getText().toString(), pairingButton));
-        setContentView(root);
+        parent.addView(manualPanel, params(-1, -2, 0, 14, 0, 0));
     }
 
-    private LinearLayout.LayoutParams marginParams(int left, int top, int right, int bottom) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(dp(left), dp(top), dp(right), dp(bottom));
-        return params;
+    private void addPairingTrustNote(LinearLayout parent) {
+        MaterialCardView note = card(color(R.color.nexbot_surface_alt));
+        LinearLayout content = row();
+        content.setPadding(dp(16), dp(15), dp(16), dp(15));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_shield);
+        icon.setPadding(dp(7), dp(7), dp(7), dp(7));
+        icon.setBackground(circle(color(R.color.nexbot_surface)));
+        content.addView(icon, params(dp(40), dp(40)));
+        LinearLayout copy = column();
+        copy.addView(heading("Local by design", 14));
+        copy.addView(text("No account and no cloud relay. The token stays in this app.", 12, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 4, 0, 0));
+        content.addView(copy, params(0, -2, 12, 0, 0, 0));
+        note.addView(content, new ViewGroup.LayoutParams(-1, -2));
+        parent.addView(note, params(-1, -2, 0, 20, 0, 0));
+    }
+
+    private void showPairing(String error) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setBackgroundColor(color(R.color.nexbot_background));
+        LinearLayout root = column();
+        root.setPadding(dp(24), dp(28), dp(24), dp(34));
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -1));
+
+        addBrandHeader(root);
+        root.addView(heading("Bring NexBot with you.", 31), params(-1, -2, 0, 34, 0, 0));
+        TextView intro = text("A private mobile window into the workspace running on your PC.", 16, color(R.color.nexbot_on_surface_secondary));
+        intro.setLineSpacing(dp(3), 1f);
+        root.addView(intro, params(-1, -2, 0, 9, 0, 0));
+        addPairingHero(root);
+        addStatusCard(root);
+        addManualPanel(root);
+        addPairingTrustNote(root);
+        setContentView(scroll);
+        if (error != null) showPairingError(error);
+    }
+
+    private void launchScanner() {
+        ScanOptions options = new ScanOptions();
+        options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+        options.setPrompt("Scan the NexBot pairing QR");
+        options.setBeepEnabled(true);
+        options.setOrientationLocked(false);
+        qrScanner.launch(options);
+    }
+
+    private void openManualPanel(boolean open) {
+        if (manualPanel == null) return;
+        if (open) {
+            manualPanel.setVisibility(View.VISIBLE);
+            manualPanel.setAlpha(0f);
+            manualPanel.setTranslationY(dp(8));
+            manualPanel.animate().alpha(1f).translationY(0).setDuration(180).start();
+            if (manualToggleButton != null) manualToggleButton.setText("Hide manual entry");
+        } else {
+            manualPanel.animate().alpha(0f).translationY(dp(8)).setDuration(140).withEndAction(() -> {
+                manualPanel.setVisibility(View.GONE);
+                manualPanel.setAlpha(1f);
+                manualPanel.setTranslationY(0);
+            }).start();
+            if (manualToggleButton != null) manualToggleButton.setText("Enter a code manually");
+        }
     }
 
     private void fillPairingFields(PairingLink link) {
@@ -243,31 +462,53 @@ public final class MainActivity extends AppCompatActivity {
     private void setPairingStatus(String message, boolean error) {
         if (pairingStatus == null) return;
         pairingStatus.setText(message);
-        pairingStatus.setTextColor(error ? Color.rgb(168, 48, 48) : Color.rgb(65, 73, 82));
-        pairingStatus.setBackground(surface(error ? Color.rgb(252, 237, 237) : Color.rgb(232, 238, 242),
-                error ? Color.rgb(241, 198, 198) : Color.rgb(210, 218, 224)));
+        pairingStatus.setTextColor(color(error ? R.color.nexbot_error : R.color.nexbot_on_surface_secondary));
+        pairingStatusDot.setBackground(circle(color(error ? R.color.nexbot_error : R.color.nexbot_accent)));
+        pairingStatusCard.setCardBackgroundColor(color(error ? R.color.nexbot_error_soft : R.color.nexbot_surface));
+        pairingStatusCard.setStrokeColor(ColorStateList.valueOf(color(error ? R.color.nexbot_error : R.color.nexbot_border)));
     }
 
     private void setPairingBusy(boolean busy) {
         if (pairingButton != null) {
             pairingButton.setEnabled(!busy);
-            pairingButton.setText(busy ? "Connecting…" : "Pair phone");
+            pairingButton.setText(busy ? "Connecting…" : "Pair this phone");
         }
         if (pairingScanButton != null) pairingScanButton.setEnabled(!busy);
+        if (manualToggleButton != null) manualToggleButton.setEnabled(!busy);
         if (pairingHostInput != null) pairingHostInput.setEnabled(!busy);
         if (pairingCodeInput != null) pairingCodeInput.setEnabled(!busy);
         if (pairingProgress != null) pairingProgress.setVisibility(busy ? View.VISIBLE : View.GONE);
     }
 
-    private void showPairingError(Exception error) {
-        setPairingBusy(false);
-        String message = error == null || error.getMessage() == null
-                ? "Could not connect to the NexBot host. Check the address and try again."
-                : error.getMessage();
-        setPairingStatus(message + "\nCheck that the phone is on the same Wi-Fi and the code is still valid.", true);
+    private String friendlyPairingError(Exception error) {
+        String raw = error == null ? "" : error.getMessage();
+        if (raw == null || raw.isBlank()) return "Could not reach the NexBot host.";
+        String lower = raw.toLowerCase();
+        if (lower.contains("expired") || lower.contains("invalid")) return "That pairing code is no longer valid. Create a new code on the host.";
+        if (lower.contains("timed out") || lower.contains("unable to resolve") || lower.contains("connectexception")) return "The host did not respond. Check that this phone is on the same Wi-Fi.";
+        return raw.length() > 180 ? "The host returned an error. Check the address and try again." : raw;
     }
 
-    private void pairFromInput(String host, String code, Button pairButton) {
+    private void showPairingError(Exception error) {
+        setPairingBusy(false);
+        if (pairingStatus != null) {
+            setPairingStatus(friendlyPairingError(error) + "\nTry again or enter the details manually.", true);
+            openManualPanel(true);
+        }
+    }
+
+    private void showPairingError(String error) {
+        setPairingBusy(false);
+        if (pairingStatus != null) {
+            String message = (error == null || error.isBlank())
+                    ? "Could not reach the NexBot host."
+                    : error;
+            setPairingStatus(message + "\nTry again or enter the details manually.", true);
+            openManualPanel(true);
+        }
+    }
+
+    private void pairFromInput(String host, String code, MaterialButton pairButton) {
         try {
             PairingLink link = PairingLink.code(host, code);
             pairFromInput(link, pairButton);
@@ -283,23 +524,22 @@ public final class MainActivity extends AppCompatActivity {
                 savePairing(link);
                 showShell();
             } else {
-                showPairing(null);
                 fillPairingFields(link);
+                openManualPanel(true);
                 pairFromInput(link, pairingButton);
             }
         } catch (IllegalArgumentException error) {
-            showPairing(null);
             showPairingError(error);
         }
     }
 
-    private void pairFromInput(PairingLink link, Button pairButton) {
+    private void pairFromInput(PairingLink link, MaterialButton pairButton) {
         if (link == null || link.code == null) return;
         setPairingBusy(true);
         setPairingStatus("Connecting to the NexBot host…", false);
         vpnExecutor.execute(() -> {
             try {
-                runOnUiThread(() -> setPairingStatus("Exchanging the one-time pairing code…", false));
+                runOnUiThread(() -> setPairingStatus("Exchanging the one-time code…", false));
                 PairingLink exchanged = PairingProvisioner.exchange(link.baseUrl, link.code);
                 runOnUiThread(() -> {
                     savePairing(exchanged);
@@ -311,52 +551,107 @@ public final class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void showShell() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.WHITE);
-
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(12), dp(4), dp(8), dp(4));
-        TextView label = text("NexBot Connect", 16, Color.rgb(32, 33, 36));
-        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        toolbar.addView(label, new LinearLayout.LayoutParams(0, dp(48), 1));
-        Button forget = actionButton("Unpair");
-        toolbar.addView(forget, new LinearLayout.LayoutParams(-2, dp(48)));
-        forget.setOnClickListener(v -> {
+    private void addShellHeader(LinearLayout parent) {
+        LinearLayout header = row();
+        header.setPadding(dp(20), dp(12), dp(16), dp(8));
+        header.addView(brandMark(44));
+        LinearLayout labels = column();
+        labels.addView(heading("NexBot", 19));
+        labels.addView(text("Private workspace", 12, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 3, 0, 0));
+        header.addView(labels, params(0, -2, 12, 0, 0, 0));
+        MaterialButton unpairButton = textButton("Unpair");
+        header.addView(unpairButton, params(-2, dp(44), 8, 0, 0, 0));
+        unpairButton.setOnClickListener(v -> {
             disconnectVpn();
             preferences.edit().clear().apply();
             if (webView != null) webView.destroy();
             showPairing(null);
         });
-        root.addView(toolbar, new LinearLayout.LayoutParams(-1, -2));
+        parent.addView(header, params(-1, -2));
+    }
 
-        LinearLayout vpnRow = new LinearLayout(this);
-        vpnRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        vpnRow.setPadding(dp(16), dp(10), dp(12), dp(10));
-        vpnRow.setBackground(surface(Color.rgb(246, 248, 250), Color.rgb(220, 225, 230)));
-        LinearLayout statusColumn = new LinearLayout(this);
-        statusColumn.setOrientation(LinearLayout.VERTICAL);
-        vpnStatus = text("Secure tunnel is off", 14, Color.rgb(55, 62, 70));
-        vpnStatus.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        statusColumn.addView(vpnStatus, new LinearLayout.LayoutParams(-1, -2));
-        TextView vpnHint = text("Connect once to use NexBot through the private network.", 12, Color.rgb(100, 107, 115));
-        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
-        hintParams.topMargin = dp(3);
-        statusColumn.addView(vpnHint, hintParams);
-        vpnRow.addView(statusColumn, new LinearLayout.LayoutParams(0, -2, 1));
+    private void addVpnCard(LinearLayout parent) {
+        vpnCard = card(color(R.color.nexbot_surface));
+        LinearLayout content = column();
+        content.setPadding(dp(18), dp(18), dp(18), dp(18));
+
+        LinearLayout titleRow = row();
+        vpnStatusDot = new View(this);
+        vpnStatusDot.setBackground(circle(color(R.color.nexbot_warning)));
+        titleRow.addView(vpnStatusDot, params(dp(11), dp(11)));
+        LinearLayout titleCopy = column();
+        titleCopy.addView(eyebrow("SECURE TUNNEL"));
+        vpnStatus = heading("Off", 20);
+        titleCopy.addView(vpnStatus, params(-1, -2, 0, 5, 0, 0));
+        titleRow.addView(titleCopy, params(0, -2, 10, 0, 0, 0));
+        content.addView(titleRow);
+
+        vpnHint = text("NexBot is using the local connection. Turn on the tunnel for private access.", 13, color(R.color.nexbot_on_surface_secondary));
+        vpnHint.setLineSpacing(dp(2), 1f);
+        content.addView(vpnHint, params(-1, -2, 0, 12, 0, 0));
+
+        LinearLayout hostRow = row();
+        ImageView shield = new ImageView(this);
+        shield.setImageResource(R.drawable.ic_shield);
+        shield.setPadding(dp(6), dp(6), dp(6), dp(6));
+        shield.setBackground(circle(color(R.color.nexbot_surface_alt)));
+        hostRow.addView(shield, params(dp(36), dp(36)));
+        LinearLayout hostCopy = column();
+        hostCopy.addView(eyebrow("CONNECTED HOST"));
+        vpnHost = text(displayHost(false), 13, color(R.color.nexbot_on_surface));
+        hostCopy.addView(vpnHost, params(-1, -2, 0, 4, 0, 0));
+        hostRow.addView(hostCopy, params(0, -2, 10, 0, 0, 0));
+        content.addView(hostRow, params(-1, -2, 0, 16, 0, 0));
+
+        LinearLayout actionRow = row();
         vpnProgress = new ProgressBar(this);
         vpnProgress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams vpnProgressParams = new LinearLayout.LayoutParams(dp(24), dp(24));
-        vpnProgressParams.setMargins(dp(8), 0, dp(8), 0);
-        vpnRow.addView(vpnProgress, vpnProgressParams);
-        vpnButton = actionButton("Connect secure tunnel");
-        vpnRow.addView(vpnButton, new LinearLayout.LayoutParams(-2, dp(48)));
+        actionRow.addView(vpnProgress, params(dp(24), dp(24), 0, 0, 10, 0));
+        vpnButton = button("Connect secure tunnel", true);
+        vpnButton.setIconResource(R.drawable.ic_shield);
+        vpnButton.setIconTint(ColorStateList.valueOf(color(R.color.nexbot_surface)));
+        vpnButton.setIconPadding(dp(9));
+        actionRow.addView(vpnButton, params(0, dp(52), 0, 0, 0, 0));
+        content.addView(actionRow, params(-1, dp(52), 0, 18, 0, 0));
         vpnButton.setOnClickListener(v -> toggleVpn());
-        root.addView(vpnRow, marginParams(12, 4, 12, 8));
 
+        vpnDetailsButton = textButton("Show technical details");
+        vpnDetailsButton.setVisibility(View.GONE);
+        content.addView(vpnDetailsButton, params(-1, dp(44), 0, 4, 0, 0));
+        vpnDetail = text("", 11, color(R.color.nexbot_on_surface_secondary));
+        vpnDetail.setTypeface(Typeface.MONOSPACE);
+        vpnDetail.setVisibility(View.GONE);
+        vpnDetail.setPadding(dp(12), dp(10), dp(12), dp(10));
+        vpnDetail.setBackground(rounded(color(R.color.nexbot_surface_alt), color(R.color.nexbot_border), 12));
+        content.addView(vpnDetail, params(-1, -2, 0, 4, 0, 0));
+        vpnDetailsButton.setOnClickListener(v -> {
+            vpnDetailVisible = !vpnDetailVisible;
+            vpnDetail.setVisibility(vpnDetailVisible ? View.VISIBLE : View.GONE);
+            vpnDetailsButton.setText(vpnDetailVisible ? "Hide technical details" : "Show technical details");
+        });
+
+        vpnCard.addView(content, new ViewGroup.LayoutParams(-1, -2));
+        parent.addView(vpnCard, params(-1, -2, 16, 8, 16, 12));
+    }
+
+    private void addWorkspace(LinearLayout parent) {
+        MaterialCardView workspace = card(color(R.color.nexbot_surface));
+        LinearLayout content = column();
+        LinearLayout header = row();
+        header.setPadding(dp(16), dp(14), dp(16), dp(12));
+        LinearLayout labels = column();
+        labels.addView(heading("Your workspace", 16));
+        labels.addView(text("NexBot stays on your host", 12, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 3, 0, 0));
+        header.addView(labels, params(0, -2, 0, 0, 8, 0));
+        TextView live = text("LIVE", 10, color(R.color.nexbot_success));
+        live.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        live.setPadding(dp(10), dp(7), dp(10), dp(7));
+        live.setBackground(rounded(color(R.color.nexbot_accent_soft), Color.TRANSPARENT, 30));
+        header.addView(live, params(-2, -2));
+        content.addView(header);
         webView = new WebView(this);
+        webView.setBackgroundColor(color(R.color.nexbot_background));
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.getSettings().setBuiltInZoomControls(false);
@@ -371,7 +666,27 @@ public final class MainActivity extends AppCompatActivity {
                 return true;
             }
         });
-        root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1));
+        content.addView(webView, params(-1, 0));
+        ((LinearLayout.LayoutParams) webView.getLayoutParams()).weight = 1f;
+        workspace.addView(content, new ViewGroup.LayoutParams(-1, -1));
+        LinearLayout.LayoutParams workspaceParams = params(-1, 0, 12, 0, 12, 14);
+        workspaceParams.weight = 1f;
+        parent.addView(workspace, workspaceParams);
+    }
+
+    private String displayHost(boolean throughVpn) {
+        if (throughVpn) return "10.77.0.1 · private tunnel";
+        Uri base = Uri.parse(savedBaseUrl() == null ? "http://host" : savedBaseUrl());
+        return base.getHost() + (base.getPort() > 0 ? ":" + base.getPort() : "") + " · local network";
+    }
+
+    private void showShell() {
+        LinearLayout root = column();
+        root.setBackgroundColor(color(R.color.nexbot_background));
+        root.setPadding(0, dp(8), 0, 0);
+        addShellHeader(root);
+        addVpnCard(root);
+        addWorkspace(root);
         setContentView(root);
         loadShellUrl(false);
         refreshVpnState();
@@ -379,15 +694,18 @@ public final class MainActivity extends AppCompatActivity {
 
     private void toggleVpn() {
         if (vpnButton == null) return;
-        setVpnBusy(true);
         if (isVpnUp()) {
+            setVpnBusy(true);
             disconnectVpn();
             setVpnBusy(false);
-            updateVpnUi(false, "Secure tunnel is off");
+            updateVpnUi(false, "Off");
+            setVpnHint("NexBot is using the local connection. Turn on the tunnel for private access.");
             loadShellUrl(false);
             return;
         }
-        setVpnStatus("Preparing the secure tunnel…");
+        setVpnBusy(true);
+        setVpnStatus("Connecting");
+        setVpnHint("Preparing a device-specific tunnel…");
         vpnExecutor.execute(() -> {
             try {
                 String privateKey = preferences.getString(VPN_PRIVATE_KEY, null);
@@ -405,7 +723,8 @@ public final class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     preferences.edit().putString(VPN_PRIVATE_KEY, finalPrivateKey).putString(VPN_PUBLIC_KEY, finalPublicKey).putString(VPN_CONFIG, config).apply();
                     pendingVpnConfig = config;
-                    setVpnStatus("Approve Android's VPN permission…");
+                    setVpnStatus("Permission needed");
+                    setVpnHint("Android will ask once before the secure tunnel starts.");
                     requestVpnPermissionAndConnect();
                 });
             } catch (Exception error) {
@@ -427,21 +746,23 @@ public final class MainActivity extends AppCompatActivity {
         if (resultCode == RESULT_OK) startTunnel();
         else {
             setVpnBusy(false);
-            updateVpnUi(false, "VPN permission is required. Tap Connect secure tunnel to retry.");
+            updateVpnUi(false, "Permission needed");
+            setVpnHint("Allow VPN access to connect. You can retry at any time.");
         }
     }
 
     private void startTunnel() {
         String config = pendingVpnConfig != null ? pendingVpnConfig : preferences.getString(VPN_CONFIG, null);
         if (config == null) {
-            showVpnError(new IllegalStateException("Pair this device before connecting the VPN"));
+            showVpnError(new IllegalStateException("Pair this phone before connecting the secure tunnel."));
             return;
         }
-        setVpnStatus("Starting the secure tunnel…");
+        setVpnStatus("Starting");
+        setVpnHint("Bringing the private tunnel online…");
         vpnExecutor.execute(() -> {
             try {
                 vpnController.connect(config);
-                runOnUiThread(() -> { setVpnBusy(false); updateVpnUi(true, "Secure tunnel connected"); loadShellUrl(true); });
+                runOnUiThread(() -> { setVpnBusy(false); updateVpnUi(true, "Connected"); setVpnHint("Your NexBot traffic is using the private tunnel."); loadShellUrl(true); });
             } catch (Exception error) {
                 runOnUiThread(() -> showVpnError(error));
             }
@@ -463,19 +784,69 @@ public final class MainActivity extends AppCompatActivity {
     private void refreshVpnState() {
         vpnExecutor.execute(() -> {
             boolean connected = isVpnUp();
-            runOnUiThread(() -> { updateVpnUi(connected, connected ? "Secure tunnel connected" : "Secure tunnel is off"); if (connected) loadShellUrl(true); });
+            runOnUiThread(() -> {
+                updateVpnUi(connected, connected ? "Connected" : "Off");
+                setVpnHint(connected ? "Your NexBot traffic is using the private tunnel." : "NexBot is using the local connection. Turn on the tunnel for private access.");
+                if (connected) loadShellUrl(true);
+            });
         });
     }
 
     private void updateVpnUi(boolean connected, String status) {
         vpnActive = connected;
         if (vpnStatus != null) vpnStatus.setText(status);
-        if (vpnStatus != null) {
-            vpnStatus.setTextColor(connected ? Color.rgb(31, 117, 87)
-                    : status.startsWith("Could") || status.startsWith("VPN permission")
-                    ? Color.rgb(168, 48, 48) : Color.rgb(55, 62, 70));
+        if (vpnStatusDot != null) vpnStatusDot.setBackground(circle(color(connected ? R.color.nexbot_success : R.color.nexbot_warning)));
+        if (vpnHost != null) vpnHost.setText(displayHost(connected));
+        if (vpnButton != null) {
+            vpnButton.setText(connected ? "Disconnect secure tunnel" : "Connect secure tunnel");
+            vpnButton.setIconResource(connected ? R.drawable.ic_link : R.drawable.ic_shield);
         }
-        if (vpnButton != null) vpnButton.setText(connected ? "Disconnect secure tunnel" : "Connect secure tunnel");
+        if (vpnCard != null) {
+            vpnCard.setCardBackgroundColor(color(connected ? R.color.nexbot_accent_soft : R.color.nexbot_surface));
+            vpnCard.setStrokeColor(ColorStateList.valueOf(color(connected ? R.color.nexbot_success : R.color.nexbot_border)));
+        }
+    }
+
+    private void setVpnStatus(String status) {
+        if (vpnStatus != null) vpnStatus.setText(status);
+    }
+
+    private void setVpnHint(String hint) {
+        if (vpnHint != null) vpnHint.setText(hint);
+    }
+
+    private void setVpnBusy(boolean busy) {
+        if (vpnButton != null) vpnButton.setEnabled(!busy);
+        if (vpnProgress != null) vpnProgress.setVisibility(busy ? View.VISIBLE : View.GONE);
+    }
+
+    private String friendlyVpnError(Exception error) {
+        String raw = error == null ? "" : error.getMessage();
+        if (raw == null || raw.isBlank()) return "The secure tunnel could not start.";
+        String lower = raw.toLowerCase();
+        if (lower.contains("command failed") || lower.contains("access is denied")) return "The host could not update WireGuard. Keep NexBot running on the host and try again.";
+        if (lower.contains("permission")) return "Android needs VPN permission before the tunnel can start.";
+        if (lower.contains("timeout") || lower.contains("connectexception")) return "The host did not respond. Check the network and try again.";
+        return raw.length() > 160 ? "The secure tunnel could not start. Try again." : raw;
+    }
+
+    private void showVpnError(Exception error) {
+        setVpnBusy(false);
+        updateVpnUi(false, "Could not connect");
+        setVpnHint(friendlyVpnError(error) + " Tap Try again when ready.");
+        if (vpnDetailsButton != null && vpnDetail != null) {
+            vpnDetail.setText(error == null || error.getMessage() == null ? "" : error.getMessage());
+            vpnDetailsButton.setVisibility(View.VISIBLE);
+            vpnDetailVisible = false;
+            vpnDetail.setVisibility(View.GONE);
+            vpnDetailsButton.setText("Show technical details");
+        }
+        if (vpnCard != null) {
+            vpnCard.setCardBackgroundColor(color(R.color.nexbot_error_soft));
+            vpnCard.setStrokeColor(ColorStateList.valueOf(color(R.color.nexbot_error)));
+        }
+        if (vpnStatusDot != null) vpnStatusDot.setBackground(circle(color(R.color.nexbot_error)));
+        if (vpnButton != null) vpnButton.setText("Try again");
     }
 
     private void loadShellUrl(boolean throughVpn) {
@@ -488,21 +859,6 @@ public final class MainActivity extends AppCompatActivity {
             address = builder.build().toString();
         }
         webView.loadUrl(address + "/?token=" + Uri.encode(savedToken()));
-    }
-
-    private void setVpnStatus(String status) {
-        if (vpnStatus != null) vpnStatus.setText(status);
-    }
-
-    private void setVpnBusy(boolean busy) {
-        if (vpnButton != null) vpnButton.setEnabled(!busy);
-        if (vpnProgress != null) vpnProgress.setVisibility(busy ? View.VISIBLE : View.GONE);
-    }
-
-    private void showVpnError(Exception error) {
-        setVpnBusy(false);
-        String message = error.getMessage() == null ? "Could not connect the VPN" : error.getMessage();
-        updateVpnUi(false, "Could not start the secure tunnel.\n" + message + "\nTap Connect secure tunnel to retry.");
     }
 
     @Override

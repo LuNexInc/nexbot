@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@color/nexbot_on_surface"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round"
+        android:pathData="M12,3L19,6V11.5C19,16.2 16.3,19.2 12,21C7.7,19.2 5,16.2 5,11.5V6L12,3Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@color/nexbot_accent"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M9,12L11,14L15.5,9.5" />
+</vector>
