@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pickDefaultSelection, type DescribedInstance } from "./selection.ts";
+import { chooseAntigravityCosSelection, pickDefaultSelection, type DescribedInstance } from "./selection.ts";
 
 function d(
   partial: Partial<DescribedInstance> & Pick<DescribedInstance, "instanceId" | "driverKind">,
@@ -85,5 +85,33 @@ describe("pickDefaultSelection", () => {
       }),
     ]);
     expect(pick).toEqual({ instanceId: "claude", model: "sonnet" });
+  });
+});
+
+describe("chooseAntigravityCosSelection", () => {
+  it("leaves non-antigravity selections untouched", () => {
+    const pick = chooseAntigravityCosSelection({ instanceId: "codex", model: "gpt-5.5" }, "hello");
+    expect(pick).toEqual({ instanceId: "codex", model: "gpt-5.5" });
+  });
+
+  it("keeps standard Antigravity CoS turns on Gemini 3.7 Flash Medium/Low", () => {
+    const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.7-flash-medium" }, "check my inbox");
+    expect(pick).toEqual({ instanceId: "antigravity", model: "gemini-3.7-flash-medium" });
+  });
+
+  it("locks non-3.7 Antigravity models onto Gemini 3.7 Flash for Chief of Staff", () => {
+    const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.1-pro-high" }, "routine turn");
+    expect(pick.model).toBe("gemini-3.7-flash-high");
+  });
+
+  it("promotes normal turns to Gemini 3.7 Flash High for complex multi-step requests", () => {
+    const complexPrompt = "Please analyze, review, and evaluate the full architecture across multiple deliverables step by step.";
+    const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.7-flash-medium" }, complexPrompt);
+    expect(pick).toEqual({ instanceId: "antigravity", model: "gemini-3.7-flash-high", reasoningEffort: "high" });
+  });
+
+  it("preserves explicit reasoningEffort overrides on Gemini 3.7 Flash", () => {
+    const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.7-flash-low", reasoningEffort: "low" }, "analyze deeply");
+    expect(pick).toEqual({ instanceId: "antigravity", model: "gemini-3.7-flash-low", reasoningEffort: "low" });
   });
 });

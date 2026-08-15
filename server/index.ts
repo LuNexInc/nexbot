@@ -54,7 +54,7 @@ import {
 import { stripWorkingNarration } from "../src/lib/activity.ts";
 import { createNonceCache } from "./nonce.ts";
 import { createWatchdog, isComputerToolName } from "./watchdog.ts";
-import { pickDefaultSelection } from "./selection.ts";
+import { chooseAntigravityCosSelection, pickDefaultSelection } from "./selection.ts";
 import { isMeaningfulUpdate, proactivePrompt, shouldTriggerProactive, type ProactiveReason } from "./proactivity.ts";
 import { routingDirective, suggestSpecialistRoutes } from "./routing.ts";
 import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./agent-inbox.ts";
@@ -186,27 +186,6 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
   return typeof value === "string" && REASONING_EFFORTS.has(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : undefined;
-}
-
-const COMPLEX_COS_WORDS = /\b(analy[sz]e|compare|debug|design|implement|investigate|research|audit|architect|multi[- ]step|end[- ]to[- ]end|thorough)\b/gi;
-
-/** Keep short CoS turns on Flash Medium/Low, and reserve High for work that
- * has enough scope to benefit from it. Explicit model/effort choices win. */
-export function isComplexCosRequest(text: string): boolean {
-  const matches = text.match(COMPLEX_COS_WORDS)?.length ?? 0;
-  return text.trim().length >= 900 || matches >= 2 || /\b(step[- ]by[- ]step|multiple deliverables|full review)\b/i.test(text);
-}
-
-export function chooseAntigravityCosSelection(selection: ModelSelection, text: string): ModelSelection {
-  if (selection.instanceId !== "antigravity" || selection.reasoningEffort && selection.reasoningEffort !== "auto") return selection;
-  const match = /^(gemini-[\d.]+-flash)(?:-(low|medium|high))?$/.exec(selection.model);
-  if (!match) return selection;
-  const level = match[2] ?? "medium";
-  // Selecting High in the picker is an explicit request. Auto mode only
-  // promotes the normal Medium/Low defaults for a clearly complex turn.
-  if (level === "high") return selection;
-  if (!isComplexCosRequest(text)) return { ...selection, model: `${match[1]}-${level}` };
-  return { ...selection, model: `${match[1]}-high`, reasoningEffort: "high" };
 }
 
 let bootSelection = { instanceId: "grok", model: "grok-4.5" };
