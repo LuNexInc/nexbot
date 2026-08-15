@@ -575,83 +575,42 @@ public final class MainActivity extends AppCompatActivity {
 
     private void addVpnCard(LinearLayout parent) {
         vpnCard = card(color(R.color.nexbot_surface));
-        LinearLayout content = column();
-        content.setPadding(dp(18), dp(18), dp(18), dp(18));
+        vpnCard.setRadius(dp(18));
+        LinearLayout content = row();
+        content.setPadding(dp(14), dp(8), dp(10), dp(8));
 
-        LinearLayout titleRow = row();
         vpnStatusDot = new View(this);
         vpnStatusDot.setBackground(circle(color(R.color.nexbot_warning)));
-        titleRow.addView(vpnStatusDot, params(dp(11), dp(11)));
-        LinearLayout titleCopy = column();
-        titleCopy.addView(eyebrow("SECURE TUNNEL"));
-        vpnStatus = heading("Off", 20);
-        titleCopy.addView(vpnStatus, params(-1, -2, 0, 5, 0, 0));
-        titleRow.addView(titleCopy, params(0, -2, 10, 0, 0, 0));
-        content.addView(titleRow);
+        content.addView(vpnStatusDot, params(dp(10), dp(10), 0, 0, 10, 0));
+        LinearLayout copy = column();
+        copy.addView(eyebrow("CONNECTION"));
+        vpnStatus = heading("Off", 15);
+        copy.addView(vpnStatus, params(-1, -2, 0, 2, 0, 0));
+        vpnHint = text("Local connection", 11, color(R.color.nexbot_on_surface_secondary));
+        copy.addView(vpnHint, params(-1, -2, 0, 2, 0, 0));
+        content.addView(copy, params(0, -2, 0, 0, 10, 0));
 
-        vpnHint = text("NexBot is using the local connection. Turn on the tunnel for private access.", 13, color(R.color.nexbot_on_surface_secondary));
-        vpnHint.setLineSpacing(dp(2), 1f);
-        content.addView(vpnHint, params(-1, -2, 0, 12, 0, 0));
-
-        LinearLayout hostRow = row();
-        ImageView shield = new ImageView(this);
-        shield.setImageResource(R.drawable.ic_shield);
-        shield.setPadding(dp(6), dp(6), dp(6), dp(6));
-        shield.setBackground(circle(color(R.color.nexbot_surface_alt)));
-        hostRow.addView(shield, params(dp(36), dp(36)));
-        LinearLayout hostCopy = column();
-        hostCopy.addView(eyebrow("CONNECTED HOST"));
-        vpnHost = text(displayHost(false), 13, color(R.color.nexbot_on_surface));
-        hostCopy.addView(vpnHost, params(-1, -2, 0, 4, 0, 0));
-        hostRow.addView(hostCopy, params(0, -2, 10, 0, 0, 0));
-        content.addView(hostRow, params(-1, -2, 0, 16, 0, 0));
-
-        LinearLayout actionRow = row();
         vpnProgress = new ProgressBar(this);
         vpnProgress.setVisibility(View.GONE);
-        actionRow.addView(vpnProgress, params(dp(24), dp(24), 0, 0, 10, 0));
-        vpnButton = button("Connect secure tunnel", true);
+        content.addView(vpnProgress, params(dp(20), dp(20), 0, 0, 8, 0));
+        vpnButton = textButton("Connect");
         vpnButton.setIconResource(R.drawable.ic_shield);
-        vpnButton.setIconTint(ColorStateList.valueOf(color(R.color.nexbot_surface)));
-        vpnButton.setIconPadding(dp(9));
-        actionRow.addView(vpnButton, params(0, dp(52), 0, 0, 0, 0));
-        content.addView(actionRow, params(-1, dp(52), 0, 18, 0, 0));
+        vpnButton.setIconTint(ColorStateList.valueOf(color(R.color.nexbot_accent_strong)));
+        vpnButton.setIconPadding(dp(6));
+        vpnButton.setMinWidth(dp(108));
+        content.addView(vpnButton, params(-2, dp(42)));
         vpnButton.setOnClickListener(v -> toggleVpn());
 
-        vpnDetailsButton = textButton("Show technical details");
-        vpnDetailsButton.setVisibility(View.GONE);
-        content.addView(vpnDetailsButton, params(-1, dp(44), 0, 4, 0, 0));
-        vpnDetail = text("", 11, color(R.color.nexbot_on_surface_secondary));
-        vpnDetail.setTypeface(Typeface.MONOSPACE);
-        vpnDetail.setVisibility(View.GONE);
-        vpnDetail.setPadding(dp(12), dp(10), dp(12), dp(10));
-        vpnDetail.setBackground(rounded(color(R.color.nexbot_surface_alt), color(R.color.nexbot_border), 12));
-        content.addView(vpnDetail, params(-1, -2, 0, 4, 0, 0));
-        vpnDetailsButton.setOnClickListener(v -> {
-            vpnDetailVisible = !vpnDetailVisible;
-            vpnDetail.setVisibility(vpnDetailVisible ? View.VISIBLE : View.GONE);
-            vpnDetailsButton.setText(vpnDetailVisible ? "Hide technical details" : "Show technical details");
-        });
+        vpnHost = text(displayHost(false), 1, Color.TRANSPARENT);
+        vpnHost.setVisibility(View.GONE);
+        vpnDetailsButton = null;
+        vpnDetail = null;
 
         vpnCard.addView(content, new ViewGroup.LayoutParams(-1, -2));
-        parent.addView(vpnCard, params(-1, -2, 16, 8, 16, 12));
+        parent.addView(vpnCard, params(-1, -2, 12, 4, 12, 6));
     }
 
     private void addWorkspace(LinearLayout parent) {
-        MaterialCardView workspace = card(color(R.color.nexbot_surface));
-        LinearLayout content = column();
-        LinearLayout header = row();
-        header.setPadding(dp(16), dp(14), dp(16), dp(12));
-        LinearLayout labels = column();
-        labels.addView(heading("Your workspace", 16));
-        labels.addView(text("NexBot stays on your host", 12, color(R.color.nexbot_on_surface_secondary)), params(-1, -2, 0, 3, 0, 0));
-        header.addView(labels, params(0, -2, 0, 0, 8, 0));
-        TextView live = text("LIVE", 10, color(R.color.nexbot_success));
-        live.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-        live.setPadding(dp(10), dp(7), dp(10), dp(7));
-        live.setBackground(rounded(color(R.color.nexbot_accent_soft), Color.TRANSPARENT, 30));
-        header.addView(live, params(-2, -2));
-        content.addView(header);
         webView = new WebView(this);
         webView.setBackgroundColor(color(R.color.nexbot_background));
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -669,12 +628,8 @@ public final class MainActivity extends AppCompatActivity {
                 return true;
             }
         });
-        content.addView(webView, params(-1, 0));
+        parent.addView(webView, params(-1, 0, 0, 0, 0, 0));
         ((LinearLayout.LayoutParams) webView.getLayoutParams()).weight = 1f;
-        workspace.addView(content, new ViewGroup.LayoutParams(-1, -1));
-        LinearLayout.LayoutParams workspaceParams = params(-1, 0, 12, 0, 12, 14);
-        workspaceParams.weight = 1f;
-        parent.addView(workspace, workspaceParams);
     }
 
     private String displayHost(boolean throughVpn) {
@@ -686,7 +641,7 @@ public final class MainActivity extends AppCompatActivity {
     private void showShell() {
         LinearLayout root = column();
         root.setBackgroundColor(color(R.color.nexbot_background));
-        root.setPadding(0, dp(8), 0, 0);
+        root.setPadding(0, dp(4), 0, 0);
         addShellHeader(root);
         addVpnCard(root);
         addWorkspace(root);
@@ -702,13 +657,13 @@ public final class MainActivity extends AppCompatActivity {
             disconnectVpn();
             setVpnBusy(false);
             updateVpnUi(false, "Off");
-            setVpnHint("NexBot is using the local connection. Turn on the tunnel for private access.");
+            setVpnHint("Local connection");
             loadShellUrl(false);
             return;
         }
         setVpnBusy(true);
         setVpnStatus("Connecting");
-        setVpnHint("Preparing a device-specific tunnel…");
+        setVpnHint("Preparing tunnel…");
         vpnExecutor.execute(() -> {
             try {
                 String privateKey = preferences.getString(VPN_PRIVATE_KEY, null);
@@ -727,7 +682,7 @@ public final class MainActivity extends AppCompatActivity {
                     preferences.edit().putString(VPN_PRIVATE_KEY, finalPrivateKey).putString(VPN_PUBLIC_KEY, finalPublicKey).putString(VPN_CONFIG, config).apply();
                     pendingVpnConfig = config;
                     setVpnStatus("Permission needed");
-                    setVpnHint("Android will ask once before the secure tunnel starts.");
+                    setVpnHint("Approve VPN access");
                     requestVpnPermissionAndConnect();
                 });
             } catch (Exception error) {
@@ -761,11 +716,11 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         setVpnStatus("Starting");
-        setVpnHint("Bringing the private tunnel online…");
+        setVpnHint("Starting secure tunnel…");
         vpnExecutor.execute(() -> {
             try {
                 vpnController.connect(config);
-                runOnUiThread(() -> { setVpnBusy(false); updateVpnUi(true, "Connected"); setVpnHint("Your NexBot traffic is using the private tunnel."); loadShellUrl(true); });
+                runOnUiThread(() -> { setVpnBusy(false); updateVpnUi(true, "Connected"); setVpnHint("Private tunnel active"); loadShellUrl(true); });
             } catch (Exception error) {
                 runOnUiThread(() -> showVpnError(error));
             }
@@ -789,7 +744,7 @@ public final class MainActivity extends AppCompatActivity {
             boolean connected = isVpnUp();
             runOnUiThread(() -> {
                 updateVpnUi(connected, connected ? "Connected" : "Off");
-                setVpnHint(connected ? "Your NexBot traffic is using the private tunnel." : "NexBot is using the local connection. Turn on the tunnel for private access.");
+                setVpnHint(connected ? "Private tunnel active" : "Local connection");
                 if (connected) loadShellUrl(true);
             });
         });
@@ -801,7 +756,7 @@ public final class MainActivity extends AppCompatActivity {
         if (vpnStatusDot != null) vpnStatusDot.setBackground(circle(color(connected ? R.color.nexbot_success : R.color.nexbot_warning)));
         if (vpnHost != null) vpnHost.setText(displayHost(connected));
         if (vpnButton != null) {
-            vpnButton.setText(connected ? "Disconnect secure tunnel" : "Connect secure tunnel");
+            vpnButton.setText(connected ? "Disconnect" : "Connect");
             vpnButton.setIconResource(connected ? R.drawable.ic_link : R.drawable.ic_shield);
         }
         if (vpnCard != null) {
@@ -861,7 +816,7 @@ public final class MainActivity extends AppCompatActivity {
             Uri.Builder builder = new Uri.Builder().scheme(base.getScheme()).encodedAuthority(authority);
             address = builder.build().toString();
         }
-        webView.loadUrl(address + "/?token=" + Uri.encode(savedToken()));
+        webView.loadUrl(address + "/m.html?token=" + Uri.encode(savedToken()));
     }
 
     @Override
