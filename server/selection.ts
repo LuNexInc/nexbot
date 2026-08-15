@@ -40,8 +40,9 @@ export function chooseAntigravityCosSelection(selection: ModelSelection, text: s
   const level = match ? (match[2] ?? "medium") : (selection.model.includes("high") ? "high" : selection.model.includes("low") ? "low" : "medium");
 
   if (isExplicitEffort) {
-    const effort = selection.reasoningEffort!;
-    return { ...selection, model: `${baseModel}-${effort}`, reasoningEffort: effort };
+    const rawEffort = selection.reasoningEffort!;
+    const normalizedModelEffort = rawEffort === "max" ? "high" : rawEffort;
+    return { ...selection, model: `${baseModel}-${normalizedModelEffort}`, reasoningEffort: rawEffort };
   }
   if (level === "high") return { ...selection, model: `${baseModel}-high` };
   if (!isComplexCosRequest(text)) return { ...selection, model: `${baseModel}-${level}` };

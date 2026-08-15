@@ -118,6 +118,19 @@ describe("AntigravityDriver stream-json turns", () => {
     }
   });
 
+  it("normalizes max reasoning effort and -max model suffix to high for agy", () => {
+    const args = buildAntigravityArgs({
+      threadId: "t-max",
+      text: "deep thinking prompt",
+      model: "gemini-3.7-flash-max",
+      reasoningEffort: "max",
+    }, false);
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("gemini-3.7-flash-high");
+    expect(args).toContain("--effort");
+    expect(args[args.indexOf("--effort") + 1]).toBe("high");
+  });
+
   it("turns an early CLI exit into a failed turn", async () => {
     await create("exit-early");
     await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });

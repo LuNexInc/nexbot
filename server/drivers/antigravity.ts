@@ -70,7 +70,11 @@ function textFromResult(result: unknown): string {
 export function buildAntigravityArgs(turn: SendTurnInput, fullAuto: boolean): string[] {
   const prompt = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
   const args = ["-p", prompt, "--output-format", "stream-json"];
-  if (turn.model) args.push("--model", turn.model);
+  let model = turn.model;
+  if (model) {
+    if (model.endsWith("-max")) model = model.replace(/-max$/, "-high");
+    args.push("--model", model);
+  }
   if (turn.reasoningEffort && turn.reasoningEffort !== "auto") {
     args.push("--effort", turn.reasoningEffort === "max" ? "high" : turn.reasoningEffort);
   }

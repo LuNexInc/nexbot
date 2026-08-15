@@ -114,4 +114,9 @@ describe("chooseAntigravityCosSelection", () => {
     const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.7-flash-low", reasoningEffort: "low" }, "analyze deeply");
     expect(pick).toEqual({ instanceId: "antigravity", model: "gemini-3.7-flash-low", reasoningEffort: "low" });
   });
+
+  it("normalizes max reasoningEffort to gemini-3.7-flash-high for Antigravity", () => {
+    const pick = chooseAntigravityCosSelection({ instanceId: "antigravity", model: "gemini-3.7-flash-medium", reasoningEffort: "max" }, "deep thinking");
+    expect(pick).toEqual({ instanceId: "antigravity", model: "gemini-3.7-flash-high", reasoningEffort: "max" });
+  });
 });
