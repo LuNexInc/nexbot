@@ -22,6 +22,7 @@ export type {
   ConfigStatus,
   RemoteAccessStatus,
   RemoteDeviceStatus,
+  WireGuardStatus,
   InstanceInfo,
   Message,
   TurnEffort,

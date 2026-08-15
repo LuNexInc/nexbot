@@ -161,6 +161,17 @@ export interface RemoteAccessStatus {
   devices: RemoteDeviceStatus[];
 }
 
+export interface WireGuardStatus {
+  available: boolean;
+  configured: boolean;
+  active: boolean;
+  endpoint: string;
+  listenPort: number;
+  address: string;
+  peerCount: number;
+  reason?: string;
+}
+
 /** One row of GET /api/instances — the model picker's data. */
 export interface InstanceInfo {
   instanceId: string;

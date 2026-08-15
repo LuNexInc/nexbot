@@ -21,6 +21,13 @@ The `nexbot://pair?url=...` deep link is also supported.
 
 ## VPN status
 
-The official WireGuard tunnel library is included. The host-side WireGuard
-provisioning API is not part of this milestone, so the app does not start a
-tunnel yet. A tunnel must never start from an untrusted or incomplete config.
+From the desktop app, open Settings > Connect and set up the private VPN.
+WireGuard for Windows must be installed on the host. Pair the phone first,
+then tap `Connect VPN`; NexBot fetches a device-scoped peer config and Android
+shows its VPN consent prompt the first time. The app starts the official
+WireGuard tunnel only after consent.
+
+The VPN routes the NexBot host address only. For off-LAN use, set a reachable
+endpoint, forward its UDP port to the host, and allow it through the host
+firewall. If the host tool or endpoint is missing, the app shows the error and
+leaves the tunnel off.

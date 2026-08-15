@@ -10,6 +10,17 @@
 - **Reverse if:** Charles chooses a browser-only LAN product and drops remote
   access.
 
+## 2026-08-15 — Connect provisions a host-access WireGuard tunnel
+
+- **Choice:** The desktop host owns the WireGuard server key and peer config in
+  `~/.nexbot/wireguard`. Each paired Android device generates its own key pair,
+  sends only its public key to a device-scoped endpoint, and must pass
+  Android's `VpnService.prepare` consent before connecting.
+- **Why:** A mobile browser cannot create a system VPN, and the host must keep
+  the client private key off the desktop. The tunnel routes only `10.77.0.1`
+  so NexBot is reachable without silently becoming a full-device VPN.
+- **Reverse if:** We move to a hosted relay or a browser-only LAN product.
+
 ## 2026-08-14 — Interrupted turns are durable and resumable
 
 - **Choice:** Every provider turn gets a SQLite job row. `session.started` checkpoints the provider cursor. A process exit marks running jobs interrupted and shows Resume / Retry actions. Resume uses Claude/Codex native cursors and transcript replay for Grok; ordinary new turns still start without a cursor.

@@ -2,7 +2,7 @@
 // desktop permissions, About. No third-party product analytics.
 import { Check, Copy, ExternalLink, Link2, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useStore, type Bot, type InstanceInfo, type RemoteAccessStatus } from "@/state/store";
+import { useStore, type Bot, type InstanceInfo, type RemoteAccessStatus, type WireGuardStatus } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { ConnectorsBody } from "./PluginsPanel";
 import { SkillsBody } from "./SkillsPanel";
@@ -397,6 +397,8 @@ type PairingResult = { device: { id: string; label: string }; token: string; pai
 
 function ConnectSection() {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
+  const [wireguard, setWireguard] = useState<WireGuardStatus | null>(null);
+  const [endpoint, setEndpoint] = useState("");
   const [label, setLabel] = useState("Phone");
   const [pairing, setPairing] = useState<PairingResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -408,6 +410,10 @@ function ConnectSection() {
       .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not load Connect settings"); return body as RemoteAccessStatus; })
       .then(setStatus)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    void fetch("/api/remote-access/wireguard")
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not load VPN settings"); return body as WireGuardStatus; })
+      .then((body) => { setWireguard(body); if (body.endpoint) setEndpoint(body.endpoint); })
+      .catch(() => setWireguard(null));
   }, []);
   useEffect(load, [load]);
 
@@ -436,6 +442,14 @@ function ConnectSection() {
       .then(load).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
   const copy = (value: string) => { void navigator.clipboard?.writeText(value).catch(() => setError("Clipboard access is unavailable")); };
+  const setupVpn = () => {
+    setBusy(true); setError("");
+    void fetch("/api/remote-access/wireguard", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: endpoint.trim() }) })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not set up the VPN"); return body as WireGuardStatus; })
+      .then((body) => { setWireguard(body); setEndpoint(body.endpoint); })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
 
   return (
     <div className="mt-4 rounded-xl bg-card p-4">
@@ -444,6 +458,14 @@ function ConnectSection() {
         <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-inset px-3 py-2.5"><div className="flex min-w-0 items-center gap-2"><Wifi size={15} className="shrink-0 text-ink-secondary" /><div className="min-w-0"><div className="text-[13px] font-medium text-ink">Private LAN mode</div><div className="text-[11px] text-ink-secondary">Listens on local interfaces after restart</div></div></div><button role="switch" aria-checked={status.enabled} disabled={busy} onClick={() => setMode(status.enabled ? "off" : "lan")} className={cn("relative h-6 w-10 rounded-full transition", status.enabled ? "bg-ink" : "bg-raised-hover", busy && "opacity-50")}><span className={cn("absolute top-1 size-4 rounded-full bg-white transition", status.enabled ? "left-5" : "left-1")} /></button></div>
         {status.restartRequired && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">Restart NexBot to apply the new bind. The current process still listens on <code>{status.bind}</code>.</div>}
         <div className="mt-3 rounded-lg bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary"><div className="flex items-center gap-1.5 font-medium text-ink"><Smartphone size={13} /> LAN and VPN boundary</div><p className="mt-1">LAN mode is for your home or office network. For access away from home, use a private VPN that you control. NexBot does not open a public port or configure router forwarding. The OS firewall and VPN are separate setup steps.</p>{status.lanAddresses.length > 0 && <p className="mt-1">Local addresses: {status.lanAddresses.join(", ")}</p>}</div>
+        <div className="mt-4 rounded-lg border border-hairline/40 bg-inset p-3">
+          <div className="flex items-center gap-2"><ShieldCheck size={15} className="text-ink-secondary" /><div className="text-[13px] font-medium text-ink">Private VPN</div></div>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-secondary">NexBot can provision a WireGuard peer for each paired phone. Install WireGuard for Windows on this host first. Use a public DNS name or reachable IP and forward the UDP port on your router for off-LAN access.</p>
+          {!wireguard ? <div className="mt-2 text-[12px] text-ink-secondary">Checking WireGuard…</div> : !wireguard.available ? <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">{wireguard.reason ?? "WireGuard for Windows is not available on this host."}</div> : <>
+            <div className="mt-3 flex gap-2"><input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="vpn.example.com:51820" className={inputClass} /><button disabled={busy || !endpoint.trim()} onClick={setupVpn} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />} {wireguard.configured ? "Apply VPN" : "Set up VPN"}</button></div>
+            {wireguard.configured && <div className="mt-2 text-[11px] text-ink-secondary">{wireguard.active ? "VPN service is active" : "VPN is configured; service is not running"} · {wireguard.peerCount} active {wireguard.peerCount === 1 ? "device" : "devices"} · {wireguard.endpoint}</div>}
+          </>}
+        </div>
         {status.enabled && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Pair a device</div><div className="flex gap-2"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Device name" className={inputClass} /><button disabled={busy || !label.trim()} onClick={create} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"><Link2 size={14} /> Create link</button></div>{pairing && <div className="mt-3 rounded-lg border border-hairline/50 bg-white/70 p-3"><div className="flex items-center gap-1.5 text-[12px] font-medium text-ink"><QrCode size={14} /> QR-compatible pairing link</div><div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">The link contains the new device token. Copy it now; NexBot does not show the token again.</div><code className="mt-2 block break-all rounded-md bg-inset px-2 py-2 text-[11px] text-ink">{pairing.pairingUrl}</code><button onClick={() => copy(pairing.pairingUrl)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"><Copy size={13} /> Copy pairing link</button></div>}</div>}
         {status.devices.length > 0 && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Devices</div><div className="flex flex-col gap-2">{status.devices.map((device) => <div key={device.id} className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-[12px] text-ink">{device.label}</div><div className="text-[11px] text-ink-secondary">{device.active ? `Token ${device.tokenPrefix}…` : "Revoked"}</div></div>{device.active && <><button title="Rotate token" disabled={busy} onClick={() => rotate(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-ink"><RotateCw size={14} /></button><button title="Revoke device" disabled={busy} onClick={() => revoke(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-red-700"><Trash2 size={14} /></button></>}</div>)}</div></div>}
       </>}

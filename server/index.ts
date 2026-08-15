@@ -73,6 +73,14 @@ import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./ag
 import { createTaskContext, delegateTask, isTaskDelegation, parseTaskContext, type TaskContext } from "./task-context.ts";
 import { wipeLocalData } from "./wipe.ts";
 import { enqueueConversationArchive, ensureConversationArchive, freshSessionContextPrompt } from "./conversation-context.ts";
+import {
+  isWireGuardEndpoint,
+  isWireGuardPublicKey,
+  provisionWireGuardPeer,
+  revokeWireGuardPeer,
+  setupWireGuard,
+  wireGuardStatus,
+} from "./wireguard.ts";
 
 const PORT = Number(process.env.NEXBOT_PORT || 8799);
 const STATIC_DIR = process.env.NEXBOT_STATIC_DIR || null;
@@ -1815,7 +1823,44 @@ const server = createServer(async (req, res) => {
       if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
       const revoked = revokeRemoteDevice(m[1]);
       if (!revoked) return json(res, 404, { error: "no device with that id" });
+      try {
+        revokeWireGuardPeer(m[1]);
+      } catch {
+        // The access token is revoked even when an optional host VPN is offline.
+      }
       return json(res, 200, { device: revoked });
+    }
+    if (path === "/api/remote-access/device" && method === "GET") {
+      if (!remoteDevice) return json(res, 401, { error: "a NexBot Connect device token is required" });
+      return json(res, 200, { device: remoteDevice });
+    }
+    if (path === "/api/remote-access/wireguard" && method === "GET") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "WireGuard setup is available on the host app only" });
+      return json(res, 200, wireGuardStatus());
+    }
+    if (path === "/api/remote-access/wireguard" && (method === "POST" || method === "PUT")) {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "WireGuard setup is available on the host app only" });
+      const body = await readBody(req);
+      const endpoint = String(body.endpoint ?? "").trim();
+      const listenPort = body.listenPort === undefined ? undefined : Number(body.listenPort);
+      if (!isWireGuardEndpoint(endpoint)) return json(res, 400, { error: "endpoint must be a host and UDP port, for example vpn.example.com:51820" });
+      try {
+        return json(res, 200, setupWireGuard({ endpoint, listenPort }));
+      } catch (error) {
+        return json(res, 503, { error: error instanceof Error ? error.message : String(error), code: "WIREGUARD_UNAVAILABLE" });
+      }
+    }
+    m = path.match(/^\/api\/remote-access\/devices\/([\w-]+)\/wireguard$/);
+    if (m && method === "POST") {
+      if (!requestIsLoopback(req) && remoteDevice?.id !== m[1]) return json(res, 403, { error: "A device can provision only its own VPN peer" });
+      const body = await readBody(req);
+      const publicKey = String(body.publicKey ?? "").trim();
+      if (!isWireGuardPublicKey(publicKey)) return json(res, 400, { error: "publicKey must be a WireGuard public key" });
+      try {
+        return json(res, 200, { vpn: provisionWireGuardPeer(m[1], publicKey) });
+      } catch (error) {
+        return json(res, 503, { error: error instanceof Error ? error.message : String(error), code: "WIREGUARD_UNAVAILABLE" });
+      }
     }
     if (method === "POST" && path === "/api/harness/rotate") {
       return json(res, 200, { token: rotateHarnessToken() });
