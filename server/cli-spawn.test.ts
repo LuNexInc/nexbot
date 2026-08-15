@@ -1,9 +1,9 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveCli, spawnCli, stopChild } from "./cli-spawn.ts";
+import { resolveCli, spawnCli, stopChild, unwrapCmdShim } from "./cli-spawn.ts";
 import { augmentedPath, resetPathCacheForTests } from "./env-path.ts";
 
 describe("cli-spawn", () => {
@@ -19,6 +19,24 @@ describe("cli-spawn", () => {
     const bin = join(dir, process.platform === "win32" ? "tool.cmd" : "tool");
     writeFileSync(bin, process.platform === "win32" ? "@echo off\r\necho ok\r\n" : "#!/bin/sh\necho ok\n");
     expect(resolveCli(bin)).toBe(bin);
+  });
+
+  it("unwrapCmdShim parses npm .cmd shims on Windows to target JS directly", () => {
+    if (process.platform !== "win32") return;
+    dir = mkdtempSync(join(tmpdir(), "nexbot-cli-"));
+    const distDir = join(dir, "dist");
+    mkdirSync(distDir, { recursive: true });
+    const targetJs = join(distDir, "cli.js");
+    const cmdFile = join(dir, "cli.cmd");
+    writeFileSync(targetJs, "console.log('unwrapped');\n");
+    writeFileSync(
+      cmdFile,
+      `@ECHO off\r\n"%_prog%"  "%dp0%\\dist\\cli.js" %*\r\n`,
+    );
+    const unwrapped = unwrapCmdShim(cmdFile);
+    expect(unwrapped).not.toBeNull();
+    expect(unwrapped?.command).toBe(process.execPath);
+    expect(unwrapped?.extraArgs[0]).toBe(targetJs);
   });
 
   it("spawnCli runs a local script and stopChild does not throw", async () => {

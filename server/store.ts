@@ -483,20 +483,27 @@ export class Store {
         return teamSeedMatches(b.name, spec.name);
       });
       if (exists) continue;
+      const isCos = spec.name === "Chief of Staff";
       const bot = this.createBot({
         name: spec.name,
         title: spec.title,
         description: spec.description,
         color: spec.color,
+        ...(isCos ? { modelSelection: { instanceId: "antigravity", model: "gemini-3.7-flash-medium" } } : {}),
       });
       this.patchBot(bot.id, { memoryEnabled: true });
       writeProfile(bot.id, spec.description);
     }
-    // Existing workspaces may have been created before CoS memory became the
-    // default. Migrate that one continuity seat without changing specialists.
+    // Existing workspaces may have been created before CoS memory or Antigravity
+    // became the default. Migrate that seat without changing specialists.
     for (const bot of this.bots) {
-      if (bot.kind !== "group" && isChiefOfStaffName(bot.name, bot.title) && !bot.memoryEnabled) {
-        this.patchBot(bot.id, { memoryEnabled: true });
+      if (bot.kind !== "group" && isChiefOfStaffName(bot.name, bot.title)) {
+        const patches: Partial<BotRecord> = {};
+        if (!bot.memoryEnabled) patches.memoryEnabled = true;
+        if (!bot.modelSelection || !bot.modelSelection.instanceId) {
+          patches.modelSelection = { instanceId: "antigravity", model: "gemini-3.7-flash-medium" };
+        }
+        if (Object.keys(patches).length) this.patchBot(bot.id, patches);
       }
     }
   }

@@ -9,8 +9,8 @@ import {
   type ExecFileOptions,
   type SpawnOptions,
 } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, extname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, extname, join, resolve } from "node:path";
 
 import { augmentedPath } from "./env-path.ts";
 
@@ -47,6 +47,33 @@ export function resolveCli(command: string, pathEnv = augmentedPath()): string {
   return command;
 }
 
+/** Parse an npm .cmd shim to extract the underlying Node script path.
+ * Spawning node.exe directly with windowsHide: true avoids cmd.exe title flashes. */
+export function unwrapCmdShim(resolved: string): { command: string; extraArgs: string[] } | null {
+  if (process.platform !== "win32") return null;
+  const ext = extname(resolved).toLowerCase();
+  if (ext !== ".cmd" && ext !== ".bat") return null;
+  try {
+    const text = readFileSync(resolved, "utf8");
+    const dir = dirname(resolved);
+    const match =
+      /"%_prog%"\s+"%dp0%\\([^"]+)"/i.exec(text) ||
+      /"%_prog%"\s+"([^"]+)"/i.exec(text) ||
+      /node(?:\.exe)?\s+"%dp0%\\([^"]+)"/i.exec(text) ||
+      /node(?:\.exe)?\s+"([^"]+)"/i.exec(text);
+    if (match) {
+      const rel = match[1];
+      const target = resolve(dir, rel);
+      if (existsSync(target)) {
+        return { command: process.execPath, extraArgs: [target] };
+      }
+    }
+  } catch {
+    /* fallback to shell execution */
+  }
+  return null;
+}
+
 function needsWinShell(resolved: string): boolean {
   if (process.platform !== "win32") return false;
   const ext = extname(resolved).toLowerCase();
@@ -69,9 +96,13 @@ export function spawnCli(
     detached: isWin ? false : options.detached,
   };
 
+  const unwrapped = unwrapCmdShim(resolved);
+  if (unwrapped) {
+    return spawn(unwrapped.command, [...unwrapped.extraArgs, ...args], { ...opts, shell: false });
+  }
+
   if (needsWinShell(resolved)) {
-    // Required for npm's .cmd shims. Args are ours (flags, model ids), not
-    // free-form shell strings from the user — prompt text goes over stdin.
+    // Required for non-Node .cmd shims.
     return spawn(resolved, args, { ...opts, shell: true });
   }
   return spawn(resolved, args, opts);
@@ -89,6 +120,10 @@ export function execFileCli(
   const cb = (err: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
     callback(err, String(stdout ?? ""), String(stderr ?? ""));
   };
+  const unwrapped = unwrapCmdShim(resolved);
+  if (unwrapped) {
+    return execFile(unwrapped.command, [...unwrapped.extraArgs, ...args], { ...opts, shell: false }, cb);
+  }
   if (needsWinShell(resolved)) {
     return execFile(resolved, args, { ...opts, shell: true }, cb);
   }
