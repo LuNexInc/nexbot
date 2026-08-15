@@ -36,6 +36,7 @@ async function startServerOn(port) {
       ...process.env,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
+      NEXBOT_BIND: process.env.NEXBOT_BIND ?? "127.0.0.1",
       NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
     },
     stdio: "inherit",

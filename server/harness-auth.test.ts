@@ -14,8 +14,11 @@ import {
   rotateHarnessToken,
 } from "./harness-auth.ts";
 
-function fakeReq(addr: string): IncomingMessage {
-  return { socket: { remoteAddress: addr } } as IncomingMessage;
+function fakeReq(addr: string, forwarded?: string): IncomingMessage {
+  return {
+    socket: { remoteAddress: addr },
+    headers: forwarded ? { "x-forwarded-for": forwarded } : {},
+  } as IncomingMessage;
 }
 
 describe("harness-auth helpers", () => {
@@ -61,6 +64,25 @@ describe("harness-auth helpers", () => {
     expect(loop).toEqual({ ok: true });
     const remote = authorizeHarnessRequest(fakeReq("10.0.0.8"), "GET", "/api/bots", undefined, false);
     expect(remote.ok).toBe(false);
+  });
+
+  it("does not trust a remote Vite client through a local proxy socket", () => {
+    const remoteViaProxy = authorizeHarnessRequest(
+      fakeReq("127.0.0.1", "192.168.1.42"),
+      "GET",
+      "/api/bots",
+      undefined,
+      false,
+    );
+    expect(remoteViaProxy.ok).toBe(false);
+    const localViaProxy = authorizeHarnessRequest(
+      fakeReq("127.0.0.1", "127.0.0.1"),
+      "GET",
+      "/api/bots",
+      undefined,
+      false,
+    );
+    expect(localViaProxy.ok).toBe(true);
   });
 
   it("lets a remote caller through with the harness token or a steer-lan path", () => {

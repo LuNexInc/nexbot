@@ -23,7 +23,7 @@ export default defineConfig({
   server: {
     // IPv4 explicitly — a bare ::1 bind makes localhost a coin-flip for
     // clients that resolve IPv4 first
-    host: "127.0.0.1",
+    host: process.env.NEXBOT_WEB_BIND || (process.env.NEXBOT_BIND === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"),
     port: 5199,
     strictPort: true,
     // packager output lands inside the repo — its HTML files must never
@@ -38,6 +38,7 @@ export default defineConfig({
       "/api": {
         target: `http://127.0.0.1:${process.env.NEXBOT_PORT || 8799}`,
         changeOrigin: true,
+        xfwd: true,
       },
     },
   },

@@ -29,6 +29,10 @@ pnpm dev           # app → http://127.0.0.1:5199
 pnpm dev:desktop   # optional: NexBot-dev profile, Vite UI
 ```
 
+To use the full app from a phone or tablet on the same Wi-Fi, follow
+[`docs/remote-access.md`](docs/remote-access.md). The PC remains the local
+agent host, so no cloud AI or hosted database is required.
+
 **How to preview:** Quit installed NexBot (tray → Quit) if you need the source harness — else Vite talks to 0.3.8's :8799. Then `pnpm dev:server` and `pnpm dev` → http://127.0.0.1:5199. Optional `pnpm dev:desktop` (NexBot-dev, Vite UI). If EADDRINUSE / port busy: quit the tray app first. Vite :5199 is UI only. Do not `pnpm package:win` to preview.
 
 Requirements: **Node 24+**, **pnpm**, and at least one of [`claude`](https://claude.com/claude-code),

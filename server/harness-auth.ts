@@ -23,11 +23,16 @@ export function bindIsOffLoopback(bind: string): boolean {
   return Boolean(bind) && !isLoopbackAddress(bind);
 }
 
-export function requestIsLoopback(req: Pick<IncomingMessage, "socket">): boolean {
+export function requestIsLoopback(req: Pick<IncomingMessage, "socket" | "headers">): boolean {
   // Test hook: treat every request as remote so unit/integration tests can
   // exercise the 401 path without a second NIC.
   if (process.env.NEXBOT_TEST_REMOTE === "1") return false;
-  return isLoopbackAddress(req.socket.remoteAddress);
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return false;
+  const forwarded = req.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return isLoopbackAddress(forwarded.split(",", 1)[0].trim());
+  }
+  return true;
 }
 
 export function loadHarnessToken(): string {

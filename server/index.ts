@@ -5,6 +5,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, unlinkSync, watch, type FSWatcher } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
+import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { configStatus } from "./app-meta.ts";
@@ -64,6 +65,16 @@ import { enqueueConversationArchive, ensureConversationArchive, freshSessionCont
 
 const PORT = Number(process.env.NEXBOT_PORT || 8799);
 const STATIC_DIR = process.env.NEXBOT_STATIC_DIR || null;
+
+function lanAddresses(): string[] {
+  const addresses = new Set<string>();
+  for (const rows of Object.values(networkInterfaces())) {
+    for (const row of rows ?? []) {
+      if (!row.internal && row.family === "IPv4") addresses.add(row.address);
+    }
+  }
+  return [...addresses].sort();
+}
 
 ensureDirs();
 const cfg = loadConfig();
@@ -1700,6 +1711,17 @@ const server = createServer(async (req, res) => {
         bind: process.env.NEXBOT_BIND || "127.0.0.1",
         offLoopback: bindIsOffLoopback(process.env.NEXBOT_BIND || "127.0.0.1"),
         port: PORT,
+      });
+    }
+    if (method === "GET" && path === "/api/remote-access") {
+      const bind = process.env.NEXBOT_BIND || "127.0.0.1";
+      return json(res, 200, {
+        token: loadHarnessToken(),
+        bind,
+        offLoopback: bindIsOffLoopback(bind),
+        port: PORT,
+        packaged: Boolean(STATIC_DIR),
+        addresses: lanAddresses(),
       });
     }
     if (method === "POST" && path === "/api/harness/rotate") {

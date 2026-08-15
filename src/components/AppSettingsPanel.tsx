@@ -393,6 +393,123 @@ function SteerSection() {
   );
 }
 
+type RemoteAccessInfo = {
+  token: string;
+  bind: string;
+  offLoopback: boolean;
+  port: number;
+  packaged: boolean;
+  addresses: string[];
+};
+
+function RemoteAccessSection() {
+  const [info, setInfo] = useState<RemoteAccessInfo | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    void fetch("/api/remote-access")
+      .then((r) => r.json())
+      .then((data) => setInfo(data as RemoteAccessInfo))
+      .catch(() => setInfo(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const webPort = location.port === "5199" ? "5199" : String(info?.port ?? 8799);
+  const linkFor = (address: string) => {
+    const host = address.includes(":") ? `[${address}]` : address;
+    return `${location.protocol}//${host}:${webPort}/#token=${encodeURIComponent(info?.token ?? "")}`;
+  };
+  const links = info?.token ? (info.addresses ?? []).map(linkFor) : [];
+  const copyLink = () => {
+    const link = links[0];
+    if (!link) return;
+    void navigator.clipboard.writeText(link).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[15px] font-medium text-ink">Phone and tablet</div>
+          <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+            Open the full NexBot app on a device on the same Wi-Fi. The PC keeps the AI tools,
+            conversations, and files. No cloud service is required.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading}
+          className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+          title="Refresh access links"
+        >
+          <RefreshCw size={15} className={cn(loading && "animate-spin")} />
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2.5">
+        <div className="flex items-center gap-2 text-[13px] text-ink">
+          <span className={cn("size-2 rounded-full", info?.offLoopback ? "bg-success" : "bg-raised-hover")} />
+          {info?.offLoopback ? "LAN access is ready" : "LAN access is off"}
+        </div>
+        <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
+          {info?.offLoopback
+            ? "Open a link below on your phone or tablet. Keep the PC awake while you use NexBot."
+            : "Start NexBot with NEXBOT_BIND=0.0.0.0, then refresh this section. The default keeps the app local to this PC."}
+        </div>
+      </div>
+
+      {links.length > 0 ? (
+        <div className="mt-3 flex flex-col gap-2">
+          {links.map((link, index) => (
+            <div key={link} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+              <div className="text-[12px] font-medium text-ink">Wi-Fi address {index + 1}</div>
+              <code className="mt-1 block break-all text-[11px] text-ink-secondary">{link}</code>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={copyLink}
+              className="rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
+            >
+              {copied ? "Copied" : "Copy first link"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void fetch("/api/harness/rotate", { method: "POST" }).then(() => load());
+              }}
+              className="rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
+            >
+              Rotate access link
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 text-[12px] text-ink-secondary">
+          {info ? "No active Wi-Fi address was found. Connect the PC to your local network and refresh." : "Loading access details…"}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-start gap-2 rounded-lg bg-inset px-3 py-2 text-[11px] leading-relaxed text-ink-secondary">
+        <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+        Use a trusted home network. For access away from home, use a private VPN. Do not forward
+        NexBot's port to the public internet. Rotating the link signs out existing devices.
+      </div>
+    </div>
+  );
+}
+
 function AboutSection() {
   const { state } = useStore();
   const dataDir = state.config?.dataDir || "~/.nexbot";
@@ -751,6 +868,7 @@ export function AppSettingsPanel() {
                 </div>
                 <ExpertModeSection />
                 <KeepaliveSection />
+                <RemoteAccessSection />
                 <SteerSection />
                 <div className="mt-4 rounded-xl bg-card p-4">
                   <div className="text-[15px] font-medium text-ink">Connections</div>

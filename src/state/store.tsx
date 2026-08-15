@@ -13,6 +13,7 @@ import {
 } from "react";
 import { api } from "./api";
 import { initialState, reducer } from "./reducer";
+import { remoteApiUrl } from "@/lib/remote-access";
 import type { Action, AppState, Bot, OptionCardData } from "./types";
 
 export { api } from "./api";
@@ -310,7 +311,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     loadAll();
 
-    const es = new EventSource("/api/events");
+    const es = new EventSource(remoteApiUrl("/api/events"));
     es.onopen = () => {
       rawDispatch({ type: "connected", value: true });
       loadAll(); // resync anything missed while disconnected
