@@ -930,7 +930,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         integrations.agents
           ? `The current task allows ${taskContext.maxHops - taskContext.hops} more delegation hop(s) and ${taskContext.maxMessages - taskContext.messages} more message(s); do not delegate to a bot already in the task path.`
           : "",
-        deterministicRouting,
+        integrations.agents ? deterministicRouting : "",
         freshContext,
         tagged.length
           ? `The user also sent this job in parallel to ${tagged
