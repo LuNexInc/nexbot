@@ -20,6 +20,8 @@ export { api } from "./api";
 export type {
   Bot,
   ConfigStatus,
+  RemoteAccessStatus,
+  RemoteDeviceStatus,
   InstanceInfo,
   Message,
   TurnEffort,

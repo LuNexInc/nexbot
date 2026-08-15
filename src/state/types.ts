@@ -130,6 +130,7 @@ export interface ConfigStatus {
   box: { configured: boolean };
   /** local profile and workspace brand — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string; companyName?: string };
+  remoteAccess?: RemoteAccessStatus;
   /** local data directory path (settings About panel) */
   dataDir?: string;
   /** whether the local destructive wipe password is configured */
@@ -137,6 +138,27 @@ export interface ConfigStatus {
   version?: string;
   platform?: string;
   logs?: { native: boolean; maxBytes: number; retainDays: number };
+}
+
+export interface RemoteDeviceStatus {
+  id: string;
+  label: string;
+  createdAt: number;
+  lastUsedAt?: number;
+  revokedAt?: number;
+  tokenPrefix: string;
+  active: boolean;
+}
+
+export interface RemoteAccessStatus {
+  mode: "off" | "lan";
+  enabled: boolean;
+  bind: string;
+  configuredBind: string;
+  restartRequired: boolean;
+  port: number;
+  lanAddresses: string[];
+  devices: RemoteDeviceStatus[];
 }
 
 /** One row of GET /api/instances — the model picker's data. */

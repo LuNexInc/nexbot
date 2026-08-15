@@ -31,12 +31,15 @@ let serverReady = true;
 
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
+  // Connect mode is persisted in ~/.nexbot/config.json. Do not force a
+  // loopback bind here, or the packaged app would ignore the user's setting.
+  const serverEnv = { ...process.env };
+  delete serverEnv.NEXBOT_BIND;
   const proc = utilityProcess.fork(entry, [], {
     env: {
-      ...process.env,
+      ...serverEnv,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
-      NEXBOT_BIND: process.env.NEXBOT_BIND ?? "127.0.0.1",
       NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
     },
     stdio: "inherit",

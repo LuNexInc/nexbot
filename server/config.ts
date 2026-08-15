@@ -20,6 +20,8 @@ export interface AppConfig {
   /** The local profile and workspace brand (collected in onboarding,
    * shown in the sidebar). Not a secret — echoed back by GET /api/config. */
   profile?: { name?: string; email?: string; companyName?: string };
+  /** Optional private LAN mode for NexBot Connect. */
+  remoteAccess?: { mode?: "off" | "lan" };
   instances?: InstanceConfigMap;
 }
 
@@ -134,6 +136,7 @@ export function loadConfig(): AppConfig {
     composio: decryptSection("composio", disk.composio as Record<string, unknown> | undefined),
     box: decryptSection("box", disk.box as Record<string, unknown> | undefined),
     profile: (disk.profile as AppConfig["profile"]) ?? undefined,
+    remoteAccess: (disk.remoteAccess as AppConfig["remoteAccess"]) ?? undefined,
     instances: (disk.instances as InstanceConfigMap) ?? undefined,
   };
   cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
@@ -147,7 +150,7 @@ export function loadConfig(): AppConfig {
  * Empty string or null on a secret field deletes it. */
 export function saveConfig(patch: Partial<AppConfig>): void {
   const disk = readDisk();
-  for (const key of ["xai", "composio", "box", "profile"] as const) {
+  for (const key of ["xai", "composio", "box", "profile", "remoteAccess"] as const) {
     const incoming = patch[key];
     if (!incoming || typeof incoming !== "object") continue;
     const current = { ...((disk[key] as object) || {}) } as Record<string, unknown>;

@@ -30,7 +30,9 @@ function saveToken(token: string): void {
   }
 }
 
-function tokenFromHash(): string {
+function tokenFromUrl(): string {
+  const queryToken = new URLSearchParams(window.location.search).get("token");
+  if (queryToken) return queryToken;
   const hash = window.location.hash.replace(/^#/, "");
   if (!hash) return "";
   const params = new URLSearchParams(hash);
@@ -61,10 +63,13 @@ export function installRemoteAccess(): void {
   if (installed) return;
   installed = true;
 
-  const incoming = tokenFromHash();
+  const incoming = tokenFromUrl();
   if (incoming) {
     saveToken(incoming);
-    window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete("token");
+    clean.hash = "";
+    window.history.replaceState(null, document.title, `${clean.pathname}${clean.search}`);
   } else {
     readStoredToken();
   }
@@ -80,9 +85,11 @@ export function installRemoteAccess(): void {
       return originalFetch(input, init);
     }
     url.searchParams.set("token", token);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (!headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
     if (input instanceof Request) {
-      return originalFetch(new Request(url.toString(), input), init);
+      return originalFetch(new Request(url.toString(), new Request(input, { headers })));
     }
-    return originalFetch(url.toString(), init);
+    return originalFetch(url.toString(), { ...init, headers });
   };
 }

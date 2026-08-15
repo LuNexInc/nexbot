@@ -1,8 +1,8 @@
 // App-level settings: profile, connection keys, agent CLI status,
 // desktop permissions, About. No third-party product analytics.
-import { Check, ExternalLink, Loader2, Mic, Monitor, Plus, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Link2, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useStore, type Bot, type InstanceInfo } from "@/state/store";
+import { useStore, type Bot, type InstanceInfo, type RemoteAccessStatus } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { ConnectorsBody } from "./PluginsPanel";
 import { SkillsBody } from "./SkillsPanel";
@@ -393,119 +393,61 @@ function SteerSection() {
   );
 }
 
-type RemoteAccessInfo = {
-  token: string;
-  bind: string;
-  offLoopback: boolean;
-  port: number;
-  packaged: boolean;
-  addresses: string[];
-};
+type PairingResult = { device: { id: string; label: string }; token: string; pairingUrl: string; pairingUrls?: string[] };
 
-function RemoteAccessSection() {
-  const [info, setInfo] = useState<RemoteAccessInfo | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [loading, setLoading] = useState(false);
+function ConnectSection() {
+  const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
+  const [label, setLabel] = useState("Phone");
+  const [pairing, setPairing] = useState<PairingResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const inputClass = "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
 
   const load = useCallback(() => {
-    setLoading(true);
     void fetch("/api/remote-access")
-      .then((r) => r.json())
-      .then((data) => setInfo(data as RemoteAccessInfo))
-      .catch(() => setInfo(null))
-      .finally(() => setLoading(false));
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not load Connect settings"); return body as RemoteAccessStatus; })
+      .then(setStatus)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+  useEffect(load, [load]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const webPort = location.port === "5199" ? "5199" : String(info?.port ?? 8799);
-  const linkFor = (address: string) => {
-    const host = address.includes(":") ? `[${address}]` : address;
-    return `${location.protocol}//${host}:${webPort}/#token=${encodeURIComponent(info?.token ?? "")}`;
+  const setMode = (mode: "off" | "lan") => {
+    setBusy(true); setError("");
+    void fetch("/api/remote-access", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not update Connect mode"); return body as RemoteAccessStatus; })
+      .then(setStatus).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
-  const links = info?.token ? (info.addresses ?? []).map(linkFor) : [];
-  const copyLink = () => {
-    const link = links[0];
-    if (!link) return;
-    void navigator.clipboard.writeText(link).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    });
+  const create = () => {
+    setBusy(true); setError("");
+    void fetch("/api/remote-access/devices", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not create pairing link"); return body as PairingResult; })
+      .then((body) => { setPairing(body); setLabel(""); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
+  const rotate = (id: string) => {
+    setBusy(true); setError("");
+    void fetch(`/api/remote-access/devices/${id}/rotate`, { method: "POST" })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not rotate device token"); return body as PairingResult; })
+      .then((body) => { setPairing(body); load(); }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+  };
+  const revoke = (id: string) => {
+    setBusy(true); setError("");
+    void fetch(`/api/remote-access/devices/${id}`, { method: "DELETE" })
+      .then(async (r) => { const body = await r.json(); if (!r.ok) throw new Error(body.error ?? "Could not revoke device"); })
+      .then(load).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+  };
+  const copy = (value: string) => { void navigator.clipboard?.writeText(value).catch(() => setError("Clipboard access is unavailable")); };
 
   return (
     <div className="mt-4 rounded-xl bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[15px] font-medium text-ink">Phone and tablet</div>
-          <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-            Open the full NexBot app on a device on the same Wi-Fi. The PC keeps the AI tools,
-            conversations, and files. No cloud service is required.
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={load}
-          disabled={loading}
-          className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
-          title="Refresh access links"
-        >
-          <RefreshCw size={15} className={cn(loading && "animate-spin")} />
-        </button>
-      </div>
-
-      <div className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2.5">
-        <div className="flex items-center gap-2 text-[13px] text-ink">
-          <span className={cn("size-2 rounded-full", info?.offLoopback ? "bg-success" : "bg-raised-hover")} />
-          {info?.offLoopback ? "LAN access is ready" : "LAN access is off"}
-        </div>
-        <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-          {info?.offLoopback
-            ? "Open a link below on your phone or tablet. Keep the PC awake while you use NexBot."
-            : "Start NexBot with NEXBOT_BIND=0.0.0.0, then refresh this section. The default keeps the app local to this PC."}
-        </div>
-      </div>
-
-      {links.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-2">
-          {links.map((link, index) => (
-            <div key={link} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-              <div className="text-[12px] font-medium text-ink">Wi-Fi address {index + 1}</div>
-              <code className="mt-1 block break-all text-[11px] text-ink-secondary">{link}</code>
-            </div>
-          ))}
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={copyLink}
-              className="rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-            >
-              {copied ? "Copied" : "Copy first link"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void fetch("/api/harness/rotate", { method: "POST" }).then(() => load());
-              }}
-              className="rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-            >
-              Rotate access link
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 text-[12px] text-ink-secondary">
-          {info ? "No active Wi-Fi address was found. Connect the PC to your local network and refresh." : "Loading access details…"}
-        </div>
-      )}
-
-      <div className="mt-3 flex items-start gap-2 rounded-lg bg-inset px-3 py-2 text-[11px] leading-relaxed text-ink-secondary">
-        <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-        Use a trusted home network. For access away from home, use a private VPN. Do not forward
-        NexBot's port to the public internet. Rotating the link signs out existing devices.
-      </div>
+      <div className="flex items-start gap-3"><div className="mt-0.5 rounded-lg bg-raised p-2 text-ink"><ShieldCheck size={17} /></div><div className="min-w-0 flex-1"><div className="text-[15px] font-medium text-ink">NexBot Connect</div><div className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Pair a phone, tablet, or private VPN device with a device-scoped link. LAN access is off until you enable it.</div></div><button type="button" onClick={load} title="Refresh Connect settings" className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"><RefreshCw size={15} /></button></div>
+      {!status ? <div className="mt-4 text-[12px] text-ink-secondary">Loading Connect settings…</div> : <>
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-inset px-3 py-2.5"><div className="flex min-w-0 items-center gap-2"><Wifi size={15} className="shrink-0 text-ink-secondary" /><div className="min-w-0"><div className="text-[13px] font-medium text-ink">Private LAN mode</div><div className="text-[11px] text-ink-secondary">Listens on local interfaces after restart</div></div></div><button role="switch" aria-checked={status.enabled} disabled={busy} onClick={() => setMode(status.enabled ? "off" : "lan")} className={cn("relative h-6 w-10 rounded-full transition", status.enabled ? "bg-ink" : "bg-raised-hover", busy && "opacity-50")}><span className={cn("absolute top-1 size-4 rounded-full bg-white transition", status.enabled ? "left-5" : "left-1")} /></button></div>
+        {status.restartRequired && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">Restart NexBot to apply the new bind. The current process still listens on <code>{status.bind}</code>.</div>}
+        <div className="mt-3 rounded-lg bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary"><div className="flex items-center gap-1.5 font-medium text-ink"><Smartphone size={13} /> LAN and VPN boundary</div><p className="mt-1">LAN mode is for your home or office network. For access away from home, use a private VPN that you control. NexBot does not open a public port or configure router forwarding. The OS firewall and VPN are separate setup steps.</p>{status.lanAddresses.length > 0 && <p className="mt-1">Local addresses: {status.lanAddresses.join(", ")}</p>}</div>
+        {status.enabled && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Pair a device</div><div className="flex gap-2"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Device name" className={inputClass} /><button disabled={busy || !label.trim()} onClick={create} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"><Link2 size={14} /> Create link</button></div>{pairing && <div className="mt-3 rounded-lg border border-hairline/50 bg-white/70 p-3"><div className="flex items-center gap-1.5 text-[12px] font-medium text-ink"><QrCode size={14} /> QR-compatible pairing link</div><div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">The link contains the new device token. Copy it now; NexBot does not show the token again.</div><code className="mt-2 block break-all rounded-md bg-inset px-2 py-2 text-[11px] text-ink">{pairing.pairingUrl}</code><button onClick={() => copy(pairing.pairingUrl)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"><Copy size={13} /> Copy pairing link</button></div>}</div>}
+        {status.devices.length > 0 && <div className="mt-4"><div className="mb-2 text-[13px] font-medium text-ink">Devices</div><div className="flex flex-col gap-2">{status.devices.map((device) => <div key={device.id} className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-[12px] text-ink">{device.label}</div><div className="text-[11px] text-ink-secondary">{device.active ? `Token ${device.tokenPrefix}…` : "Revoked"}</div></div>{device.active && <><button title="Rotate token" disabled={busy} onClick={() => rotate(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-ink"><RotateCw size={14} /></button><button title="Revoke device" disabled={busy} onClick={() => revoke(device.id)} className="rounded-md p-1.5 text-ink-secondary hover:bg-raised-hover hover:text-red-700"><Trash2 size={14} /></button></>}</div>)}</div></div>}
+      </>}
+      {error && <div className="mt-3 text-[12px] text-red-700">{error}</div>}
     </div>
   );
 }
@@ -868,7 +810,7 @@ export function AppSettingsPanel() {
                 </div>
                 <ExpertModeSection />
                 <KeepaliveSection />
-                <RemoteAccessSection />
+                <ConnectSection />
                 <SteerSection />
                 <div className="mt-4 rounded-xl bg-card p-4">
                   <div className="text-[15px] font-medium text-ink">Connections</div>

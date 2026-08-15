@@ -5,7 +5,6 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, unlinkSync, watch, type FSWatcher } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
-import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { configStatus } from "./app-meta.ts";
@@ -50,9 +49,20 @@ import {
   authorizeHarnessRequest,
   bindIsOffLoopback,
   loadHarnessToken,
+  requestIsLoopback,
   rotateHarnessToken,
   tokenFromHarnessRequest,
 } from "./harness-auth.ts";
+import {
+  authenticateRemoteToken,
+  createRemoteDevice,
+  pairingMobileUrls,
+  pairingUrls,
+  remoteAccessEnabled,
+  remoteAccessStatus,
+  revokeRemoteDevice,
+  rotateRemoteDevice,
+} from "./remote-access.ts";
 import { stripWorkingNarration } from "../src/lib/activity.ts";
 import { createNonceCache } from "./nonce.ts";
 import { createWatchdog, DEFAULT_MAX_TOKENS_PER_TURN, isComputerToolName } from "./watchdog.ts";
@@ -66,16 +76,9 @@ import { enqueueConversationArchive, ensureConversationArchive, freshSessionCont
 
 const PORT = Number(process.env.NEXBOT_PORT || 8799);
 const STATIC_DIR = process.env.NEXBOT_STATIC_DIR || null;
-
-function lanAddresses(): string[] {
-  const addresses = new Set<string>();
-  for (const rows of Object.values(networkInterfaces())) {
-    for (const row of rows ?? []) {
-      if (!row.internal && row.family === "IPv4") addresses.add(row.address);
-    }
-  }
-  return [...addresses].sort();
-}
+// In development the browser is served by Vite; packaged builds serve the
+// UI from this server. Pairing links must point at the UI port in both cases.
+const WEB_PORT = STATIC_DIR ? PORT : Number(process.env.NEXBOT_WEB_PORT || 5199);
 
 ensureDirs();
 const cfg = loadConfig();
@@ -976,8 +979,12 @@ const server = createServer(async (req, res) => {
   const method = req.method ?? "GET";
   try {
     const providedToken = tokenFromHarnessRequest(req.headers.authorization, url.searchParams.get("token"));
+    // Connect device tokens authorize the same API surface as the host
+    // harness, but only while LAN mode (or an explicit off-loopback bind) is
+    // active. Loopback clients remain trusted by the existing harness gate.
+    const remoteDevice = remoteAccessEnabled(cfg, BIND) ? authenticateRemoteToken(providedToken) : null;
     const gate = authorizeHarnessRequest(req, method, path, providedToken, checkSteerToken(providedToken));
-    if (!gate.ok) return json(res, 401, { error: gate.error });
+    if (!gate.ok && !remoteDevice) return json(res, 401, { error: gate.error });
 
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
@@ -1747,7 +1754,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         token: steerToken,
         path: `/m.html#token=${steerToken}`,
-        bind: process.env.NEXBOT_BIND || "127.0.0.1",
+        bind: BIND,
         port: PORT,
       });
     }
@@ -1757,7 +1764,7 @@ const server = createServer(async (req, res) => {
     }
     if (method === "GET" && path === "/api/steer/bots") {
       const provided = tokenFromRequest(req.headers.authorization, url.searchParams.get("token"));
-      if (!checkSteerToken(provided)) return json(res, 401, { error: "bad steer token" });
+      if (!checkSteerToken(provided) && !authenticateRemoteToken(provided)) return json(res, 401, { error: "bad steer token" });
       return json(res, 200, {
         bots: store.bots
           .filter((b) => !b.hidden && b.kind !== "group")
@@ -1767,28 +1774,55 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/harness") {
       return json(res, 200, {
         token: loadHarnessToken(),
-        bind: process.env.NEXBOT_BIND || "127.0.0.1",
-        offLoopback: bindIsOffLoopback(process.env.NEXBOT_BIND || "127.0.0.1"),
+        bind: BIND,
+        offLoopback: bindIsOffLoopback(BIND),
         port: PORT,
       });
     }
-    if (method === "GET" && path === "/api/remote-access") {
-      const bind = process.env.NEXBOT_BIND || "127.0.0.1";
-      return json(res, 200, {
-        token: loadHarnessToken(),
-        bind,
-        offLoopback: bindIsOffLoopback(bind),
-        port: PORT,
-        packaged: Boolean(STATIC_DIR),
-        addresses: lanAddresses(),
-      });
+    // ── NexBot Connect (host setup; device tokens authorize remote clients) ──
+    if (path === "/api/remote-access" && method === "GET") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
+      return json(res, 200, remoteAccessStatus(cfg, BIND, WEB_PORT));
+    }
+    if (path === "/api/remote-access" && (method === "PUT" || method === "PATCH")) {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
+      const body = await readBody(req);
+      const requestedMode = body.mode === "lan" || body.enabled === true ? "lan" : body.mode === "off" || body.enabled === false ? "off" : null;
+      if (!requestedMode) return json(res, 400, { error: "mode must be lan or off" });
+      saveConfig({ remoteAccess: { mode: requestedMode } });
+      Object.assign(cfg, loadConfig());
+      return json(res, 200, remoteAccessStatus(cfg, BIND, WEB_PORT));
+    }
+    if (path === "/api/remote-access/devices" && method === "POST") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
+      const body = await readBody(req);
+      const created = createRemoteDevice(body.label);
+      const urls = pairingUrls(created.token, WEB_PORT);
+      const mobileUrls = pairingMobileUrls(created.token, WEB_PORT);
+      return json(res, 201, { device: created.device, token: created.token, pairingUrl: urls[0], pairingUrls: urls, mobileUrl: mobileUrls[0], mobileUrls });
+    }
+    m = path.match(/^\/api\/remote-access\/devices\/([\w-]+)\/rotate$/);
+    if (m && method === "POST") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
+      const rotated = rotateRemoteDevice(m[1]);
+      if (!rotated) return json(res, 404, { error: "no active device with that id" });
+      const urls = pairingUrls(rotated.token, WEB_PORT);
+      const mobileUrls = pairingMobileUrls(rotated.token, WEB_PORT);
+      return json(res, 200, { device: rotated.device, token: rotated.token, pairingUrl: urls[0], pairingUrls: urls, mobileUrl: mobileUrls[0], mobileUrls });
+    }
+    m = path.match(/^\/api\/remote-access\/devices\/([\w-]+)(?:\/revoke)?$/);
+    if (m && (method === "DELETE" || (method === "POST" && path.endsWith("/revoke")))) {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "Connect setup is available on the host app only" });
+      const revoked = revokeRemoteDevice(m[1]);
+      if (!revoked) return json(res, 404, { error: "no device with that id" });
+      return json(res, 200, { device: revoked });
     }
     if (method === "POST" && path === "/api/harness/rotate") {
       return json(res, 200, { token: rotateHarnessToken() });
     }
     if (method === "POST" && path === "/api/steer/jobs") {
       const provided = tokenFromRequest(req.headers.authorization, url.searchParams.get("token"));
-      if (!checkSteerToken(provided)) return json(res, 401, { error: "bad steer token" });
+      if (!checkSteerToken(provided) && !authenticateRemoteToken(provided)) return json(res, 401, { error: "bad steer token" });
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       const botIds = Array.isArray(body.botIds) ? body.botIds.map(String) : [];
@@ -1976,12 +2010,12 @@ const server = createServer(async (req, res) => {
 
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "GET" && path === "/api/config") {
-      return json(res, 200, configStatus(cfg));
+      return json(res, 200, configStatus(cfg, BIND));
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch: Record<string, object> = {};
-      for (const key of ["xai", "composio", "box", "profile"] as const) {
+      for (const key of ["xai", "composio", "box", "profile", "remoteAccess"] as const) {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
@@ -1990,7 +2024,7 @@ const server = createServer(async (req, res) => {
       // provider keys change the fleet; a profile edit must not kill
       // in-flight turns with a pointless reload
       if (Object.keys(patch).some((k) => k !== "profile")) await reloadProviders();
-      const status = configStatus(cfg);
+      const status = configStatus(cfg, BIND);
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
     }
@@ -2156,7 +2190,7 @@ function recoverAfterBoot() {
   runDueRoutines();
 }
 
-const BIND = process.env.NEXBOT_BIND || "127.0.0.1";
+const BIND = process.env.NEXBOT_BIND?.trim() || remoteAccessStatus(cfg).configuredBind;
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {
     console.error(portBusyHint(PORT));
