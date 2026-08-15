@@ -181,7 +181,9 @@ function renderConfig(state: WireGuardState): string {
 
 function serviceIsActive(): boolean {
   try {
-    const output = execFileSync("sc.exe", ["query", WIREGUARD_SERVICE], { encoding: "utf8", timeout: 5000, windowsHide: true });
+    // WireGuard prefixes tunnel service names with `WireGuardTunnel$` on
+    // Windows. The manager commands still take the short tunnel name.
+    const output = execFileSync("sc.exe", ["query", `WireGuardTunnel$${WIREGUARD_SERVICE}`], { encoding: "utf8", timeout: 5000, windowsHide: true });
     return /STATE\s+:\s+\d+\s+RUNNING/i.test(output);
   } catch {
     return false;
