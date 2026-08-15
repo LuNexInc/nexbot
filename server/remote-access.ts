@@ -38,7 +38,6 @@ interface PendingPairingCode {
   deviceId?: string;
   createdAt: number;
   expiresAt: number;
-  attempts: number;
 }
 
 interface RemoteAccessFile {
@@ -101,8 +100,7 @@ function isPairingCode(value: unknown): value is PendingPairingCode {
     typeof row.label === "string" &&
     (row.deviceId === undefined || typeof row.deviceId === "string") &&
     typeof row.createdAt === "number" &&
-    typeof row.expiresAt === "number" &&
-    typeof row.attempts === "number"
+    typeof row.expiresAt === "number"
   );
 }
 
@@ -151,14 +149,13 @@ export function createRemoteDevice(label?: unknown): CreatedRemoteDevice {
 }
 
 export const PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
-const PAIRING_CODE_MAX_ATTEMPTS = 5;
 
 function sixDigitCode(): string {
   return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, "0");
 }
 
 function prunePairingCodes(file: RemoteAccessFile, now = Date.now()): void {
-  file.pairingCodes = (file.pairingCodes ?? []).filter((row) => row.expiresAt > now && row.attempts < PAIRING_CODE_MAX_ATTEMPTS);
+  file.pairingCodes = (file.pairingCodes ?? []).filter((row) => row.expiresAt > now);
 }
 
 /** Create a short-lived code. Only its digest is stored on disk. */
@@ -170,7 +167,7 @@ export function createPairingCode(label?: unknown, deviceId?: string): CreatedPa
   while ((file.pairingCodes ?? []).some((row) => sameDigest(row.codeHash, digest(code)))) code = sixDigitCode();
   const normalizedLabel = normalizeLabel(label, "Android device");
   const expiresAt = now + PAIRING_CODE_TTL_MS;
-  file.pairingCodes!.push({ codeHash: digest(code), label: normalizedLabel, deviceId, createdAt: now, expiresAt, attempts: 0 });
+  file.pairingCodes!.push({ codeHash: digest(code), label: normalizedLabel, deviceId, createdAt: now, expiresAt });
   writeFile(file);
   return { code, label: normalizedLabel, deviceId, createdAt: now, expiresAt };
 }
@@ -188,7 +185,6 @@ export function consumePairingCode(rawCode: unknown): { label: string; deviceId?
     return null;
   }
   const pending = file.pairingCodes![index];
-  pending.attempts += 1;
   file.pairingCodes!.splice(index, 1);
   writeFile(file);
   return { label: pending.label, deviceId: pending.deviceId };

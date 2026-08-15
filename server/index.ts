@@ -985,6 +985,23 @@ async function reloadProviders() {
 }
 
 // ── HTTP surface ───────────────────────────────────────────────────────
+const pairingAttemptWindows = new Map<string, { startedAt: number; count: number }>();
+const PAIRING_ATTEMPT_WINDOW_MS = 60_000;
+const PAIRING_ATTEMPT_LIMIT = 10;
+
+function allowPairingAttempt(req: IncomingMessage): boolean {
+  const key = req.socket.remoteAddress ?? "unknown";
+  const now = Date.now();
+  const current = pairingAttemptWindows.get(key);
+  if (!current || now - current.startedAt >= PAIRING_ATTEMPT_WINDOW_MS) {
+    pairingAttemptWindows.set(key, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= PAIRING_ATTEMPT_LIMIT) return false;
+  current.count += 1;
+  return true;
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -1828,6 +1845,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/remote-access/pair" && method === "POST") {
       if (!bindIsOffLoopback(BIND)) return json(res, 409, { error: "NexBot Connect is not listening on the LAN" });
+      if (!allowPairingAttempt(req)) return json(res, 429, { error: "Too many pairing attempts. Wait one minute." });
       const body = await readBody(req);
       const pairing = consumePairingCode(body.code);
       if (!pairing) return json(res, 401, { error: "The pairing code is invalid or expired" });
