@@ -31,12 +31,14 @@ export type Watchdog = {
   ): number | undefined;
   end(botId: string): TurnWatch | null;
   get(botId: string): TurnWatch | null;
+  isBudgetExceeded(botId: string, maxTokens?: number): boolean;
   stuckBots(now?: number): TurnWatch[];
   stalledBots(stallThresholdMs?: number, now?: number): TurnWatch[];
 };
 
 export const DEFAULT_STUCK_MS = 90_000;
 export const DEFAULT_STALL_MS = 45_000;
+export const DEFAULT_MAX_TOKENS_PER_TURN = 120_000;
 
 export function createWatchdog(opts?: { stuckMs?: number; stallMs?: number }): Watchdog {
   const stuckMs = opts?.stuckMs ?? DEFAULT_STUCK_MS;
@@ -133,7 +135,14 @@ export function createWatchdog(opts?: { stuckMs?: number; stallMs?: number }): W
     return out;
   }
 
-  return { start, recordFirstToken, poke, end, get, stuckBots, stalledBots };
+  function isBudgetExceeded(botId: string, maxTokens = DEFAULT_MAX_TOKENS_PER_TURN): boolean {
+    const row = turns.get(botId);
+    if (!row) return false;
+    const total = (row.tokens.input ?? 0) + (row.tokens.output ?? 0);
+    return total > maxTokens;
+  }
+
+  return { start, recordFirstToken, poke, end, get, isBudgetExceeded, stuckBots, stalledBots };
 }
 
 export function isComputerToolName(name: string | undefined): boolean {

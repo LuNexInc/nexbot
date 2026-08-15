@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeStoreDb } from "./db.ts";
-import { createRoutine, deleteRoutine, deleteRoutinesForBot, dueRoutines, listRoutines, markRan, nextRunAfter, parseDailyAt, routineCreateError, watchPathEscapes } from "./routines.ts";
+import { createRoutine, createRoutineFromTurn, deleteRoutine, deleteRoutinesForBot, dueRoutines, listRoutines, markRan, nextRunAfter, parseDailyAt, routineCreateError, watchPathEscapes } from "./routines.ts";
 
 describe("routines", () => {
   afterEach(() => {
@@ -137,5 +137,22 @@ describe("deleteRoutinesForBot", () => {
     expect(listRoutines("gone")).toEqual([]);
     expect(listRoutines("stay")).toHaveLength(1);
     expect(deleteRoutinesForBot("gone")).toBe(0);
+  });
+
+  it("createRoutineFromTurn creates a daily routine with onComplete pipeline", () => {
+    const routine = createRoutineFromTurn({
+      botId: "bot-research",
+      name: "Audit Competitors",
+      prompt: "Research competitor updates",
+      dailyAt: "08:00",
+      onComplete: { targetBotId: "bot-builder", messageTemplate: "Research complete, start building" },
+      maxTokens: 50_000,
+    });
+    expect(routine.id).toBeDefined();
+    expect(routine.name).toBe("Audit Competitors");
+    expect(routine.dailyAt).toBe("08:00");
+    expect(routine.onComplete?.targetBotId).toBe("bot-builder");
+    expect(routine.maxTokens).toBe(50_000);
+    expect(routine.enabled).toBe(true);
   });
 });

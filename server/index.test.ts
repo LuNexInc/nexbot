@@ -510,6 +510,21 @@ describe("harness HTTP API", () => {
       watchPath: "../etc/passwd",
     });
     expect(escape.status).toBe(400);
+
+    const fromThread = await api("POST", "/api/routines/from-thread", {
+      botId,
+      name: "Daily Scan",
+      prompt: "Scan repo for open issues",
+      dailyAt: "08:00",
+      onComplete: { targetBotId: botId, messageTemplate: "Scan finished" },
+    });
+    expect(fromThread.status).toBe(201);
+    expect(fromThread.body.routine).toMatchObject({
+      name: "Daily Scan",
+      prompt: "Scan repo for open issues",
+      dailyAt: "08:00",
+      onComplete: { targetBotId: botId, messageTemplate: "Scan finished" },
+    });
   });
 
   it("POST group 400s fake or hidden members; PATCH matches", async () => {

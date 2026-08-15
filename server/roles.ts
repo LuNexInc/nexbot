@@ -81,6 +81,13 @@ export const TEAM_SEEDS = [
   },
 ] as const;
 
+export const DEFAULT_COS_ROUTINE = {
+  name: "Morning Executive Brief",
+  prompt: "Review the overnight activity feed and past receipts across all bots. Prepare a concise 5-bullet morning executive briefing on project progress, key decisions needed from Charles, and today's top priorities.",
+  dailyAt: "08:00",
+  weekdaysOnly: true,
+} as const;
+
 // Never offer Chief of Staff as a job for a new bot — Luna already holds that seat.
 export const ROLE_CARD_OPTIONS = ROLE_SEEDS.map((r) => r.title).filter(
   (t) => !t.toLowerCase().includes("chief of staff"),

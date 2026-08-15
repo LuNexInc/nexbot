@@ -142,3 +142,12 @@ export function freshSessionContextPrompt(
   const lines = recent.map((message) => `${message.role === "user" ? "User" : "NexBot"}: ${message.text}`);
   return ` Recent conversation (last ${recent.length} text messages):\n${lines.join("\n\n")}\n\nCompact conversation summary: ${conversationSummaryPath(botId)}. Full conversation archive: ${conversationArchivePath(botId)}. Use local file tools to search them when older context is needed.`;
 }
+
+/** Prune massive tool execution payloads in active context to preserve token budget. */
+export function compactToolOutput(output: string, maxChars = 1_200): string {
+  if (!output || output.length <= maxChars) return output;
+  const head = output.slice(0, Math.floor(maxChars * 0.65));
+  const tail = output.slice(-Math.floor(maxChars * 0.35));
+  const omitted = output.length - (head.length + tail.length);
+  return `${head}\n\n[… ${omitted} characters omitted for prompt compactness …]\n\n${tail}`;
+}

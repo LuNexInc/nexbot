@@ -17,6 +17,8 @@ export type Routine = {
   everyMinutes?: number;
   dailyAt?: string;
   weekdaysOnly?: boolean;
+  onComplete?: { targetBotId: string; messageTemplate?: string };
+  maxTokens?: number;
   enabled: boolean;
   lastRunAt?: number;
   nextRunAt?: number;
@@ -122,6 +124,29 @@ export function createRoutine(input: Omit<Routine, "id" | "nextRunAt" | "lastRun
   all.push(row);
   save(all);
   return row;
+}
+
+export function createRoutineFromTurn(input: {
+  botId: string;
+  name: string;
+  prompt: string;
+  dailyAt?: string;
+  everyMinutes?: number;
+  weekdaysOnly?: boolean;
+  onComplete?: { targetBotId: string; messageTemplate?: string };
+  maxTokens?: number;
+}): Routine {
+  return createRoutine({
+    botId: input.botId,
+    name: input.name,
+    prompt: input.prompt,
+    dailyAt: input.dailyAt ?? "08:00",
+    everyMinutes: input.everyMinutes,
+    weekdaysOnly: input.weekdaysOnly,
+    onComplete: input.onComplete,
+    maxTokens: input.maxTokens,
+    enabled: true,
+  });
 }
 
 export function patchRoutine(id: string, patch: Partial<Routine>): Routine | null {

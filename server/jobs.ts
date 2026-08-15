@@ -19,6 +19,8 @@ export type DurableJob = {
   model: string;
   reasoningEffort?: ReasoningEffort;
   resumeCursor?: unknown;
+  onComplete?: { targetBotId: string; messageTemplate?: string };
+  maxTokens?: number;
   status: JobStatus;
   attempt: number;
   error?: string;

@@ -8,8 +8,9 @@ import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThre
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { ensureDesk, writeProfile } from "./desk.ts";
-import { defaultSkillSlugsForBot, ROLE_CARD_OPTIONS, TEAM_SEEDS, SLEEP_WARNING, teammateGreeting, isChiefOfStaffRole } from "./roles.ts";
+import { defaultSkillSlugsForBot, ROLE_CARD_OPTIONS, TEAM_SEEDS, SLEEP_WARNING, teammateGreeting, isChiefOfStaffRole, DEFAULT_COS_ROUTINE } from "./roles.ts";
 import { removeJobsForBot } from "./jobs.ts";
+import { createRoutine, listRoutines } from "./routines.ts";
 
 export type NexColor =
   | "green"
@@ -504,6 +505,17 @@ export class Store {
           patches.modelSelection = { instanceId: "antigravity", model: "gemini-3.7-flash-medium" };
         }
         if (Object.keys(patches).length) this.patchBot(bot.id, patches);
+        const routines = listRoutines(bot.id);
+        if (!routines.some((r) => r.name === DEFAULT_COS_ROUTINE.name)) {
+          createRoutine({
+            botId: bot.id,
+            name: DEFAULT_COS_ROUTINE.name,
+            prompt: DEFAULT_COS_ROUTINE.prompt,
+            dailyAt: DEFAULT_COS_ROUTINE.dailyAt,
+            weekdaysOnly: DEFAULT_COS_ROUTINE.weekdaysOnly,
+            enabled: true,
+          });
+        }
       }
     }
   }

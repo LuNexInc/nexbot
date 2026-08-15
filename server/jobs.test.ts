@@ -36,4 +36,22 @@ describe("durable jobs", () => {
     expect(removeJobsForBot("bot-1")).toBe(1);
     expect(getJob(first.id)).toBeNull();
   });
+
+  it("persists onComplete pipeline and maxTokens ceiling", () => {
+    const job = createJob({
+      botId: "bot-research",
+      threadId: "t1",
+      messageId: "m1",
+      text: "research",
+      source: "routine",
+      providerInstanceId: "antigravity",
+      model: "gemini-3.7-flash-medium",
+      onComplete: { targetBotId: "bot-builder", messageTemplate: "handoff to builder" },
+      maxTokens: 80_000,
+    });
+    expect(getJob(job.id)).toMatchObject({
+      onComplete: { targetBotId: "bot-builder", messageTemplate: "handoff to builder" },
+      maxTokens: 80_000,
+    });
+  });
 });

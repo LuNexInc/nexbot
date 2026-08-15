@@ -54,4 +54,13 @@ describe("watchdog", () => {
     expect(stalled[0].stalled).toBe(true);
     expect(w.stalledBots(40, t0 + 80)).toHaveLength(0);
   });
+
+  it("checks budget ceiling and identifies runaway turns", () => {
+    const w = createWatchdog();
+    w.start("a");
+    expect(w.isBudgetExceeded("a", 10_000)).toBe(false);
+    w.poke("a", "usage", { tokens: { input: 8_000, output: 3_000 } });
+    expect(w.isBudgetExceeded("a", 10_000)).toBe(true);
+    expect(w.isBudgetExceeded("a", 20_000)).toBe(false);
+  });
 });

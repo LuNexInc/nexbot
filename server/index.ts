@@ -25,6 +25,7 @@ import { sessionDeathSettlement } from "./recovery.ts";
 import { createJob, getJob, listJobs, updateJob } from "./jobs.ts";
 import {
   createRoutine,
+  createRoutineFromTurn,
   deleteRoutine,
   deleteRoutinesForBot,
   dueRoutines,
@@ -54,7 +55,7 @@ import {
 } from "./harness-auth.ts";
 import { stripWorkingNarration } from "../src/lib/activity.ts";
 import { createNonceCache } from "./nonce.ts";
-import { createWatchdog, isComputerToolName } from "./watchdog.ts";
+import { createWatchdog, DEFAULT_MAX_TOKENS_PER_TURN, isComputerToolName } from "./watchdog.ts";
 import { chooseAntigravityCosSelection, pickDefaultSelection } from "./selection.ts";
 import { isMeaningfulUpdate, proactivePrompt, shouldTriggerProactive, type ProactiveReason } from "./proactivity.ts";
 import { routingDirective, suggestSpecialistRoutes } from "./routing.ts";
@@ -141,6 +142,8 @@ type StartTurnOpts = {
   chatText?: string;
   clientNonce?: string;
   source?: "user" | "agent" | "routine" | "proactive" | "completion";
+  onComplete?: { targetBotId: string; messageTemplate?: string };
+  maxTokens?: number;
 };
 
 const nonceCache = createNonceCache(60_000);
@@ -273,6 +276,11 @@ bus.subscribe((event: RuntimeEvent) => {
     if (currentTurn) {
       currentTurn.inputTokens = event.input ?? 0;
       currentTurn.outputTokens = event.output ?? 0;
+      const currentJob = currentTurn.jobId ? getJob(currentTurn.jobId) : null;
+      const ceiling = currentJob?.maxTokens ?? DEFAULT_MAX_TOKENS_PER_TURN;
+      if (watchdog.isBudgetExceeded(bot.id, ceiling)) {
+        console.warn(`[watchdog] Token budget ceiling exceeded for bot ${bot.name} (${bot.id})`);
+      }
     }
   }
   if (event.type === "item.started" && event.itemType === "tool") {
@@ -454,10 +462,22 @@ bus.subscribe((event: RuntimeEvent) => {
         pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
       }
       if (currentTurn?.jobId) {
+        const job = getJob(currentTurn.jobId);
         updateJob(currentTurn.jobId, {
           status: event.ok === false ? "failed" : "completed",
           error: event.ok === false ? event.stopReason ?? "provider turn failed" : undefined,
         });
+        if (event.ok !== false && job?.onComplete?.targetBotId) {
+          const targetBot = store.bot(job.onComplete.targetBotId);
+          if (targetBot && !targetBot.busy) {
+            const defaultMsg = `Pipeline step completed by ${bot.name}: ${job.text.slice(0, 300)}`;
+            const text = job.onComplete.messageTemplate || defaultMsg;
+            startTurn(targetBot.id, text, {
+              source: "completion",
+              fromBot: { id: bot.id, name: bot.name, color: bot.color },
+            }).catch((err) => console.error("pipeline handoff error:", err));
+          }
+        }
       }
       store.patchBot(bot.id, { busy: false, unread: true, ...(meta?.ttfrMs !== undefined ? { lastTtfrMs: meta.ttfrMs } : {}) });
       const used = turnTools.get(bot.id);
@@ -741,6 +761,8 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         providerInstanceId: selection.instanceId,
         model: selection.model,
         reasoningEffort: selection.reasoningEffort,
+        onComplete: opts?.onComplete ?? existingJob.onComplete,
+        maxTokens: opts?.maxTokens ?? existingJob.maxTokens,
       })!
     : createJob({
         botId: bot.id,
@@ -752,6 +774,8 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         providerInstanceId: selection.instanceId,
         model: selection.model,
         reasoningEffort: selection.reasoningEffort,
+        onComplete: opts?.onComplete,
+        maxTokens: opts?.maxTokens,
       });
   turnMeta.set(bot.id, {
     kind: turnKind,
@@ -1576,6 +1600,35 @@ const server = createServer(async (req, res) => {
       const hookUrl = kind === "webhook" ? `http://127.0.0.1:${PORT}${routineHookPath(routine.id)}` : undefined;
       return json(res, 201, { routine, hookUrl });
     }
+    if (method === "POST" && path === "/api/routines/from-thread") {
+      const body = await readBody(req);
+      const threadId = String(body.threadId ?? "");
+      const bot = store.botByThread(threadId) || (body.botId ? store.bot(String(body.botId)) : null);
+      if (!bot) return json(res, 400, { error: "bot or thread not found" });
+      const msgs = store.messagesFor(bot.threadId);
+      const lastUser = [...msgs].reverse().find((m) => m.role === "user" && m.kind === "text")?.text;
+      const prompt = String(body.prompt ?? lastUser ?? "").trim();
+      if (!prompt) return json(res, 400, { error: "prompt or user turn required" });
+      const onComplete =
+        body.onComplete && typeof body.onComplete === "object" && typeof (body.onComplete as any).targetBotId === "string"
+          ? {
+              targetBotId: String((body.onComplete as any).targetBotId),
+              messageTemplate: typeof (body.onComplete as any).messageTemplate === "string" ? String((body.onComplete as any).messageTemplate) : undefined,
+            }
+          : undefined;
+      const routine = createRoutineFromTurn({
+        botId: bot.id,
+        name: String(body.name ?? prompt.slice(0, 50)).trim(),
+        prompt,
+        dailyAt: typeof body.dailyAt === "string" ? body.dailyAt : "08:00",
+        everyMinutes: body.everyMinutes ? Number(body.everyMinutes) : undefined,
+        weekdaysOnly: Boolean(body.weekdaysOnly),
+        onComplete,
+        maxTokens: body.maxTokens ? Number(body.maxTokens) : undefined,
+      });
+      broadcast({ kind: "routines", routines: listRoutines() });
+      return json(res, 201, { routine });
+    }
     if (method === "POST" && path === "/api/webhooks/github") {
       const body = await readBody(req);
       const provided = headerSecret(req);
@@ -2084,7 +2137,11 @@ function runDueRoutines() {
     if (!bot || bot.busy) continue;
     markRan(r.id);
     rememberTurn(r.botId, `[Routine: ${r.name}]\n\n${r.prompt}`, "routine");
-    void startTurn(r.botId, `[Routine: ${r.name}]\n\n${r.prompt}`, { source: "routine" }).catch(() => {});
+    void startTurn(r.botId, `[Routine: ${r.name}]\n\n${r.prompt}`, {
+      source: "routine",
+      onComplete: r.onComplete,
+      maxTokens: r.maxTokens,
+    }).catch(() => {});
     broadcast({ kind: "routines", routines: listRoutines() });
   }
 }
