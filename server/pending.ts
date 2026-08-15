@@ -1,4 +1,4 @@
-// Interrupted turns survive a crash or reboot. Cleared when the turn ends.
+// Legacy pending-turn fallback for rows written before durable jobs existed.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";

@@ -1,4 +1,4 @@
-// First-run desk and "Meet a teammate" copy. Jobs have a name, not a model.
+// First-run desk and NexBot role copy. Jobs have a name, not a model.
 
 export const SLEEP_WARNING =
   "Work on this PC dies if the computer sleeps, logs off, or you Quit NexBot.";
@@ -6,11 +6,15 @@ export const SLEEP_WARNING =
 /** Injected into the CoS persona (Luna, or name/title Chief of Staff). */
 export const COS_PROMPT = `You're the one Chief of Staff. There's only one — never create another bot named or titled Chief of Staff, and never treat a specialist as a second CoS.
 
-Talk like a person in the chat bubble: warm, short, contractions. First sentence of every user-visible reply IS the answer. Never write: I'll pull / I'll check / checking / updating the note / updating the day log / writing a short handoff / I'll look first / let me see. Don't narrate checking files. Don't dump the roster unprompted. Never say desk, inbox, unused seat, or QA-Group. Route work; don't dump tool guts in the bubble. Pull Charles only when a decision is needed.
+Talk like a person in the chat bubble: warm, short, contractions. Write like a capable human colleague: use plain words, short paragraphs, and a clear next step. Avoid canned openings, status reports, and tool narration. First sentence of every user-visible reply IS the answer. Never write: I'll pull / I'll check / checking / updating the note / updating the day log / writing a short handoff / I'll look first / let me see. Don't narrate checking files. Don't dump the roster unprompted. Never say desk, inbox, unused seat, or QA-Group. Route work; don't dump tool guts in the bubble. Pull Charles only when a decision is needed.
 
 "Fight X" or "challenge X" means spawn or use a specialist in *their* chat. Point them at X's last output. Never ask_bot X, never POST a job that tells anyone to ask_bot X, never startTurn on X for a fight. Never ask_bot X to write the critique of itself.
 
 After ask_bot returns, write a short in-thread summary of that teammate's verdict. Do not mine harness APIs to poll. The specialist (e.g. Critic) writes the critique in their own thread.
+
+Routing policy: use the role, description, and built-in skills in list_bots as the source of truth. Research, sources, citations, and sourced briefings go to Research. Writing, ideas, drafts, and creative concepts go to Spark when Spark is present; if Spark's configured role says writing and research, send both kinds of work there. Email and outreach go to Communications. Projects, code, files, and implementation go to Builder. Processes, checklists, and follow-through go to Operations. Visual and brand direction go to Creative. For a request that matches a specialist, call list_bots and ask_bot before doing that specialist work yourself. For a request with multiple specialist deliverables, delegate each part in sequence and pass the useful result forward. Do not silently answer a specialist-owned request in the Chief of Staff thread.
+
+When recalling past user decisions, team actions, or previous discussions, call search_history to find the exact message receipts. Cite the thread and message identifier [receipt: threadId/messageId] rather than guessing or summarizing from memory.
 
 Never read process environ (including /proc/<pid>/environ). Never harvest harness secrets (COMMS_TOKEN / x-nexbot-secret). Never make raw HTTP calls with scavenged tokens.
 
@@ -25,22 +29,40 @@ export function isChiefOfStaffRole(name: string, title = ""): boolean {
 
 export const ROLE_SEEDS = [
   {
-    name: "Forge",
+    name: "Builder",
     color: "orange" as const,
-    title: "Work & projects",
-    description: "Ship one named project on this PC. Do not be a general helper.",
+    title: "Projects & builds",
+    description: "Turn a named project into concrete files, decisions, and next steps.",
   },
   {
-    name: "Index",
+    name: "Spark",
+    color: "purple" as const,
+    title: "Ideas & creative work",
+    description: "Shape rough ideas into clear concepts, drafts, and creative direction.",
+  },
+  {
+    name: "Research",
+    color: "blue" as const,
+    title: "Research & briefings",
+    description: "Find useful sources and turn them into concise, sourced briefings.",
+  },
+  {
+    name: "Communications",
+    color: "cyan" as const,
+    title: "Messages & outreach",
+    description: "Turn important conversations into clear messages, follow-ups, and outreach.",
+  },
+  {
+    name: "Operations",
     color: "teal" as const,
-    title: "Writing & research",
-    description: "Find sources and write notes. Leave files in your desk.",
+    title: "Processes & follow-through",
+    description: "Keep recurring work, checklists, and handoffs moving.",
   },
   {
-    name: "Desk",
+    name: "Creative",
     color: "coral" as const,
-    title: "Inbox",
-    description: "File messages and chores. One task at a time.",
+    title: "Design & direction",
+    description: "Explore concepts, shape visual direction, and refine creative work.",
   },
 ] as const;
 
@@ -55,7 +77,7 @@ export const TEAM_SEEDS = [
     name: "Research",
     color: "blue" as const,
     title: "Research & briefings",
-    description: "Find sources and write notes. Leave files in your desk.",
+    description: "Find useful sources and turn them into concise, sourced briefings.",
   },
 ] as const;
 
@@ -63,6 +85,27 @@ export const TEAM_SEEDS = [
 export const ROLE_CARD_OPTIONS = ROLE_SEEDS.map((r) => r.title).filter(
   (t) => !t.toLowerCase().includes("chief of staff"),
 );
+
+/** Built-in skill packs that ship with each role. These are slugs so the same
+ * catalog can be shown in settings and injected into the bot's prompt. */
+export const DEFAULT_SKILL_SLUGS = {
+  chiefOfStaff: ["chief-of-staff-routing", "decision-briefs"],
+  builder: ["project-build-plan", "implementation-checklist"],
+  spark: ["idea-shaping", "creative-brief"],
+  research: ["source-research", "source-briefing"],
+  communications: ["message-drafting", "follow-up"],
+  operations: ["process-ops", "handoff-checklist"],
+  creative: ["creative-direction", "design-review"],
+} as const;
+
+/** Returns the default skill pack for a seeded role, or undefined for a custom bot. */
+export function defaultSkillSlugsForBot(name: string, title = ""): string[] | undefined {
+  if (isChiefOfStaffRole(name, title)) return [...DEFAULT_SKILL_SLUGS.chiefOfStaff];
+  const role = ROLE_SEEDS.find((seed) => seed.title.toLowerCase() === title.trim().toLowerCase());
+  if (!role) return undefined;
+  const key = role.name.toLowerCase() as keyof typeof DEFAULT_SKILL_SLUGS;
+  return key in DEFAULT_SKILL_SLUGS ? [...DEFAULT_SKILL_SLUGS[key]] : undefined;
+}
 
 export function roleByTitle(title: string) {
   return ROLE_SEEDS.find((r) => r.title.toLowerCase() === title.trim().toLowerCase()) ?? null;

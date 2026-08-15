@@ -1,5 +1,25 @@
 # NexBot — DECISIONS
 
+## 2026-08-14 — Interrupted turns are durable and resumable
+
+- **Choice:** Every provider turn gets a SQLite job row. `session.started` checkpoints the provider cursor. A process exit marks running jobs interrupted and shows Resume / Retry actions. Resume uses Claude/Codex native cursors and transcript replay for Grok; ordinary new turns still start without a cursor.
+- **Why:** `pending-turns.json` could report a dead turn but could not restore it. The provider drivers already expose the continuation needed for an explicit recovery action.
+- **Reverse if:** Charles wants every restart to discard active work again, or wants provider session history disabled even for an interrupted job.
+
+## 2026-08-14 — Encrypt secrets at rest; auth off-loopback
+
+- **Choice:** Secret fields in `~/.nexbot/config.json` (`xai.key`, `composio.key`, `composio.apiKey`, `box.token`) are AES-256-GCM envelopes. The wrapping key is `~/.nexbot/master.key` (DPAPI CurrentUser on Windows when not under test; raw+ACL fallback). Empty string or null on PUT clears a key. Legacy plaintext is migrated on load.
+- **Choice:** Non-loopback clients cannot call `/api/*` without a token. Loopback stays trusted. Exemptions: `GET /api/health`, webhooks (own secret), `/api/internal` (per-boot comms token), static files. Phone surface (`POST /api/steer/jobs`, `GET /api/steer/bots`, `GET /api/events`) accepts the steer token. `GET /api/steer` no longer leaks the token off-loopback. Phone link is `/m.html#token=` (hash, not query).
+- **Why:** A live Composio key sat in plaintext JSON. Binding `0.0.0.0` for phone/LAN opened bots, messages, computer/exec, and GET /api/steer with no auth.
+- **Reverse if:** Charles wants OS-keychain-only (no sibling master.key) or mutual TLS on the harness.
+
+
+## 2026-08-14 — Task-scoped coordination is equal across bots
+
+- **Choice:** CoS remains the single global coordinator, but every active bot on a peer-agent capable driver can use `ask_bot` and `send_bot` inside its assigned task. Each task carries a delegation path, a four-hop limit, and a 24-message budget. The harness rejects cycles and messages from a bot that does not own the active task path.
+- **Why:** A role should define coordination scope and reporting duties. It should not remove planning or delegation tools from specialists.
+- **Reverse if:** Charles wants stricter per-role permissions or a different task budget.
+
 ## 2026-08-14 — Cannot hide the Chief of Staff
 
 - **Choice:** `PATCH /api/bots/:id` with `hidden: true` on the last CoS is **400** `{ error: "cannot hide the Chief of Staff" }`. Hidden specialists stay off jobs/steer/ask_bot; `POST /messages` to a hidden specialist still runs (sidebar hide ≠ mute). Sidebar disables Hide on CoS so the optimistic client does not strand the seat.
@@ -66,7 +86,7 @@
 
 ## 2026-08-13 — Auto-allow, no model history, pop-out screen
 
-- **Choice:** Default Claude `bypassPermissions`, Codex/ACP `fullAuto`. Permission cards auto-allow. Turns send no resume cursor and no transcript. Live this-PC frames POST to `/preview` and `/watch.html` (app window or browser).
+- **Choice:** Default Claude `bypassPermissions`, Codex/ACP `fullAuto`. Permission cards auto-allow. Ordinary turns send no resume cursor; explicit recovery may resume one interrupted job. Live this-PC frames POST to `/preview` and `/watch.html` (app window or browser).
 - **Why:** Charles asked to drop history pings, stop Allow/Deny, and surface work in a browser/app.
 - **Reverse if:** He wants approvals back (`permissionMode: acceptEdits` / `fullAuto: false` in instance config).
 

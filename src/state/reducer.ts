@@ -2,6 +2,12 @@
 import type { NexMotion } from "@/lib/mascot";
 import type { Action, AppState, Bot, OptionCardData } from "./types";
 
+function isChiefOfStaffBot(bot: Pick<Bot, "name" | "title">): boolean {
+  const name = bot.name.trim().toLowerCase();
+  const title = (bot.title ?? "").trim().toLowerCase();
+  return name === "chief of staff" || name === "luna" || title.includes("chief of staff");
+}
+
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
 }
@@ -35,35 +41,52 @@ export const initialState: AppState = {
   instances: [],
   config: null,
   selectedId: "",
+  expertMode: true,
+  theme: "light",
   settingsOpen: false,
+  settingsPage: "overview",
   pluginsOpen: false,
   computerOpen: false,
   appSettingsOpen: false,
   skillsOpen: false,
   streaming: {},
+  streamingReasoning: {},
   screens: {},
   provisioning: {},
   connected: false,
   error: null,
+  botErrors: {},
   mascotMotion: null,
 };
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
-      // Auto-select first bot for the main pane, but do NOT clear unread.
+      // Keep the Chief of Staff first in state as well as in the sidebar.
+      // Auto-select it for the main pane, but do NOT clear unread.
       // Unread is only cleared when the user actually selects a row, or when
       // the SSE handler sees a turn complete on the currently selected chat.
+      const orderedBots = [...action.bots].sort((a, b) => {
+        const aChief = isChiefOfStaffBot(a);
+        const bChief = isChiefOfStaffBot(b);
+        if (aChief !== bChief) return aChief ? -1 : 1;
+        return (a.sortOrder ?? action.bots.indexOf(a)) - (b.sortOrder ?? action.bots.indexOf(b));
+      });
+      const chief = orderedBots.find(isChiefOfStaffBot);
       const selectedId =
-        action.bots.some((b) => b.id === state.selectedId) && state.selectedId
+        orderedBots.some((b) => b.id === state.selectedId) && state.selectedId
           ? state.selectedId
-          : (action.bots[0]?.id ?? "");
-      return { ...state, bots: action.bots, selectedId };
+          : (chief?.id ?? orderedBots[0]?.id ?? "");
+      return { ...state, bots: orderedBots, selectedId };
     }
     case "instances":
       return { ...state, instances: action.instances };
     case "configStatus":
       return { ...state, config: action.config };
+    case "setExpertMode":
+      return { ...state, expertMode: action.enabled };
+    case "setTheme":
+      return { ...state, theme: action.theme };
     case "select":
       return updateBot(
         withMascotMotion({ ...state, selectedId: action.id }, action.id, "switch"),
@@ -89,7 +112,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const bots = state.bots.filter((b) => b.id !== action.botId);
       const selectedId =
         state.selectedId === action.botId ? (bots.find((b) => !b.hidden)?.id ?? bots[0]?.id ?? "") : state.selectedId;
-      return { ...state, bots, selectedId };
+      const { [action.botId]: _, ...botErrors } = state.botErrors;
+      return { ...state, bots, selectedId, botErrors };
     }
     case "markUnread":
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
@@ -99,7 +123,7 @@ export function reducer(state: AppState, action: Action): AppState {
         action.bot.unread && !before?.unread
           ? "surprise"
           : action.bot.busy === true && !before?.busy
-            ? "working"
+            ? "thinking"
             : action.bot.busy === false && before?.busy
               ? "celebrate"
               : null;
@@ -116,6 +140,7 @@ export function reducer(state: AppState, action: Action): AppState {
           name: incoming.name ?? "New Bot",
           title: incoming.title ?? "",
           description: incoming.description ?? "",
+          personality: incoming.personality,
           notifications: incoming.notifications ?? true,
           color: incoming.color ?? "green",
           unread: incoming.unread ?? false,
@@ -125,6 +150,7 @@ export function reducer(state: AppState, action: Action): AppState {
           busy: incoming.busy,
           computer: incoming.computer,
           pinned: incoming.pinned,
+          sortOrder: incoming.sortOrder,
           hidden: incoming.hidden,
           memoryEnabled: incoming.memoryEnabled,
           enabledSkillSlugs: incoming.enabledSkillSlugs,
@@ -166,10 +192,14 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: nextMessages,
       }));
       const motion =
-        action.message.kind === "options"
+        action.message.fromBot
+          ? "handover"
+          : action.message.kind === "options"
           ? "thinking"
           : action.message.kind === "activity"
-            ? action.message.tool?.ok === false
+            ? /\b(?:ask_bot|send_bot)\b/i.test(action.message.tool?.name ?? "") && action.message.tool?.ok !== true && action.message.tool?.ok !== false
+              ? "handover"
+              : action.message.tool?.ok === false
               ? "failure"
               : action.message.tool?.ok === true
                 ? "success"
@@ -202,7 +232,9 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!bot) return state;
       const motion =
         action.message.kind === "activity"
-          ? action.message.tool?.ok === false
+          ? /\b(?:ask_bot|send_bot)\b/i.test(action.message.tool?.name ?? "") && action.message.tool?.ok !== true && action.message.tool?.ok !== false
+            ? "handover"
+            : action.message.tool?.ok === false
             ? "failure"
             : action.message.tool?.ok === true
               ? "success"
@@ -222,11 +254,20 @@ export function reducer(state: AppState, action: Action): AppState {
           [action.threadId]: (state.streaming[action.threadId] ?? "") + action.delta,
         },
       };
+    case "reasoningDelta":
+      return {
+        ...state,
+        streamingReasoning: {
+          ...state.streamingReasoning,
+          [action.threadId]: (state.streamingReasoning[action.threadId] ?? "") + action.delta,
+        },
+      };
     case "todosUpdated":
       return updateBot(state, action.botId, (b) => ({ ...b, todos: action.items }));
     case "streamClear": {
       const { [action.threadId]: _, ...rest } = state.streaming;
-      return { ...state, streaming: rest };
+      const { [action.threadId]: __, ...reasoningRest } = state.streamingReasoning;
+      return { ...state, streaming: rest, streamingReasoning: reasoningRest };
     }
     case "screenFrame":
       return {
@@ -250,12 +291,36 @@ export function reducer(state: AppState, action: Action): AppState {
           : state),
         error: action.message,
       };
+    case "botError":
+      return withMascotMotion(
+        { ...state, botErrors: { ...state.botErrors, [action.botId]: action.message } },
+        action.botId,
+        "alert",
+      );
+    case "clearBotError": {
+      const { [action.botId]: _, ...botErrors } = state.botErrors;
+      return { ...state, botErrors };
+    }
+    case "wipe":
+      return {
+        ...state,
+        bots: [],
+        selectedId: "",
+        streaming: {},
+        streamingReasoning: {},
+        screens: {},
+        provisioning: {},
+        botErrors: {},
+        error: null,
+        mascotMotion: null,
+      };
     // bot settings, the computer panel, and app settings share the right slot
     case "toggleSettings": {
       const open = action.open ?? !state.settingsOpen;
       return {
         ...state,
         settingsOpen: open,
+        settingsPage: open ? action.page ?? "overview" : state.settingsPage,
         computerOpen: open ? false : state.computerOpen,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };

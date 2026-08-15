@@ -1,5 +1,5 @@
-// Store persistence contract: ~/.nexbot/store.db is the durable record — everything here must survive a process restart
-// except `busy`, which never does (no turn survives one either).
+// Store persistence contract: ~/.nexbot/store.db is the durable record —
+// everything here must survive a process restart except transient `busy`.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -81,15 +81,15 @@ describe("Store", () => {
     expect(reloaded.messagesFor(threadId)).toEqual([]);
   });
 
-  it("setResumeCursor is a no-op (history off)", () => {
+  it("persists provider resume cursors across a restart", () => {
     const store = new Store(selection);
     const bot = store.createBot();
     store.setResumeCursor(bot.id, "claude", "sess-abc");
     store.setResumeCursor(bot.id, "codex", "thread-xyz");
 
-    expect(store.bot(bot.id)?.resumeCursors).toEqual({});
+    expect(store.bot(bot.id)?.resumeCursors).toEqual({ claude: "sess-abc", codex: "thread-xyz" });
     const reloaded = new Store(selection);
-    expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({});
+    expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ claude: "sess-abc", codex: "thread-xyz" });
   });
 
   it("createBot with a job name writes a teammate greeting", () => {
@@ -442,7 +442,7 @@ describe("handoffThreadIds", () => {
 });
 
 describe("clipForTurn", () => {
-  it("keeps the last-30 window and caps each message text", () => {
+  it("keeps the last-12 window and caps each message text", () => {
     const huge = "x".repeat(TRANSCRIPT_TEXT_CAP + 50);
     const msgs = Array.from({ length: TRANSCRIPT_WINDOW + 5 }, (_, i) => ({
       kind: "text" as const,

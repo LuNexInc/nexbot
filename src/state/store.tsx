@@ -21,7 +21,10 @@ export type {
   ConfigStatus,
   InstanceInfo,
   Message,
+  TurnEffort,
   ModelSelection,
+  ReasoningEffort,
+  Theme,
   NexColor,
   OptionCardData,
   Routine,
@@ -33,13 +36,57 @@ const StoreContext = createContext<{
   dispatch: React.Dispatch<Action>;
 } | null>(null);
 
+const EXPERT_MODE_STORAGE_KEY = "nexbot.expert-mode";
+const THEME_STORAGE_KEY = "nexbot.theme";
+
+function initialClientState(): AppState {
+  if (typeof window === "undefined") return initialState;
+  try {
+    const stored = window.localStorage.getItem(EXPERT_MODE_STORAGE_KEY);
+    const theme = window.localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+    return { ...initialState, expertMode: stored !== "false", theme };
+  } catch {
+    return initialState;
+  }
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, rawDispatch] = useReducer(reducer, initialState);
+  const [state, rawDispatch] = useReducer(reducer, undefined, initialClientState);
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("dark", state.theme === "dark");
+    root.style.colorScheme = state.theme;
+  }, [state.theme]);
+
   // debounced PATCH per bot for text-field edits (name/title/description)
   const patchTimers = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; patch: Record<string, unknown> }>());
+  const streamBuffers = useRef(new Map<string, { answer: string; reasoning: string }>());
+  const streamTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const botErrorTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const flushStream = (threadId: string) => {
+    const pending = streamBuffers.current.get(threadId);
+    if (!pending) return;
+    streamBuffers.current.delete(threadId);
+    const timer = streamTimers.current.get(threadId);
+    if (timer) clearTimeout(timer);
+    streamTimers.current.delete(threadId);
+    if (pending.answer) rawDispatch({ type: "streamDelta", threadId, delta: pending.answer });
+    if (pending.reasoning) rawDispatch({ type: "reasoningDelta", threadId, delta: pending.reasoning });
+  };
+
+  const queueStreamDelta = (threadId: string, delta: string, reasoning = false) => {
+    const pending = streamBuffers.current.get(threadId) ?? { answer: "", reasoning: "" };
+    if (reasoning) pending.reasoning += delta;
+    else pending.answer += delta;
+    streamBuffers.current.set(threadId, pending);
+    if (!streamTimers.current.has(threadId)) {
+      streamTimers.current.set(threadId, setTimeout(() => flushStream(threadId), 40));
+    }
+  };
 
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
@@ -61,7 +108,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const sendAct = { ...action, clientNonce: nonce };
         rawDispatch(sendAct);
         const bot = stateRef.current.bots.find((b) => b.id === sendAct.botId);
-        rawDispatch({ type: "toggleComputer", open: true });
         api(`/api/bots/${sendAct.botId}/messages`, {
           method: "POST",
           body: JSON.stringify({ text: sendAct.text, files: sendAct.files, clientNonce: nonce }),
@@ -75,6 +121,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       rawDispatch(action);
       switch (action.type) {
+        case "setExpertMode":
+          try {
+            window.localStorage.setItem(EXPERT_MODE_STORAGE_KEY, String(action.enabled));
+          } catch {
+            // Private browsing or a locked-down webview can reject storage.
+          }
+          break;
+        case "setTheme":
+          try {
+            window.localStorage.setItem(THEME_STORAGE_KEY, action.theme);
+          } catch {
+            // Private browsing or a locked-down webview can reject storage.
+          }
+          break;
         case "retryMessage": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           if (!bot) break;
@@ -109,7 +169,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
-          if (card?.requestId) {
+          if (card?.requestId?.startsWith("nexbot-job:")) {
+            const jobId = card.requestId.slice("nexbot-job:".length);
+            const actionName = action.answer.toLowerCase() === "resume" ? "resume" : "retry";
+            persistCard(action.botId, action.messageId, { answered: action.answer });
+            api(`/api/jobs/${jobId}/${actionName}`, { method: "POST" }).catch(showError);
+          } else if (card?.requestId) {
             const behavior =
               action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
             api(`/api/bots/${action.botId}/respond`, {
@@ -149,8 +214,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               name: action.name,
               title: action.title,
               description: action.description,
+              personality: action.personality,
+              color: action.color,
               kind: action.kind,
               memberIds: action.memberIds,
+              modelSelection: action.modelSelection,
             }),
           })
             .then(({ bot }) => rawDispatch({ type: "botAdded", bot }))
@@ -167,6 +235,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   name: `${source.name} copy`,
                   title: source.title,
                   description: source.description,
+                  personality: source.personality,
                   notifications: source.notifications,
                   modelSelection: source.modelSelection,
                   ...(source.computer ? { computer: source.computer } : {}),
@@ -278,8 +347,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "runtime": {
           const event = frame.event;
           if (event.type === "content.delta" && event.streamKind === "assistant_text") {
-            rawDispatch({ type: "streamDelta", threadId: event.threadId, delta: event.delta });
+            queueStreamDelta(event.threadId, event.delta);
+          } else if (event.type === "content.delta" && event.streamKind === "reasoning_text") {
+            queueStreamDelta(event.threadId, event.delta, true);
           } else if (event.type === "turn.completed") {
+            flushStream(event.threadId);
             rawDispatch({ type: "streamClear", threadId: event.threadId });
           }
           break;
@@ -293,15 +365,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "bot.deleted":
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
+        case "wipe":
+          rawDispatch({ type: "wipe" });
+          break;
         case "notify":
           if (window.nexbot?.notify) void window.nexbot.notify(frame.title ?? "NexBot", frame.body ?? "");
           break;
         case "stuck":
-          rawDispatch({ type: "error", message: frame.body ?? "A bot is stuck — no progress." });
+          if (frame.botId) {
+            rawDispatch({ type: "botError", botId: frame.botId, message: frame.body ?? "A bot is stuck — no progress." });
+            const previous = botErrorTimers.current.get(frame.botId);
+            if (previous) clearTimeout(previous);
+            botErrorTimers.current.set(frame.botId, setTimeout(() => {
+              botErrorTimers.current.delete(frame.botId);
+              rawDispatch({ type: "clearBotError", botId: frame.botId });
+            }, 6000));
+          } else {
+            rawDispatch({ type: "error", message: frame.body ?? "A bot is stuck — no progress." });
+          }
           if (window.nexbot?.notify) void window.nexbot.notify(frame.name ?? "NexBot", frame.body ?? "");
           break;
         case "warning":
-          rawDispatch({ type: "error", message: frame.body ?? "Stream stalled — no token yet." });
+          if (frame.botId) {
+            rawDispatch({ type: "botError", botId: frame.botId, message: frame.body ?? "Stream stalled — no token yet." });
+            const previous = botErrorTimers.current.get(frame.botId);
+            if (previous) clearTimeout(previous);
+            botErrorTimers.current.set(frame.botId, setTimeout(() => {
+              botErrorTimers.current.delete(frame.botId);
+              rawDispatch({ type: "clearBotError", botId: frame.botId });
+            }, 6000));
+          } else {
+            rawDispatch({ type: "error", message: frame.body ?? "Stream stalled — no token yet." });
+          }
           break;
         case "usage":
           if (frame.botId && frame.usage) {
@@ -329,6 +424,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
       es.close();
+      for (const timer of streamTimers.current.values()) clearTimeout(timer);
+      streamTimers.current.clear();
+      streamBuffers.current.clear();
+      for (const timer of botErrorTimers.current.values()) clearTimeout(timer);
+      botErrorTimers.current.clear();
     };
   }, []);
 

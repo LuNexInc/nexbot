@@ -28,13 +28,16 @@
       <p class="meta"><a id="watch" href="/watch.html">Watch screen</a></p>
     </main>
     <script>
-      const token = new URLSearchParams(location.search).get("token") || "";
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const query = new URLSearchParams(location.search);
+      const token = hash.get("token") || query.get("token") || "";
       let bots = [];
       let selected = new Set();
       const list = document.getElementById("list");
       const status = document.getElementById("status");
       if (!token) status.textContent = "Open this page from App Settings → Phone and chat (signed link).";
-      fetch("/api/bots").then((r) => r.json()).then((d) => {
+      const botsUrl = token ? "/api/steer/bots?token=" + encodeURIComponent(token) : "/api/bots";
+      fetch(botsUrl).then((r) => r.json()).then((d) => {
         bots = (d.bots || []).filter((b) => b.kind !== "group" && !b.hidden);
         list.innerHTML = "";
         bots.forEach((b) => {
@@ -61,7 +64,7 @@
         });
         const body = await res.json().catch(() => ({}));
         status.textContent = res.ok ? "Sent to " + (body.started || []).length + " bot(s)." : (body.error || "failed");
-        document.getElementById("watch").href = "/watch.html?bot=" + (ids[0] || "");
+        document.getElementById("watch").href = "/watch.html?bot=" + encodeURIComponent(ids[0] || "") + (token ? "#token=" + encodeURIComponent(token) : "");
       };
     </script>
   </body>

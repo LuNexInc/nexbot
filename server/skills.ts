@@ -36,6 +36,152 @@ const EMPTY_FIELDS: SkillFields = {
   approval: "",
 };
 
+type BuiltinSkillSpec = {
+  slug: string;
+  name: string;
+  description: string;
+  when: string;
+  steps: string;
+  validate: string;
+  approval?: string;
+};
+
+/** Small role-focused skills that are always available, even before a user
+ * creates or imports a local SKILL.md. */
+const BUILTIN_SKILL_SPECS: readonly BuiltinSkillSpec[] = [
+  {
+    slug: "chief-of-staff-routing",
+    name: "Route work",
+    description: "Triage a request, choose the right NexBot, and keep the owner informed.",
+    when: "A request spans more than one job or needs a clear owner.",
+    steps: "Clarify the outcome, select one specialist, send the smallest useful handoff, then summarize the result.",
+    validate: "The owner knows who owns the next action and what happens next.",
+  },
+  {
+    slug: "decision-briefs",
+    name: "Decision brief",
+    description: "Turn scattered facts into a short decision, options, and recommendation.",
+    when: "The owner needs to choose a path or approve a tradeoff.",
+    steps: "State the decision, list material facts, compare options, recommend one, and name the risk.",
+    validate: "The brief can be acted on without rereading the whole thread.",
+  },
+  {
+    slug: "project-build-plan",
+    name: "Build plan",
+    description: "Break a named project into concrete milestones, files, and next steps.",
+    when: "A project needs a concrete path from idea to working output.",
+    steps: "Define the deliverable, inspect the current state, sequence small milestones, and identify the next test.",
+    validate: "Each milestone has an observable result and a clear owner.",
+  },
+  {
+    slug: "implementation-checklist",
+    name: "Implementation checklist",
+    description: "Keep implementation work focused, testable, and ready for handoff.",
+    when: "Code, files, or configuration must be changed safely.",
+    steps: "Check constraints, make the smallest change, run focused checks, and report residual risk.",
+    validate: "The requested behavior works and the verification result is recorded.",
+  },
+  {
+    slug: "idea-shaping",
+    name: "Shape an idea",
+    description: "Turn a rough idea into a clear concept with audience, purpose, and next move.",
+    when: "A rough thought needs structure before work begins.",
+    steps: "Restate the idea, identify the audience, define the useful outcome, and propose one next experiment.",
+    validate: "The concept is specific enough to draft or test.",
+  },
+  {
+    slug: "creative-brief",
+    name: "Creative brief",
+    description: "Create a concise brief for creative work, including intent, constraints, and references.",
+    when: "A creative task needs direction before drafting.",
+    steps: "Set the objective, audience, tone, required elements, exclusions, and delivery format.",
+    validate: "Another person can start the work from the brief.",
+  },
+  {
+    slug: "source-research",
+    name: "Source research",
+    description: "Find useful sources, check their quality, and keep claims tied to evidence.",
+    when: "A question needs current or niche information.",
+    steps: "Search authoritative sources, compare dates and claims, record links, and separate facts from inference.",
+    validate: "Important claims have a source and uncertainty is visible.",
+  },
+  {
+    slug: "source-briefing",
+    name: "Source briefing",
+    description: "Turn researched material into a concise, sourced briefing.",
+    when: "The owner needs a decision-ready summary from multiple sources.",
+    steps: "Group the evidence, remove repetition, state the conclusion, and attach sources to claims.",
+    validate: "The reader can verify the conclusion without searching again.",
+  },
+  {
+    slug: "message-drafting",
+    name: "Message drafting",
+    description: "Draft clear messages that match the audience, purpose, and requested tone.",
+    when: "A message, email, or outreach note needs to be written.",
+    steps: "Identify the recipient and ask, lead with the purpose, include only needed context, and end with one next action.",
+    validate: "The recipient can understand and answer the message quickly.",
+    approval: "Ask before sending.",
+  },
+  {
+    slug: "follow-up",
+    name: "Follow-up",
+    description: "Track open loops and write short, useful follow-ups.",
+    when: "A conversation or handoff has an unresolved next action.",
+    steps: "Find the last commitment, state what is waiting, set a reasonable date, and keep the note brief.",
+    validate: "The next action and owner are explicit.",
+    approval: "Ask before sending.",
+  },
+  {
+    slug: "process-ops",
+    name: "Process operations",
+    description: "Turn recurring work into a reliable sequence with checks and ownership.",
+    when: "A recurring process is unclear, slow, or easy to forget.",
+    steps: "Map the trigger, inputs, steps, exceptions, owner, and completion signal.",
+    validate: "The process can run twice with the same expected result.",
+  },
+  {
+    slug: "handoff-checklist",
+    name: "Handoff checklist",
+    description: "Make a handoff complete enough for another person or NexBot to continue.",
+    when: "Work moves between people, bots, or sessions.",
+    steps: "State the goal, current state, files or links, decisions, blocker, and exact next action.",
+    validate: "The recipient can continue without asking for missing context.",
+  },
+  {
+    slug: "creative-direction",
+    name: "Creative direction",
+    description: "Set visual direction with a clear hierarchy, constraints, and review criteria.",
+    when: "Visual work needs a consistent direction or refinement pass.",
+    steps: "Set the intent, hierarchy, palette, typography, interaction, and rejection criteria.",
+    validate: "The direction can be reviewed against explicit criteria.",
+  },
+  {
+    slug: "design-review",
+    name: "Design review",
+    description: "Review an interface for clarity, accessibility, hierarchy, and interaction quality.",
+    when: "A screen or flow needs a practical design critique.",
+    steps: "Check the primary action, spacing, states, keyboard path, contrast, and responsive behavior.",
+    validate: "Findings are ordered by user impact and include a concrete fix.",
+  },
+];
+
+export const BUILTIN_SKILLS: readonly SkillRecord[] = BUILTIN_SKILL_SPECS.map((skill) => ({
+  slug: skill.slug,
+  name: skill.name,
+  description: skill.description,
+  path: `builtin:${skill.slug}`,
+  source: "nexbot",
+  fields: {
+    when: skill.when,
+    inputs: "The user's request and the current NexBot workspace state.",
+    steps: skill.steps,
+    validate: skill.validate,
+    output: "A concise result with the next action, if one remains.",
+    approval: skill.approval ?? "Ask before external side effects or deletion.",
+  },
+  valid: true,
+}));
+
 export function slugify(name: string): string {
   const s = name
     .toLowerCase()
@@ -158,13 +304,16 @@ export function listSkills(): SkillRecord[] {
   walkMd(claude, claudeFiles);
   for (const p of claudeFiles) paths.push({ path: p, source: "claude" });
 
-  const seen = new Set<string>();
-  const out: SkillRecord[] = [];
+  const seen = new Set<string>(BUILTIN_SKILLS.map((skill) => skill.slug));
+  const out: SkillRecord[] = [...BUILTIN_SKILLS];
   for (const row of paths) {
     if (seen.has(row.path)) continue;
     seen.add(row.path);
     try {
-      out.push(parseSkillMarkdown(readFileSync(row.path, "utf8"), row.path, row.source));
+      const skill = parseSkillMarkdown(readFileSync(row.path, "utf8"), row.path, row.source);
+      if (seen.has(skill.slug)) continue;
+      seen.add(skill.slug);
+      out.push(skill);
     } catch {
       /* skip unreadable */
     }

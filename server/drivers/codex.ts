@@ -89,7 +89,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // the CLI owns its own ChatGPT login; a leaked API key silently flips
       delete env.OPENAI_API_KEY;
 
-      const child = spawnCli(config.cli, ["app-server"], {
+      const appServerArgs = ["app-server"];
+      if (turn.reasoningEffort && turn.reasoningEffort !== "auto") {
+        const effort = turn.reasoningEffort === "max" ? "high" : turn.reasoningEffort;
+        appServerArgs.push("-c", `model_reasoning_effort=${effort}`);
+      }
+      const child = spawnCli(config.cli, appServerArgs, {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],

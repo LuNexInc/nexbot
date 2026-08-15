@@ -294,7 +294,9 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         <span className="text-[15px] font-semibold text-ink">Computer</span>
         <button
           onClick={() => dispatch({ type: "toggleComputer", open: false })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="pressable flex min-h-11 min-w-11 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+          title="Close Computer panel"
+          aria-label="Close Computer panel"
         >
           <X size={18} />
         </button>

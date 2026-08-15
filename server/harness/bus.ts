@@ -3,10 +3,8 @@
 // into one bus; each event is stamped with its providerInstanceId, teed to
 // a per-thread canonical NDJSON log (the debugging trick both upstream and
 // the server-side message folder).
-import { appendFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { EVENTS_DIR } from "../config.ts";
+import { appendNdjson } from "../event-log.ts";
 import type { ProviderInstance, RuntimeEvent, RuntimeEventListener } from "../contracts.ts";
 
 export class EventBus {
@@ -30,7 +28,7 @@ export class EventBus {
 
   publish(event: RuntimeEvent) {
     try {
-      appendFileSync(join(EVENTS_DIR, `${event.threadId}.ndjson`), JSON.stringify(event) + "\n");
+      appendNdjson(EVENTS_DIR, event.threadId, event);
     } catch {
       /* logging must never take down the stream */
     }
@@ -52,3 +50,4 @@ export class EventBus {
     for (const unsub of this.unsubscribes.splice(0)) unsub();
   }
 }
+

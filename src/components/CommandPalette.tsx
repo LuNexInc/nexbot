@@ -105,7 +105,7 @@ export function CommandPalette({
                 <NexAvatar color={bot.color} name={bot.name} size={28} />
                 <div className="min-w-0 truncate">
                   <div className="text-[14px] font-semibold text-ink truncate">{bot.name}</div>
-                  <div className="text-[12px] text-ink-secondary truncate">{bot.title || bot.description || "Teammate"}</div>
+                  <div className="text-[12px] text-ink-secondary truncate">{bot.title || bot.description || "NexBot"}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -137,5 +137,4 @@ export function CommandPalette({
     </div>
   );
 }
-
 

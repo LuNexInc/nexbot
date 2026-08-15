@@ -12,9 +12,19 @@ export function ExecutionRail({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  // Keep tool execution out of the answer surface. The compact summary still
+  // gives a clear progress signal and lets the user expand the trace on demand.
+  const [collapsed, setCollapsed] = useState(true);
 
-  const toolMessages = messages.filter((m) => m.kind === "activity" && m.tool);
+  // Keep the compact rail scoped to the current turn. Activity rows remain
+  // persisted for search and audit, but old tool traces should not sit below
+  // a new answer forever or add work to the normal chat surface.
+  const lastUserIndex = messages.reduce((last, message, index) => (
+    message.role === "user" && message.kind === "text" ? index : last
+  ), -1);
+  const toolMessages = messages
+    .slice(lastUserIndex + 1)
+    .filter((m) => m.kind === "activity" && m.tool);
   if (toolMessages.length === 0) return null;
 
   const onCopyStdout = async (id: string, text: string) => {
@@ -33,19 +43,18 @@ export function ExecutionRail({
 
   if (collapsed) {
     return (
-      <div className="my-1.5 flex items-center justify-between rounded-xl border border-black/8 bg-black/3 px-3 py-1.5 font-mono text-[11px] text-ink-secondary">
+      <div className="my-1 flex items-center justify-between rounded-xl border border-black/8 bg-black/3 px-2.5 py-1 font-mono text-[11px] text-ink-secondary">
         <div className="flex items-center gap-2 truncate">
           <TerminalIcon size={13} className="shrink-0 text-ink" />
-          <span className="font-semibold text-ink">{toolMessages.length} {toolMessages.length === 1 ? "step" : "steps"} executed</span>
-          <span className="truncate opacity-75">
-            (last: {latest.tool?.name} {latest.tool?.ok ? "✓" : ""})
-          </span>
+          <span className="font-semibold text-ink">{toolMessages.length} {toolMessages.length === 1 ? "step" : "steps"}</span>
+          {latest.tool?.ok && <CheckIcon size={12} className="shrink-0 text-emerald-600" aria-label="Completed" />}
         </div>
         <button
           onClick={() => setCollapsed(false)}
-          className="ml-2 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium hover:bg-black/6 hover:text-ink"
+          className="ml-2 flex min-h-11 items-center gap-1 rounded px-2 font-medium hover:bg-black/6 hover:text-ink"
+          aria-label="Expand execution trace"
         >
-          <span>Expand</span>
+          <span>Details</span>
           <ChevronDown size={12} />
         </button>
       </div>
@@ -83,10 +92,11 @@ export function ExecutionRail({
               Show latest 2
             </button>
           )}
-          <button
-            onClick={() => setCollapsed(true)}
-            className="flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-black/6 hover:text-ink"
+            <button
+              onClick={() => setCollapsed(true)}
+            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 rounded px-1 py-0.5 hover:bg-black/6 hover:text-ink"
             title="Collapse trace"
+            aria-label="Collapse execution trace"
           >
             <ChevronUp size={12} />
           </button>
@@ -169,5 +179,3 @@ export function ExecutionRail({
     </div>
   );
 }
-
-

@@ -158,13 +158,14 @@ export function existsMemory(botId: string): boolean {
 /** System-prompt prefix for a turn. `memory` is already the memoryPrompt
  * string (or "") — callers pass it only when memoryEnabled is true. */
 export function buildPersona(
-  bot: { name: string; title?: string; description?: string },
+  bot: { name: string; title?: string; description?: string; personality?: string },
   parts: { desk: string; memory: string; skills: string },
 ): string {
   return [
     `You are ${bot.name}, a personal bot in NexBot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
+    bot.personality && `Talking style:\n${bot.personality}`,
     parts.desk,
     parts.memory,
     parts.skills,

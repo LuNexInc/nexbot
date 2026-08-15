@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppConfig } from "./config.ts";
-import { DATA_DIR } from "./config.ts";
+import { DATA_DIR, wipePassword } from "./config.ts";
+import { EVENT_LOG_MAX_BYTES, EVENT_LOG_RETAIN_MS, nativeLogEnabled } from "./event-log.ts";
 
-const FALLBACK_VERSION = "0.3.8";
+const FALLBACK_VERSION = "0.3.9";
 
 export function appVersion(): string {
   try {
@@ -25,10 +26,20 @@ export function configStatus(cfg: AppConfig) {
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
     // not a secret — the sidebar shows it
-    profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
+    profile: {
+      name: cfg.profile?.name ?? "",
+      email: cfg.profile?.email ?? "",
+      ...(cfg.profile?.companyName ? { companyName: cfg.profile.companyName } : {}),
+    },
     // app meta for the settings panel (not secrets)
     dataDir: DATA_DIR,
+    wipeConfigured: Boolean(wipePassword()),
     version: appVersion(),
     platform: process.platform,
+    logs: {
+      native: nativeLogEnabled(),
+      maxBytes: EVENT_LOG_MAX_BYTES,
+      retainDays: Math.round(EVENT_LOG_RETAIN_MS / 86_400_000),
+    },
   };
 }

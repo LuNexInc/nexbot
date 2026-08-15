@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Apple light glass / Emil: paper, frost, graphite ink. */
 @theme {
   --animate-panel-in: panel-in 0.2s cubic-bezier(0.23, 1, 0.32, 1);
@@ -43,6 +45,30 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+:root.dark {
+  --color-app: #121519;
+  --color-panel: #1a1e24;
+  --color-raised: #232830;
+  --color-raised-hover: #2b323c;
+  --color-card: #20252c;
+  --color-inset: #171b20;
+  --color-hairline: #ffffff1c;
+  --color-ink: #f2f4f7;
+  --color-ink-secondary: #f2f4f7a6;
+  --color-accent: #a994ff;
+  --color-accent-border: #8b76df;
+  --color-bubble-user: #ffffff12;
+  --color-success: #65d59d;
+  --color-danger: #f17b89;
+  --color-warning: #e5a45d;
+}
+
+.dark body {
+  background:
+    radial-gradient(1000px 650px at 80% -15%, #303949 0%, transparent 62%),
+    var(--color-app);
 }
 
 h1, h2, .display {
@@ -92,8 +118,157 @@ h1, h2, .display {
   box-shadow: inset 0 1px 0 #ffffff, 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
+.dark .glass {
+  background: rgba(31, 36, 44, 0.72);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.dark .glass-floating,
+.dark .glass-heavy {
+  background: rgba(29, 34, 42, 0.86);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 12px 36px -6px rgba(0, 0, 0, 0.38),
+    0 4px 16px -2px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 .pressable {
   transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), opacity 140ms ease;
+}
+
+/* Compact light/dark control, adapted from the referenced sun/moon switch. */
+.theme-toggle {
+  border-color: var(--color-hairline);
+  background: color-mix(in srgb, var(--color-raised) 72%, transparent);
+}
+
+.theme-toggle-track {
+  position: relative;
+  display: inline-flex;
+  width: 40px;
+  height: 22px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-ink) 18%, transparent);
+  border-radius: 999px;
+  background: #d9dde4;
+  transition: background 260ms var(--ease-out), border-color 260ms var(--ease-out), box-shadow 260ms var(--ease-out);
+}
+
+.theme-toggle-orb {
+  position: absolute;
+  left: 2px;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  color: #805d05;
+  background: #fff3a6;
+  box-shadow: 0 1px 4px rgba(44, 38, 8, 0.22);
+  transform: translateX(0) rotate(0deg);
+  transition: transform 360ms cubic-bezier(0.23, 1, 0.32, 1), background 260ms ease, color 260ms ease;
+}
+
+.theme-toggle-sun,
+.theme-toggle-moon {
+  position: absolute;
+  transition: opacity 180ms ease, transform 260ms var(--ease-out);
+}
+
+.theme-toggle-moon {
+  opacity: 0;
+  transform: scale(0.45) rotate(-35deg);
+}
+
+.theme-toggle-spark {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.5);
+  transition: opacity 220ms ease, transform 360ms var(--ease-out);
+}
+
+.theme-toggle-spark-one { left: 25px; top: 5px; }
+.theme-toggle-spark-two { left: 31px; top: 13px; width: 2px; height: 2px; }
+
+.theme-toggle[data-dark="true"] .theme-toggle-track {
+  border-color: rgba(169, 148, 255, 0.48);
+  background: #252c3b;
+  box-shadow: inset 0 0 8px rgba(98, 84, 159, 0.3);
+}
+
+.theme-toggle[data-dark="true"] .theme-toggle-orb {
+  color: #566789;
+  background: #edf1ff;
+  transform: translateX(18px) rotate(180deg);
+  animation: theme-orb-arrive 360ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.theme-toggle[data-dark="true"] .theme-toggle-sun {
+  opacity: 0;
+  transform: scale(0.45) rotate(35deg);
+}
+
+.theme-toggle[data-dark="true"] .theme-toggle-moon {
+  opacity: 1;
+  transform: scale(1) rotate(35deg);
+}
+
+.theme-toggle[data-dark="true"] .theme-toggle-spark {
+  opacity: 0.9;
+  transform: translateY(0) scale(1);
+}
+
+/* Expert is an icon-only header control. Settings supplies the full label and
+   explanation; the checked-state glow gives the compact control a clear state. */
+.expert-toggle-orb {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid color-mix(in srgb, var(--color-ink) 22%, transparent);
+  border-radius: 50%;
+  color: var(--color-ink-secondary);
+  background: color-mix(in srgb, var(--color-ink) 14%, var(--color-raised));
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.25);
+  transition: background 220ms ease, box-shadow 240ms ease, border-color 220ms ease, color 180ms ease;
+}
+
+.expert-toggle[data-active="true"] .expert-toggle-orb {
+  border-color: #b9a6e6;
+  color: #fff;
+  background: #8f78c9;
+  box-shadow:
+    inset 0 0 2px rgba(239, 233, 255, 0.78),
+    0 0 8px rgba(143, 120, 201, 0.55),
+    0 0 22px rgba(143, 120, 201, 0.26);
+  animation: expert-orb-pop 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes theme-orb-arrive {
+  0% { box-shadow: 0 1px 4px rgba(44, 38, 8, 0.22); }
+  55% { box-shadow: 0 0 0 3px rgba(169, 148, 255, 0.18), 0 1px 5px rgba(44, 38, 8, 0.2); }
+  100% { box-shadow: 0 1px 4px rgba(44, 38, 8, 0.22); }
+}
+
+@keyframes expert-orb-pop {
+  0% { transform: scale(0.86); }
+  65% { transform: scale(1.08); }
+  100% { transform: scale(1); }
 }
 @media (hover: hover) and (pointer: fine) {
   .pressable:active {
@@ -113,18 +288,61 @@ h1, h2, .display {
   100% { transform: rotate(360deg) scaleX(1); }
 }
 
+@keyframes scan-beam {
+  from { transform: translateX(-120%); opacity: 0; }
+  to { transform: translateX(360%); opacity: 0.72; }
+}
+
+@keyframes handover-flight {
+  from { transform: translateX(-120%); opacity: 0; }
+  28% { opacity: 0.9; }
+  to { transform: translateX(260%); opacity: 0; }
+}
+
+@keyframes waiting-pulse {
+  0%, 100% { transform: scale(0.78); opacity: 0.48; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes avatar-switch {
+  0% { transform: translateX(-4px) scale(0.98); opacity: 0.72; }
+  100% { transform: translateX(0) scale(1); opacity: 1; }
+}
+
 .animate-spring-pop {
   animation: spring-pop 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-avatar-switch {
+  animation: avatar-switch 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 .animate-orbital {
   animation: orbital-spin 2.8s linear infinite;
 }
 
+.animate-scan-beam {
+  animation: scan-beam 1.2s ease-in-out infinite alternate;
+}
+
+.animate-handover-flight {
+  animation: handover-flight 420ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.animate-waiting-pulse {
+  animation: waiting-pulse 1.8s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-panel-in,
   .animate-spring-pop,
+  .animate-avatar-switch,
   .animate-orbital,
+  .animate-scan-beam,
+  .animate-handover-flight,
+  .animate-waiting-pulse,
+  .theme-toggle-orb,
+  .expert-toggle-orb,
   .pressable {
     animation: none !important;
     transition: none !important;

@@ -1,31 +1,41 @@
 // App-level settings: profile, connection keys, agent CLI status,
 // desktop permissions, About. No third-party product analytics.
-import { Check, ExternalLink, Loader2, Mic, Monitor, Plus, RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Check, ExternalLink, Loader2, Mic, Monitor, Plus, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useStore, type Bot, type InstanceInfo } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { ConnectorsBody } from "./PluginsPanel";
 import { SkillsBody } from "./SkillsPanel";
 import { NexAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
+import { ExpertToggle } from "./ExpertToggle";
+import { ThemeToggle } from "./ThemeToggle";
 
-const APP_VERSION = "0.3.8";
+const APP_VERSION = "0.3.9";
 
-/** Name + email, persisted to /api/config {profile} on blur. */
+/** Profile and workspace brand, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
   const { state, dispatch } = useStore();
   const [name, setName] = useState(state.config?.profile?.name ?? "");
+  const [companyName, setCompanyName] = useState(state.config?.profile?.companyName ?? "");
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
   useEffect(() => {
     setName(state.config?.profile?.name ?? "");
+    setCompanyName(state.config?.profile?.companyName ?? "");
     setEmail(state.config?.profile?.email ?? "");
-  }, [state.config?.profile?.name, state.config?.profile?.email]);
+  }, [state.config?.profile?.name, state.config?.profile?.companyName, state.config?.profile?.email]);
 
   const save = () => {
     void fetch("/api/config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
+      body: JSON.stringify({
+        profile: {
+          name: name.trim(),
+          companyName: companyName.trim(),
+          email: email.trim().toLowerCase(),
+        },
+      }),
     })
       .then((r) => r.json())
       .then((config) => dispatch({ type: "configStatus", config }))
@@ -47,6 +57,16 @@ function ProfileFields() {
         />
       </div>
       <div>
+        <div className="mb-1 text-[12px] text-ink-secondary">Company name</div>
+        <input
+          value={companyName}
+          onChange={(e) => setCompanyName(e.target.value)}
+          onBlur={save}
+          placeholder="LuNex Inc"
+          className={inputClass}
+        />
+      </div>
+      <div>
         <div className="mb-1 text-[12px] text-ink-secondary">Email</div>
         <input
           type="email"
@@ -56,6 +76,23 @@ function ProfileFields() {
           placeholder="you@example.com"
           className={inputClass}
         />
+      </div>
+    </div>
+  );
+}
+
+function ExpertModeSection() {
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[15px] font-medium text-ink">Expert mode</div>
+          <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+            Show reasoning, tool activity, steps, teammate handoffs, and performance details in chat.
+            Turn it off for answer-first conversations.
+          </div>
+        </div>
+        <ExpertToggle className="shrink-0" />
       </div>
     </div>
   );
@@ -130,13 +167,15 @@ function ProvidersSection() {
                       ]
                         .filter(Boolean)
                         .join(" · ") || "Available"
-                    : row.snapshot.reason || "Unavailable"}
+                    : row.snapshot.reason
+                      ? `Optional · ${row.snapshot.reason}`
+                      : "Optional · not configured"}
                 </div>
               </div>
               {ok ? (
                 <Check size={14} className="mt-1 shrink-0 text-success" />
               ) : (
-                <span className="mt-0.5 text-[11px] text-ink-secondary">off</span>
+                <span className="mt-0.5 text-[11px] text-ink-secondary">optional</span>
               )}
             </div>
           );
@@ -321,9 +360,10 @@ function SteerSection() {
     <div className="mt-4 rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Phone and chat</div>
       <div className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">
-        Signed link for /m.html. Discord or Telegram can POST /api/steer/jobs with this Bearer
-        token. This PC must stay on. Default bind is 127.0.0.1. Set NEXBOT_BIND=0.0.0.0 only if
-        you want LAN and you keep this token private.
+        Signed link for /m.html (token lives in the URL hash, not the query string). Discord or
+        Telegram can POST /api/steer/jobs with this Bearer token. This PC must stay on. Default
+        bind is 127.0.0.1. Set NEXBOT_BIND=0.0.0.0 only for LAN — non-local /api calls then need
+        this steer token (phone) or the harness token in ~/.nexbot/harness.json.
       </div>
       <code className="mt-3 block break-all rounded-lg bg-inset px-2.5 py-2 text-[11px] text-ink">
         {href || "…"}
@@ -379,8 +419,10 @@ function AboutSection() {
         </div>
         <div className="pt-1 text-[12px] leading-relaxed">
           No product analytics are shipped.
-          Phone assign needs the signed <code className="text-ink">/m.html?token=…</code> link
-          in Phone &amp; chat below. Closing the window keeps the tray. Quit stops work. Enable
+          Phone assign needs the signed <code className="text-ink">/m.html#token=…</code> link
+          in Phone &amp; chat. Event logs rotate at 5 MB and drop after 14 days.
+          Set <code className="text-ink">NEXBOT_NATIVE_LOG=0</code> to stop the protocol tee.
+          Closing the window keeps the tray. Quit stops work. Enable
           &ldquo;Keep this PC as the host&rdquo; so a reboot starts NexBot again.
         </div>
         <a
@@ -392,6 +434,124 @@ function AboutSection() {
           Source on GitHub <ExternalLink size={12} />
         </a>
       </div>
+    </div>
+  );
+}
+
+function WipeSection() {
+  const { dispatch, state } = useStore();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const configured = state.config?.wipeConfigured === true;
+
+  const close = () => {
+    if (busy) return;
+    setOpen(false);
+    setPassword("");
+    setConfirmation("");
+    setError(null);
+    setMessage(null);
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/wipe", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-nexbot-wipe-password": password,
+        },
+        body: JSON.stringify({ confirmation }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string; summary?: { bots?: number; messages?: number } };
+      if (!response.ok) throw new Error(body.error || "NexBot could not wipe local data.");
+      dispatch({ type: "wipe" });
+      setMessage(`Wiped ${body.summary?.bots ?? 0} bots and ${body.summary?.messages ?? 0} messages.`);
+      setPassword("");
+      setConfirmation("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-xl border border-danger/30 bg-card p-4">
+      <div className="flex items-start gap-3">
+        <ShieldAlert size={18} className="mt-0.5 shrink-0 text-danger" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-medium text-ink">Wipe local data</div>
+          <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+            Deletes saved bots, chats, task files, memory, event logs, and schedules. Settings, credentials, and custom skills stay.
+          </div>
+        </div>
+      </div>
+      {!open ? (
+        <button
+          type="button"
+          disabled={!configured}
+          onClick={() => setOpen(true)}
+          className="mt-3 min-h-11 w-full rounded-lg border border-danger/40 px-3 py-2 text-[13px] font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Open wipe local data confirmation"
+        >
+          {configured ? "Wipe local data…" : "Wipe protection is not configured"}
+        </button>
+      ) : (
+        <form onSubmit={submit} className="mt-3 flex flex-col gap-3">
+          <div className="rounded-lg bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary">
+            This action cannot be undone. Enter the wipe password and type <span className="font-semibold text-ink">WIPE</span>.
+          </div>
+          <label className="flex flex-col gap-1 text-[12px] text-ink-secondary">
+            Wipe password
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="min-h-11 rounded-lg border border-hairline/40 bg-inset px-3 text-[14px] text-ink focus:border-danger focus:outline-none"
+              disabled={busy}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[12px] text-ink-secondary">
+            Type WIPE to confirm
+            <input
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              className="min-h-11 rounded-lg border border-hairline/40 bg-inset px-3 text-[14px] uppercase tracking-[0.18em] text-ink focus:border-danger focus:outline-none"
+              disabled={busy}
+              spellCheck={false}
+            />
+          </label>
+          {error && <div role="alert" className="text-[12px] text-danger">{error}</div>}
+          {message && <div role="status" className="text-[12px] text-success">{message}</div>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={close}
+              disabled={busy}
+              className="min-h-11 flex-1 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !password || confirmation !== "WIPE"}
+              className="min-h-11 flex-1 rounded-lg bg-danger px-3 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={15} className="mx-auto animate-spin" /> : "Wipe now"}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
@@ -467,12 +627,12 @@ function TeamSetupSection() {
       <div className="mt-4 rounded-xl bg-card p-4">
         <div className="text-[15px] font-medium text-ink">Desk roster</div>
         <div className="mt-0.5 text-[13px] text-ink-secondary">
-          Local teammates on this PC. Same list as the sidebar.
+          Local NexBots on this PC. Same list as the sidebar.
         </div>
         <div className="mt-3 flex flex-col gap-2">
           {roster.length === 0 && (
             <div className="rounded-lg bg-inset px-3 py-3 text-[13px] text-ink-secondary">
-              No teammates yet. Add one from the sidebar.
+              No NexBots yet. Add one from the sidebar.
             </div>
           )}
           {roster.map((bot) => (
@@ -492,8 +652,8 @@ function TeamSetupSection() {
         <div className="mt-3 flex items-start gap-2 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">
           <Plus size={14} className="mt-0.5 shrink-0 text-ink" />
           <span>
-            Add a teammate with the <span className="text-ink">+</span> button in the sidebar
-            (Meet a teammate). That is the only create path — Team Setup does not add a second one.
+            Add a NexBot with the <span className="text-ink">+</span> button in the sidebar
+            (Add a NexBot). That is the only create path — Team Setup does not add a second one.
           </span>
         </div>
       </div>
@@ -513,21 +673,18 @@ function AppearanceSection() {
     <div className="mt-2 rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Appearance</div>
       <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-        Light glass is the look. Dark is not shipped.
+        Choose Light or Dark. The choice stays on this device.
       </div>
       <div
         className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-hairline/40 bg-raised px-3 py-2.5"
-        aria-current="true"
       >
         <div className="min-w-0">
-          <span className="inline-flex rounded-full bg-black/8 px-3 py-1 text-[13px] font-medium text-ink">
-            Light
-          </span>
+          <div className="text-[13px] font-medium text-ink">Color theme</div>
           <div className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
-            Paper frost, white glass, graphite ink. There is no System or Dark switch.
+            Paper frost in Light, deeper surfaces and softer contrast in Dark.
           </div>
         </div>
-        <span className="shrink-0 text-[11px] text-ink-secondary">on</span>
+        <ThemeToggle compact={false} className="shrink-0" />
       </div>
     </div>
   );
@@ -592,6 +749,7 @@ export function AppSettingsPanel() {
                     <ProfileFields />
                   </div>
                 </div>
+                <ExpertModeSection />
                 <KeepaliveSection />
                 <SteerSection />
                 <div className="mt-4 rounded-xl bg-card p-4">
@@ -626,6 +784,7 @@ export function AppSettingsPanel() {
                 <ComputerUseSection />
                 <DesktopPermissions />
                 <AboutSection />
+                <WipeSection />
               </>
             )}
             {tab === "team" && <TeamSetupSection />}

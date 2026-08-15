@@ -5,7 +5,7 @@ import { type Skill } from "./SkillsPanel";
 import { NexAvatar } from "./Avatar";
 import { LiveScreenPreview, RoutinesCard } from "./ComputerPanel";
 import { ChannelsCard } from "./ChannelsCard";
-import { NEX_COLORS, NEX_COLOR_NAMES } from "@/lib/mascot";
+import { NEX_COLORS, NEX_PASTELS, NEX_COLOR_NAMES } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
 
@@ -44,7 +44,7 @@ function GroupMembers({
     <div className="rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Members</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
-        {members.length} of 6 teammates. Shared transcript.
+        {members.length} of 6 NexBots. Shared transcript.
       </div>
       <div className="mt-2 flex flex-col gap-1.5">
         {members.map((id) => {
@@ -69,11 +69,11 @@ function GroupMembers({
       </div>
       {members.length < 6 && (
         <div className="mt-3">
-          <div className="text-[12px] font-medium text-ink-secondary">Add teammate</div>
+          <div className="text-[12px] font-medium text-ink-secondary">Add NexBot</div>
           <div className="mt-1.5 flex flex-col gap-1">
             {addable.length === 0 && (
               <div className="rounded-lg bg-inset px-2.5 py-2 text-[13px] text-ink-secondary">
-                No other teammates to add.
+                No other NexBots to add.
               </div>
             )}
             {addable.map((b) => (
@@ -177,17 +177,45 @@ function AgentSkills({
 const inputCls =
   "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
 
-export function SettingsPanel({ bot }: { bot: Bot }) {
+const TALKING_STYLE_PRESETS = [
+  {
+    id: "recommended",
+    label: "Recommended default",
+    value:
+      "Warm, direct, concise, and human. Use plain language and natural contractions. Answer first. Ask one short question when needed.",
+  },
+  {
+    id: "direct",
+    label: "Direct and concise",
+    value:
+      "Clear, calm, and concise. Lead with the result. Use concrete words and short sentences.",
+  },
+  {
+    id: "conversational",
+    label: "Warm and conversational",
+    value:
+      "Friendly, natural, and easy to talk to. Use contractions, explain unfamiliar terms, and keep the conversation moving.",
+  },
+] as const;
+
+export function SettingsPanel({
+  bot,
+  initialPage = "overview",
+}: {
+  bot: Bot;
+  initialPage?: "overview" | "identity";
+}) {
   const { dispatch } = useStore();
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings">
+      Pick<Bot, "name" | "title" | "description" | "personality" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings">
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const [profile, setProfile] = useState("");
   const [log, setLog] = useState("");
   const [desk, setDesk] = useState("");
-  const [page, setPage] = useState<"overview" | "identity">("overview");
+  const [page, setPage] = useState<"overview" | "identity">(initialPage);
+  const selectedTalkingStylePreset = TALKING_STYLE_PRESETS.find((preset) => preset.value === bot.personality)?.id ?? (bot.personality ? "custom" : "");
   const saveMemory = (patch: { enabled?: boolean; profile?: string; log?: string }) => {
     void fetch(`/api/bots/${bot.id}/memory`, {
       method: "PUT",
@@ -199,6 +227,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       }),
     });
   };
+  useEffect(() => {
+    setPage(initialPage);
+  }, [bot.id, initialPage]);
   useEffect(() => {
     fetch(`/api/bots/${bot.id}/memory`)
       .then((r) => r.json())
@@ -267,7 +298,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         <div className="flex flex-col gap-4">
           <div className="overflow-hidden rounded-xl border border-black/10 bg-black/4">
             <div className="flex items-center justify-between border-b border-black/10 px-3 py-2.5">
-              <span className="text-[14px] font-medium text-ink">Mark</span>
+              <span className="text-[14px] font-medium text-ink">Bot color</span>
               <button
                 onClick={() => patch({ color: "green", mascotExpression: null })}
                 className="pressable rounded-md px-2 py-1.5 text-[13px] text-ink-secondary hover:bg-black/8 hover:text-ink"
@@ -278,21 +309,30 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
             <div className="p-3">
               <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-                Color
+                Pastel background
               </div>
-              <div className="flex flex-wrap gap-2.5">
+              <div className="grid grid-cols-5 gap-1 sm:grid-cols-10">
                 {NEX_COLOR_NAMES.map((color) => (
                   <button
                     key={color}
+                    type="button"
                     onClick={() => patch({ color })}
                     className={cn(
-                      "pressable size-8 rounded-full border border-black/15",
+                      "pressable flex min-h-11 min-w-0 w-full items-center justify-center rounded-full border border-transparent",
                       bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-panel",
                     )}
-                    style={{ backgroundColor: NEX_COLORS[color] }}
                     title={color}
-                    aria-label={`Use ${color} disc color`}
-                  />
+                    aria-label={`Use ${color} pastel background`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="size-8 rounded-full border border-black/15"
+                      style={{
+                        backgroundColor: NEX_PASTELS[color],
+                        boxShadow: `inset 0 0 0 2px ${NEX_COLORS[color]}55`,
+                      }}
+                    />
+                  </button>
                 ))}
               </div>
             </div>
@@ -320,6 +360,32 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               value={bot.description}
               onChange={(e) => patch({ description: e.target.value })}
             />
+          </Field>
+          <Field label="Talking style">
+            <select
+              value={selectedTalkingStylePreset}
+              onChange={(e) => {
+                const preset = TALKING_STYLE_PRESETS.find((option) => option.id === e.target.value);
+                patch({ personality: preset?.value ?? "" });
+              }}
+              className={cn(inputCls, "mb-2")}
+              aria-label="Talking style preset"
+            >
+              <option value="">Choose a talking style…</option>
+              {TALKING_STYLE_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.label}</option>
+              ))}
+              {selectedTalkingStylePreset === "custom" && <option value="custom">Custom</option>}
+            </select>
+            <textarea
+              className={cn(inputCls, "min-h-[112px] resize-y")}
+              placeholder="Choose a talking style or write your own. Leave blank for work-focused specialists."
+              value={bot.personality ?? ""}
+              onChange={(e) => patch({ personality: e.target.value })}
+            />
+            <div className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
+              Optional voice guidance. Leave this blank when the bot should focus on role and skills.
+            </div>
           </Field>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
@@ -422,7 +488,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
                     {bot.name.toLowerCase() === "luna" || bot.title.toLowerCase().includes("chief of staff")
                       ? "Luna takes the lead when tasks change and sends completion reports."
-                      : "This teammate acts when a task changes or needs follow-up."}
+                      : "This NexBot acts when a task changes or needs follow-up."}
                   </div>
                 </div>
                 <button

@@ -24,7 +24,10 @@
       <div class="empty" id="empty">This PC screen will show here when the bot works.</div>
     </div>
     <script>
-      const botId = new URLSearchParams(location.search).get("bot") || "";
+      const query = new URLSearchParams(location.search);
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const botId = query.get("bot") || "";
+      const token = hash.get("token") || query.get("token") || "";
       const nameEl = document.getElementById("name");
       const metaEl = document.getElementById("meta");
       const img = document.getElementById("frame");
@@ -35,7 +38,8 @@
         empty.hidden = true;
         metaEl.textContent = "live";
       }
-      fetch("/api/bots").then((r) => r.json()).then((d) => {
+      const botsUrl = token ? "/api/steer/bots?token=" + encodeURIComponent(token) : "/api/bots";
+      fetch(botsUrl).then((r) => r.json()).then((d) => {
         const bot = (d.bots || []).find((b) => b.id === botId) || (d.bots || [])[0];
         if (bot) {
           nameEl.textContent = bot.name + " · this PC";
@@ -43,7 +47,7 @@
           if (last) show("data:" + (last.mime || "image/png") + ";base64," + last.png);
         }
       }).catch(() => {});
-      const es = new EventSource("/api/events");
+      const es = new EventSource(token ? "/api/events?token=" + encodeURIComponent(token) : "/api/events");
       es.onmessage = (raw) => {
         let frame;
         try { frame = JSON.parse(raw.data); } catch { return; }

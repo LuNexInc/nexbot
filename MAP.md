@@ -30,6 +30,8 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 | Settled choices | `DECISIONS.md` |
 | License | `LICENSE` |
 | Harness HTTP + SSE | `server/index.ts` |
+| Turn recovery | `server/jobs.ts` + `server/recovery.ts` — SQLite job rows, provider checkpoints, Resume/Retry cards |
+| Agent coordination | `server/task-context.ts` — equal bot delegation with bounded task scope |
 | Busy second message | `POST /api/bots/:id/messages` while busy is **409 drop** (`the bot is already working — interrupt it first`); interrupt to replace, not queue |
 | Last CoS | `DELETE /api/bots/:id` of the only Luna/Chief of Staff is **409**; `PATCH hidden: true` on that seat is **400**; groups cannot take the CoS name |
 | Config / data dir | `server/config.ts` → `~/.nexbot` |

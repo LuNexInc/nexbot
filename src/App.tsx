@@ -65,8 +65,8 @@ function Shell() {
             <>
               <div className="text-[15px] font-medium text-ink">No bots yet</div>
               <p className="max-w-[380px] text-center text-[14px] leading-relaxed">
-                The desk starts with Chief of Staff and Research. Use the sidebar
-                plus (Meet a teammate) to add more.
+                The desk is ready for NexBots. Use the sidebar plus (Add a NexBot)
+                to choose Chief of Staff, six specialist roles, or a custom role.
               </p>
               <button
                 type="button"
@@ -76,11 +76,12 @@ function Shell() {
                     name: "Research",
                     title: "Research & briefings",
                     description: "Find sources and write concise briefings. Leave useful notes in your desk.",
+                    color: "blue",
                   })
                 }
                 className="pressable rounded-lg bg-ink px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90"
               >
-                Add Research
+                Add Research NexBot
               </button>
             </>
           ) : (
@@ -94,7 +95,7 @@ function Shell() {
           )}
         </main>
       )}
-      {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
+      {state.settingsOpen && bot && <SettingsPanel bot={bot} initialPage={state.settingsPage} />}
       {state.computerOpen && bot && <ComputerPanel bot={bot} />}
       {bot && <ComputerHUD bot={bot} />}
       {state.appSettingsOpen && <AppSettingsPanel />}

@@ -1,4 +1,5 @@
 // Small HTTP helpers shared by the harness server.
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
@@ -20,7 +21,7 @@ export function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
-export function readBody(req: IncomingMessage): Promise<any> {
+export function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (c) => {
@@ -29,13 +30,37 @@ export function readBody(req: IncomingMessage): Promise<any> {
     });
     req.on("end", () => {
       try {
-        resolve(data ? JSON.parse(data) : {});
+        const parsed = data ? JSON.parse(data) : {};
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          resolve({});
+          return;
+        }
+        resolve(parsed as Record<string, unknown>);
       } catch {
         reject(new Error("invalid JSON body"));
       }
     });
     req.on("error", reject);
   });
+}
+
+export function headerSecret(req: IncomingMessage): string {
+  const h = req.headers["x-nexbot-secret"];
+  return Array.isArray(h) ? (h[0] ?? "") : (h ?? "");
+}
+
+export function secretsMatch(expected: string, provided: string): boolean {
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function repoMatches(filter: string, body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const repo = (body as { repository?: { full_name?: unknown } }).repository;
+  const name = typeof repo?.full_name === "string" ? repo.full_name : "";
+  return name.toLowerCase() === filter.toLowerCase();
 }
 
 /** Serve a static file from `staticDir`, with SPA fallback to index.html. */

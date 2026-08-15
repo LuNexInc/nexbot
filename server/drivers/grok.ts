@@ -10,6 +10,7 @@ import type {
   ProviderSnapshot,
   RuntimeEvent,
   RuntimeEventListener,
+  ReasoningEffort,
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
@@ -33,6 +34,13 @@ const MODELS = {
     { id: "grok-3-mini", label: "Grok 3 Mini" },
   ],
 };
+
+// xAI's reasoning control is a two-step budget. Keep the shared picker useful
+// across providers by mapping the middle/deepest choices to the high budget.
+function grokReasoningEffort(value: ReasoningEffort | undefined): "low" | "high" | undefined {
+  if (!value || value === "auto") return undefined;
+  return value === "low" ? "low" : "high";
+}
 
 export interface GrokConfig {
   url: string;
@@ -90,6 +98,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
         tools?: unknown[];
         onDelta?: (d: string) => void;
         onReasoning?: (d: string) => void;
+        reasoningEffort?: ReasoningEffort;
       },
     ): Promise<CompleteResult> => {
       const wired = mergeConsecutiveAssistant(messages);
@@ -101,6 +110,9 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
           messages: wired,
           stream: opts.stream,
           ...(opts.tools?.length ? { tools: opts.tools } : {}),
+          ...(grokReasoningEffort(opts.reasoningEffort)
+            ? { reasoning_effort: grokReasoningEffort(opts.reasoningEffort) }
+            : {}),
         }),
         signal: opts.signal ?? AbortSignal.timeout(120_000),
       });
@@ -209,6 +221,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
               stream: true,
               signal: abort.signal,
               tools,
+              reasoningEffort: turn.reasoningEffort,
               onDelta: (delta) =>
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta }),
               onReasoning: (delta) =>

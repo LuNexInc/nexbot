@@ -3,12 +3,13 @@
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
 import { mkdirSync } from "node:fs";
-import { deleteThread, importJsonIfNeeded, loadBotsFromDb, loadMessagesFromDb, openStoreDb, persistBots, persistMessages } from "./db.ts";
+import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { ensureDesk, writeProfile } from "./desk.ts";
-import { ROLE_CARD_OPTIONS, TEAM_SEEDS, SLEEP_WARNING, teammateGreeting, isChiefOfStaffRole } from "./roles.ts";
+import { defaultSkillSlugsForBot, ROLE_CARD_OPTIONS, TEAM_SEEDS, SLEEP_WARNING, teammateGreeting, isChiefOfStaffRole } from "./roles.ts";
+import { removeJobsForBot } from "./jobs.ts";
 
 export type NexColor =
   | "green"
@@ -51,6 +52,10 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
+  /** Provider reasoning summary, kept out of the main answer bubble. */
+  reasoning?: string;
+  /** Turn effort metrics shown in the collapsed reasoning disclosure. */
+  effort?: TurnEffort;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
   tool?: { name: string; ok?: boolean };
@@ -59,11 +64,22 @@ export interface Message {
   mime?: string;
   /** teammate speaking in this thread (ask_bot / A2A) */
   fromBot?: { id: string; name: string; color?: string };
+  /** why an internal message was added to the transcript */
+  source?: "user" | "agent" | "routine" | "proactive" | "completion";
   at: number;
   /** client nonce for optimistic send and deduplication */
   clientNonce?: string;
   /** delivery status for optimistic UI */
   status?: "pending" | "confirmed" | "failed";
+}
+
+export interface TurnEffort {
+  durationMs?: number;
+  reasoningTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  toolCount?: number;
+  cost?: number | null;
 }
 
 export interface BotRecord {
@@ -72,6 +88,8 @@ export interface BotRecord {
   name: string;
   title: string;
   description: string;
+  /** Optional talking-style guidance layered into the bot persona. */
+  personality?: string;
   notifications: boolean;
   color: NexColor;
   mascotExpression?: NexExpression | null;
@@ -95,6 +113,12 @@ export interface BotRecord {
   usage?: { input: number; output: number };
   /** Time to first token in milliseconds from last turn */
   lastTtfrMs?: number;
+  /** Allow task events to wake this agent without a user prompt. */
+  proactiveEnabled?: boolean;
+  /** Send this bot's completed-task reports to the Chief of Staff. */
+  completionPings?: boolean;
+  /** Stable specialist order in the sidebar. Chief of Staff is always first. */
+  sortOrder?: number;
   createdAt: number;
 }
 
@@ -131,34 +155,39 @@ export function mentionedBots<T extends { name: string; hidden?: boolean }>(text
   return found;
 }
 
-export const TRANSCRIPT_WINDOW = 30;
-export const TRANSCRIPT_TEXT_CAP = 4_000;
+// Keep provider replay small. Full history remains in SQLite and the local
+// conversation archive; this is only the active prompt window.
+export const TRANSCRIPT_WINDOW = 12;
+export const TRANSCRIPT_TEXT_CAP = 3_000;
 
-/** Last-30 text turns for sendTurn. Cap each body so a huge paste cannot blow context,
+/** Last-12 text turns for sendTurn. Cap each body so a huge paste cannot blow context,
  * without shrinking the window. */
 export function clipForTurn(
   messages: Pick<Message, "kind" | "role" | "fromBot" | "text">[],
+  options: { window?: number; textCap?: number } = {},
 ): { role: "user" | "assistant"; text: string }[] {
+  const window = Number.isFinite(options.window) ? Math.max(1, Math.floor(options.window!)) : TRANSCRIPT_WINDOW;
+  const textCap = Number.isFinite(options.textCap) ? Math.max(1, Math.floor(options.textCap!)) : TRANSCRIPT_TEXT_CAP;
   return messages
     .filter((m) => m.kind === "text" && (m.text ?? "").trim())
-    .slice(-TRANSCRIPT_WINDOW)
+    .slice(-window)
     .map((m) => {
       const raw = m.text ?? "";
       return {
         role: (m.role === "user" && !m.fromBot ? "user" : "assistant") as "user" | "assistant",
-        text: raw.length > TRANSCRIPT_TEXT_CAP ? raw.slice(0, TRANSCRIPT_TEXT_CAP) : raw,
+        text: raw.length > textCap ? raw.slice(0, textCap) : raw,
       };
     });
 }
 
 const onboardingCard = (): OptionCardData => ({
-  title: "What is this teammate's job?",
-  subtitle: "Pick a job, not a model. You can change the name later.",
+  title: "What is this NexBot's job?",
+  subtitle: "Pick a role, not a model. You can change the name later.",
   options: [...ROLE_CARD_OPTIONS],
 });
 
 export type CreateBotSpec = Partial<
-  Pick<BotRecord, "name" | "title" | "description" | "color" | "kind" | "memberIds">
+  Pick<BotRecord, "name" | "title" | "description" | "personality" | "color" | "kind" | "memberIds" | "modelSelection" | "enabledSkillSlugs">
 >;
 
 
@@ -244,22 +273,53 @@ export class Store {
     openStoreDb();
     importJsonIfNeeded();
     this.bots = loadBotsFromDb();
-    // busy never survives a restart — no turn does either.
+    // busy never survives a restart. Provider cursors do: recovery uses them
+    // to resume a job that was active when the process exited.
     // unread DOES: persistBots writes the whole BotRecord; do not strip it here.
+    let defaultsChanged = false;
     for (const b of this.bots) {
       b.busy = false;
-      b.resumeCursors = {};
+      if (b.sortOrder === undefined) {
+        b.sortOrder = this.bots.indexOf(b);
+        defaultsChanged = true;
+      }
+      if (!b.resumeCursors || typeof b.resumeCursors !== "object") {
+        b.resumeCursors = {};
+        defaultsChanged = true;
+      }
+      const legacy = b as BotRecord & { proactiveIntervalMinutes?: unknown; proactiveLastAt?: unknown };
+      if ("proactiveIntervalMinutes" in legacy || "proactiveLastAt" in legacy) {
+        delete legacy.proactiveIntervalMinutes;
+        delete legacy.proactiveLastAt;
+        defaultsChanged = true;
+      }
+      if (b.proactiveEnabled === undefined) {
+        b.proactiveEnabled = b.kind !== "group";
+        defaultsChanged = true;
+      }
+      if (b.completionPings === undefined) {
+        b.completionPings = b.kind !== "group";
+        defaultsChanged = true;
+      }
+      if (b.enabledSkillSlugs === undefined) {
+        const defaults = defaultSkillSlugsForBot(b.name, b.title);
+        if (defaults) {
+          b.enabledSkillSlugs = defaults;
+          defaultsChanged = true;
+        }
+      }
     }
+    if (defaultsChanged) this.saveBots();
     this.messages = loadMessagesFromDb();
-  }
-
-  private saveMessages(threadId: string) {
-    const bot = this.botByThread(threadId);
-    persistMessages(threadId, this.messages.get(threadId) ?? [], bot?.id);
   }
 
   private saveBots() {
     persistBots(this.bots);
+  }
+
+  clearAll(): void {
+    this.bots = [];
+    this.messages.clear();
   }
 
   messagesFor(threadId: string): Message[] {
@@ -274,7 +334,8 @@ export class Store {
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const full: Message = { id: newId(), at: Date.now(), ...message };
     this.messagesFor(threadId).push(full);
-    this.saveMessages(threadId);
+    const bot = this.botByThread(threadId);
+    appendMessageToDb(threadId, full, bot?.id);
     return full;
   }
 
@@ -283,7 +344,7 @@ export class Store {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
     list[idx] = { ...list[idx], ...patch, card: patch.card ?? list[idx].card };
-    this.saveMessages(threadId);
+    patchMessageInDb(threadId, list[idx]);
     return list[idx];
   }
 
@@ -300,6 +361,7 @@ export class Store {
   }
 
   createBot(spec?: CreateBotSpec): BotRecord {
+    clearExplicitWipeMarker();
     const isGroup = spec?.kind === "group";
     let name = spec?.name?.trim() || (isGroup ? "Team" : "New Bot");
     let title = spec?.title?.trim() || (isGroup ? "Group thread" : "");
@@ -313,13 +375,20 @@ export class Store {
       name,
       title,
       description: spec?.description?.trim() || "",
+      personality: spec?.personality?.trim() || undefined,
       notifications: true,
       color: spec?.color ?? COLORS[this.bots.length % COLORS.length],
       computer: isGroup ? "off" : "local",
-      memoryEnabled: false,
+      // The Chief of Staff is the continuity layer. Keep its durable memory
+      // on by default so a short active context never becomes lost history.
+      memoryEnabled: isChiefOfStaffName(name, title),
+      enabledSkillSlugs: spec?.enabledSkillSlugs ?? defaultSkillSlugsForBot(name, title),
       unread: false,
-      modelSelection: this.defaultSelection(),
+      modelSelection: spec?.modelSelection ?? this.defaultSelection(),
       resumeCursors: {},
+      proactiveEnabled: !isGroup,
+      completionPings: !isGroup,
+      sortOrder: this.bots.reduce((max, item) => Math.max(max, item.sortOrder ?? -1), -1) + 1,
       kind: isGroup ? "group" : "bot",
       memberIds: isGroup ? members : undefined,
       createdAt: Date.now(),
@@ -360,6 +429,7 @@ export class Store {
     this.messages.delete(bot.threadId);
     this.saveBots();
     deleteThread(bot.threadId);
+    removeJobsForBot(id);
     return true;
   }
 
@@ -379,24 +449,33 @@ export class Store {
       if (next.name !== undefined) next.name = unique.name;
       if (next.title !== undefined) next.title = unique.title;
     }
+    if (next.personality !== undefined) next.personality = String(next.personality).trim().slice(0, 4000) || undefined;
+    if (next.sortOrder !== undefined) {
+      const order = Number(next.sortOrder);
+      next.sortOrder = Number.isFinite(order) ? Math.max(0, Math.floor(order)) : bot.sortOrder;
+    }
     Object.assign(bot, next);
     this.saveBots();
     return bot;
   }
 
-  setResumeCursor(_botId: string, _instanceId: string, _cursor: unknown) {
-    /* history off — do not persist provider sessions */
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown) {
+    const bot = this.bot(botId);
+    if (!bot) return;
+    bot.resumeCursors = { ...(bot.resumeCursors ?? {}), [instanceId]: cursor };
+    this.saveBots();
   }
 
   /** First-run seed: Chief of Staff + Research. Never wipes an existing roster. */
   seedIfEmpty() {
-    if (this.bots.length) return;
+    if (this.bots.length || wasExplicitlyWiped()) return;
     this.ensureTeamSeeds();
   }
 
   /** Add Chief of Staff + Research if missing. Never deletes or renames existing bots.
    * Skip CoS when any bot already holds that seat (Luna, name, or title). */
   ensureTeamSeeds() {
+    if (wasExplicitlyWiped()) return;
     for (const spec of [...TEAM_SEEDS].reverse()) {
       const exists = this.bots.some((b) => {
         if (b.kind === "group") return false;
@@ -412,6 +491,13 @@ export class Store {
       });
       this.patchBot(bot.id, { memoryEnabled: true });
       writeProfile(bot.id, spec.description);
+    }
+    // Existing workspaces may have been created before CoS memory became the
+    // default. Migrate that one continuity seat without changing specialists.
+    for (const bot of this.bots) {
+      if (bot.kind !== "group" && isChiefOfStaffName(bot.name, bot.title) && !bot.memoryEnabled) {
+        this.patchBot(bot.id, { memoryEnabled: true });
+      }
     }
   }
 }

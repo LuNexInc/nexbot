@@ -15,8 +15,8 @@ Telegram-style UI where each chat is a local AI agent CLI (Claude Code, Codex, G
 ## Hard product rules
 
 1. **No shipped third-party analytics** without Charles's explicit OK (PostHog was stripped).
-2. **Secrets only in** `~/.nexbot/config.json` or env — never commit keys.
-3. **Harness binds 127.0.0.1 only.** Do not open it to LAN without auth design.
+2. **Secrets** live encrypted in `~/.nexbot/config.json` (wrapping key `master.key`) or env — never commit keys, never echo them.
+3. **Harness binds 127.0.0.1 by default.** Off-loopback bind requires the harness token (or steer token on the phone surface). Do not open LAN without that.
 4. **LICENSE** copyright is © 2026 LuNex Inc. Do not put third-party product names in the UI, README, or About panel.
 5. **Windows is supported** for harness + Electron shell + NSIS/portable packages. Local CUA uses installed/bundled `cua-driver` (trycua) on Windows, macOS, and Linux.
 6. Follow root workspace `AGENTS.md` (handoff, STE writing, no `git add -A`).

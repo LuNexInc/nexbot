@@ -1,15 +1,23 @@
 // Model picker: an instance rail + model list, backed by /api/instances.
 // Routing is by exact instanceId only — an entry is never inferred from a
-// driver kind, and unavailable instances render disabled with the reason.
+// driver kind, and optional unconfigured instances render disabled with the reason.
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { useStore, type Bot, type InstanceInfo } from "@/state/store";
+import { useStore, type Bot, type InstanceInfo, type ReasoningEffort } from "@/state/store";
 import { ProviderMark } from "./ProviderIcons";
 import { cn } from "@/lib/cn";
 
 function modelLabel(instance: InstanceInfo | undefined, model: string): string {
   return instance?.models.options.find((o) => o.id === model)?.label ?? model;
 }
+
+const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string; detail: string }> = [
+  { value: "auto", label: "Auto", detail: "Provider default" },
+  { value: "low", label: "Low", detail: "Faster, lighter thinking" },
+  { value: "medium", label: "Medium", detail: "Balanced depth" },
+  { value: "high", label: "High", detail: "More deliberate work" },
+  { value: "max", label: "Max", detail: "Deepest available" },
+];
 
 export function ModelPicker({ bot, className }: { bot: Bot; className?: string }) {
   const { state, dispatch } = useStore();
@@ -18,6 +26,8 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
   const rootRef = useRef<HTMLDivElement>(null);
 
   const selection = bot.modelSelection;
+  const reasoningEffort = selection.reasoningEffort ?? "auto";
+  const reasoningLabel = REASONING_OPTIONS.find((option) => option.value === reasoningEffort)?.label ?? "Auto";
   const active = state.instances.find((i) => i.instanceId === selection.instanceId);
   const railInstance =
     state.instances.find((i) => i.instanceId === (railId ?? selection.instanceId)) ??
@@ -38,8 +48,16 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
   }, [open]);
 
   const pick = (instance: InstanceInfo, model: string) => {
-    dispatch({ type: "setModel", botId: bot.id, selection: { instanceId: instance.instanceId, model } });
+    dispatch({
+      type: "setModel",
+      botId: bot.id,
+      selection: { ...selection, instanceId: instance.instanceId, model },
+    });
     setOpen(false);
+  };
+
+  const pickReasoning = (value: ReasoningEffort) => {
+    dispatch({ type: "setModel", botId: bot.id, selection: { ...selection, reasoningEffort: value } });
   };
 
   return (
@@ -49,8 +67,11 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
           setRailId(selection.instanceId);
           setOpen((o) => !o);
         }}
-        className="flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised"
-        title={active ? `${active.displayName} · ${modelLabel(active, selection.model)}` : selection.model}
+        className="flex min-h-11 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised"
+        title={active ? `${active.displayName} · ${modelLabel(active, selection.model)} · Reasoning ${reasoningLabel}` : selection.model}
+        aria-label={active ? `${active.displayName} · ${modelLabel(active, selection.model)} · Reasoning ${reasoningLabel}` : selection.model}
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         {active && <ProviderMark driverKind={active.driverKind} size={14} />}
         <span className="max-w-[160px] truncate">{modelLabel(active, selection.model)}</span>
@@ -73,11 +94,11 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                   onClick={() => setRailId(instance.instanceId)}
                   title={
                     unavailable
-                      ? `${instance.displayName} — ${instance.snapshot.reason ?? "unavailable"}`
+                      ? `${instance.displayName} — optional: ${instance.snapshot.reason ?? "not configured"}`
                       : instance.displayName
                   }
                   className={cn(
-                    "flex size-9 items-center justify-center rounded-lg",
+                    "flex min-h-11 min-w-11 items-center justify-center rounded-lg",
                     onRail ? "bg-raised" : "hover:bg-raised/60",
                     unavailable && "opacity-40",
                   )}
@@ -97,7 +118,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                   <div className="truncate text-[11px] text-ink-secondary">
                     {railInstance.snapshot.state === "available"
                       ? (railInstance.snapshot.version ?? "ready")
-                      : (railInstance.snapshot.reason ?? "unavailable")}
+                      : `Optional · ${railInstance.snapshot.reason ?? "not configured"}`}
                   </div>
                 </div>
                 {railInstance.models.options.map((option) => {
@@ -110,7 +131,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                       disabled={disabled}
                       onClick={() => pick(railInstance, option.id)}
                       className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]",
+                        "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]",
                         disabled ? "cursor-not-allowed text-ink-secondary/50" : "text-ink hover:bg-raised/60",
                         current && "bg-raised",
                       )}
@@ -127,6 +148,30 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                     </button>
                   );
                 })}
+                <div className="mt-2 border-t border-hairline/40 px-2 pt-3">
+                  <label
+                    htmlFor={`reasoning-effort-${bot.id}`}
+                    className="block text-[11px] font-medium uppercase tracking-wide text-ink-secondary"
+                  >
+                    Reasoning effort
+                  </label>
+                  <select
+                    id={`reasoning-effort-${bot.id}`}
+                    aria-label="Reasoning effort"
+                    value={reasoningEffort}
+                    onChange={(event) => pickReasoning(event.target.value as ReasoningEffort)}
+                    className="mt-1.5 min-h-11 w-full rounded-lg border border-hairline/40 bg-inset px-2.5 text-[13px] text-ink outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  >
+                    {REASONING_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label} · {option.detail}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-ink-secondary">
+                    Supported providers apply this on the next turn. Others use their default.
+                  </p>
+                </div>
               </>
             ) : (
               <div className="px-2 py-3 text-[13px] text-ink-secondary">

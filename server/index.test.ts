@@ -14,6 +14,7 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
+const WIPE_PASSWORD = `wipe-${Math.random().toString(36).slice(2)}`;
 
 let child: ChildProcess;
 let home: string;
@@ -45,6 +46,7 @@ beforeAll(async () => {
       HOME: home,
       USERPROFILE: home,
       NEXBOT_PORT: String(PORT),
+      NEXBOT_WIPE_PASSWORD: WIPE_PASSWORD,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -82,11 +84,47 @@ describe("harness HTTP API", () => {
     expect(typeof body.pid).toBe("number");
   });
 
+  it("lists durable jobs that need recovery", async () => {
+    const { status, body } = await api("GET", "/api/jobs");
+    expect(status).toBe(200);
+    expect(body.jobs).toEqual([]);
+  });
+
   it("seeds one starter bot with its greeting", async () => {
     const { status, body } = await api("GET", "/api/bots");
     expect(status).toBe(200);
     expect(body.bots.length).toBeGreaterThanOrEqual(1);
     expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sets up the seeded Chief of Staff from onboarding", async () => {
+    const before = await api("GET", "/api/bots");
+    const cos = before.body.bots.find((b: { name: string; title?: string }) => /chief of staff/i.test(`${b.name} ${b.title ?? ""}`));
+    expect(cos).toBeTruthy();
+
+    const setup = await api("POST", "/api/onboarding/chief-of-staff", {
+      name: "Luna",
+      job: "Keep my projects and priorities moving",
+    });
+    expect(setup.status).toBe(200);
+    expect(setup.body.bot).toMatchObject({
+      id: cos.id,
+      name: "Luna",
+      title: "Chief of Staff",
+      description: "Keep my projects and priorities moving",
+    });
+    expect(setup.body.bot.messages[0].text).toContain("My job is Keep my projects and priorities moving.");
+    expect(setup.body.bot.messages[1].card).toMatchObject({
+      dismissed: true,
+      answered: "Keep my projects and priorities moving",
+    });
+
+    const restored = await api("PATCH", `/api/bots/${cos.id}`, {
+      name: "Chief of Staff",
+      title: "Manages the desk",
+      description: "Manages your other bots and pulls you in for decisions.",
+    });
+    expect(restored.status).toBe(200);
   });
 
   it("describes the configured fleet, shadows included", async () => {
@@ -296,6 +334,16 @@ describe("harness HTTP API", () => {
     expect(after.body.box).toEqual({ configured: true });
     expect(JSON.stringify(after.body)).not.toContain("tok_secret_value");
 
+    const onDisk = JSON.parse(
+      (await import("node:fs")).readFileSync(join(home, ".nexbot", "config.json"), "utf8"),
+    );
+    expect(JSON.stringify(onDisk)).not.toContain("tok_secret_value");
+    expect(onDisk.box?.token?.__nex).toBe(1);
+
+    const cleared = await api("PUT", "/api/config", { box: { token: "" } });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.box).toEqual({ configured: false });
+
     const nothing = await api("PUT", "/api/config", {});
     expect(nothing.status).toBe(400);
   });
@@ -361,12 +409,25 @@ describe("harness HTTP API", () => {
     const got = await api("GET", "/api/steer");
     expect(got.status).toBe(200);
     expect(got.body.token).toMatch(/^[0-9a-f]{48}$/);
+    expect(got.body.path).toBe(`/m.html#token=${got.body.token}`);
     const denied = await fetch(`${BASE}/api/steer/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer nope" },
       body: JSON.stringify({ text: "hi", botIds: ["x"] }),
     });
     expect(denied.status).toBe(401);
+  });
+
+  it("lists steer bots only with the steer token", async () => {
+    const created = await api("POST", "/api/bots", { name: "PhoneBot", title: "Ops" });
+    const deniedBots = await fetch(`${BASE}/api/steer/bots`);
+    expect(deniedBots.status).toBe(401);
+    const tok = (await api("GET", "/api/steer")).body.token;
+    const ok = await fetch(`${BASE}/api/steer/bots?token=${tok}`);
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { bots: Array<{ name: string }> };
+    expect(body.bots.some((b) => b.name === "PhoneBot")).toBe(true);
+    await api("DELETE", `/api/bots/${created.body.bot.id}`);
   });
 
   it("reports capabilities without claiming CUA from the platform", async () => {
@@ -511,16 +572,31 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/bots/${id}`);
   });
 
-  it("PUT memory 400s a huge profile; attachment path is not copied into inbox", async () => {
+  it("PUT memory 400s a huge profile and protects concurrent writes with CAS; attachment path is not copied into inbox", async () => {
     const created = await api("POST", "/api/bots", { name: "MemProbe", title: "Ops" });
     const id = created.body.bot.id;
 
     const huge = await api("PUT", `/api/bots/${id}/memory`, { profile: "x".repeat(20_000) });
     expect(huge.status).toBe(400);
 
-    const ok = await api("PUT", `/api/bots/${id}/memory`, { profile: "Owner: Charles" });
+    const mem = await api("GET", `/api/bots/${id}/memory`);
+    expect(mem.status).toBe(200);
+    expect(typeof mem.body.baseHash).toBe("string");
+
+    const stalePut = await api("PUT", `/api/bots/${id}/memory`, {
+      profile: "Stale write",
+      baseHash: "0000000000000000000000000000000000000000000000000000000000000000",
+    });
+    expect(stalePut.status).toBe(409);
+    expect(stalePut.body.error).toContain("CAS conflict");
+
+    const ok = await api("PUT", `/api/bots/${id}/memory`, {
+      profile: "Owner: Charles",
+      baseHash: mem.body.baseHash,
+    });
     expect(ok.status).toBe(200);
     expect(ok.body.profile).toBe("Owner: Charles");
+    expect(ok.body.baseHash).toBeDefined();
 
     const secret = join(home, "secret-keys.txt");
     writeFileSync(secret, "COMMS_TOKEN=leak");
@@ -546,5 +622,44 @@ describe("harness HTTP API", () => {
     expect(found.body.results.some((h: { text?: string }) => /sleep/i.test(h.text ?? ""))).toBe(true);
     const empty = await api("GET", "/api/search?q=");
     expect(empty.status).toBe(400);
+  });
+
+  it("GET /api/feed returns aggregated action items and summary counts", async () => {
+    const feed = await api("GET", "/api/feed");
+    expect(feed.status).toBe(200);
+    expect(feed.body.summary).toBeDefined();
+    expect(typeof feed.body.summary.total).toBe("number");
+    expect(Array.isArray(feed.body.items)).toBe(true);
+  });
+
+  it("requires the wipe password and confirmation, then clears local bot data", async () => {
+    const denied = await fetch(`${BASE}/api/wipe`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-nexbot-wipe-password": "wrong" },
+      body: JSON.stringify({ confirmation: "WIPE" }),
+    });
+    expect(denied.status).toBe(401);
+
+    const missingPhrase = await fetch(`${BASE}/api/wipe`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-nexbot-wipe-password": WIPE_PASSWORD },
+      body: JSON.stringify({ confirmation: "no" }),
+    });
+    expect(missingPhrase.status).toBe(400);
+
+    const wiped = await fetch(`${BASE}/api/wipe`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-nexbot-wipe-password": WIPE_PASSWORD },
+      body: JSON.stringify({ confirmation: "WIPE" }),
+    });
+    expect(wiped.status).toBe(200);
+    const wipeBody = (await wiped.json()) as { summary: { bots: number; messages: number } };
+    expect(wipeBody.summary.bots).toBeGreaterThan(0);
+    expect(wipeBody.summary.messages).toBeGreaterThan(0);
+
+    const after = await api("GET", "/api/bots");
+    expect(after.body.bots).toEqual([]);
+    expect((await api("GET", "/api/routines")).body.routines).toEqual([]);
+    expect((await api("GET", "/api/skills")).body.skills.some((s: { slug: string }) => s.slug === "file-invoices")).toBe(true);
   });
 });

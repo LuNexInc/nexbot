@@ -1,4 +1,5 @@
 import { preToolHook } from "./tool-hooks.ts";
+import { boundToolOutput } from "./comms-policy.ts";
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
 // computer (box.ascii.dev) as CUA-grade tools.
@@ -216,10 +217,8 @@ async function call(id: unknown, name: string, args: any) {
       return text(id, "NexBot: " + (hook.reason ?? "blocked a request to read process environment secrets"), true);
     }
     const out = await runOnBox(command, 120_000);
-    return text(
-      id,
-      `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`,
-    );
+    const combined = `exit ${out.exitCode}\n${out.stdout}${out.stderr ? `\n[stderr]\n${out.stderr}` : ""}`;
+    return text(id, boundToolOutput(combined, 8000));
   }
   if (name === "open_url") {
     const url = String(args.url ?? "");

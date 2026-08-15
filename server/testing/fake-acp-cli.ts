@@ -152,8 +152,8 @@ function handle(msg: any) {
         result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
-        // and reply with whatever it said (the peer's fake runs plain happy
-        // — its depth-1 turn gets no agents server, so no recursion)
+        // and reply with whatever it said. The peer receives a child task
+        // scope with the same bounded coordination capability.
         void driveMcp(agentsMcp, [
           { name: "list_bots", args: () => ({}) },
           {

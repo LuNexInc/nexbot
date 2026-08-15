@@ -19,6 +19,10 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
+  /** Provider reasoning summary, kept out of the main answer bubble. */
+  reasoning?: string;
+  /** Effort metrics shown in the collapsed reasoning disclosure. */
+  effort?: TurnEffort;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
   tool?: { name: string; ok?: boolean; durationMs?: number; output?: string; error?: string; input?: unknown };
@@ -38,6 +42,20 @@ export interface Message {
   files?: Array<{ name: string; data?: string; path?: string }>;
 }
 
+export interface TurnEffort {
+  durationMs?: number;
+  reasoningTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  toolCount?: number;
+  cost?: number | null;
+}
+
+/** Provider reasoning budget for the next turn. Auto uses the provider default. */
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";
+
+export type Theme = "light" | "dark";
+
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface TodoItem {
@@ -49,6 +67,8 @@ export interface TodoItem {
 export interface ModelSelection {
   instanceId: string;
   model: string;
+  /** Optional per-bot reasoning budget. Older bots omit this and use auto. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface Bot {
@@ -57,6 +77,8 @@ export interface Bot {
   name: string;
   title: string;
   description: string;
+  /** Optional talking-style guidance layered into the bot persona. */
+  personality?: string;
   notifications: boolean;
   color: NexColor;
   mascotExpression?: NexExpression | null;
@@ -77,6 +99,8 @@ export interface Bot {
   lastTtfrMs?: number;
   proactiveEnabled?: boolean;
   completionPings?: boolean;
+  /** Stable specialist order in the sidebar. Chief of Staff is always first. */
+  sortOrder?: number;
   /** Live durable checklist from the todo tool. */
   todos?: TodoItem[];
   messages: Message[];
@@ -104,12 +128,15 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
-  /** who's using the app — collected in onboarding, shown in the sidebar */
-  profile?: { name: string; email: string };
+  /** local profile and workspace brand — collected in onboarding, shown in the sidebar */
+  profile?: { name: string; email: string; companyName?: string };
   /** local data directory path (settings About panel) */
   dataDir?: string;
+  /** whether the local destructive wipe password is configured */
+  wipeConfigured?: boolean;
   version?: string;
   platform?: string;
+  logs?: { native: boolean; maxBytes: number; retainDays: number };
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -131,19 +158,29 @@ export interface AppState {
   instances: InstanceInfo[];
   config: ConfigStatus | null;
   selectedId: string;
+  /** Show reasoning, tool traces, and other execution details in chat. */
+  expertMode: boolean;
+  /** App color theme, persisted locally per desktop profile. */
+  theme: Theme;
   settingsOpen: boolean;
+  /** Which agent settings page opens when the panel is shown. */
+  settingsPage: "overview" | "identity";
   pluginsOpen: boolean;
   computerOpen: boolean;
   appSettingsOpen: boolean;
   skillsOpen: boolean;
   /** in-flight assistant text per threadId (content.delta fold) */
   streaming: Record<string, string>;
+  /** in-flight provider reasoning per threadId, kept separate from the answer */
+  streamingReasoning: Record<string, string>;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   connected: boolean;
   error: string | null;
+  /** transient warnings scoped to their owning bot */
+  botErrors: Record<string, string>;
   mascotMotion: {
     botId: string;
     nonce: number;
@@ -155,11 +192,23 @@ export type Action =
   | { type: "hydrate"; bots: Bot[] }
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
+  | { type: "setExpertMode"; enabled: boolean }
+  | { type: "setTheme"; theme: Theme }
   | { type: "select"; id: string }
   | { type: "send"; botId: string; text: string; clientNonce?: string; files?: Array<{ name: string; data?: string; path?: string }> }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
-  | { type: "newBot"; name?: string; title?: string; description?: string; kind?: "bot" | "group"; memberIds?: string[] }
+  | {
+      type: "newBot";
+      name?: string;
+      title?: string;
+      description?: string;
+      personality?: string;
+      color?: NexColor;
+      kind?: "bot" | "group";
+      memberIds?: string[];
+      modelSelection?: ModelSelection;
+    }
   | { type: "botAdded"; bot: Bot }
   | { type: "deleteBot"; botId: string }
   | { type: "duplicateBot"; botId: string }
@@ -170,6 +219,7 @@ export type Action =
   | { type: "messageFailed"; threadId: string; clientNonce: string }
   | { type: "retryMessage"; botId: string; clientNonce: string }
   | { type: "streamDelta"; threadId: string; delta: string }
+  | { type: "reasoningDelta"; threadId: string; delta: string }
   | { type: "streamClear"; threadId: string }
   | { type: "todosUpdated"; botId: string; items: TodoItem[] }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
@@ -178,7 +228,10 @@ export type Action =
   | { type: "interrupt"; botId: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
-  | { type: "toggleSettings"; open?: boolean }
+  | { type: "botError"; botId: string; message: string }
+  | { type: "clearBotError"; botId: string }
+  | { type: "wipe" }
+  | { type: "toggleSettings"; open?: boolean; page?: "overview" | "identity" }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleAppSettings"; open?: boolean }
@@ -190,7 +243,7 @@ export type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings"
+          "name" | "title" | "description" | "personality" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings" | "sortOrder"
         >
       >;
     };

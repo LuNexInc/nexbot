@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, bot_id TEXT, at INTEGER NOT NULL, text TEXT NOT NULL DEFAULT "", json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS messages_thread_at ON messages(thread_id, at);
 CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL, json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jobs_bot_status ON jobs(bot_id, status);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, content='messages', content_rowid='rowid', tokenize='unicode61');
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text); END;
 CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text); END;
@@ -56,6 +58,34 @@ function ftsText(m: Message): string {
   if (m.kind === "screen") return "";
   return (m.text ?? "").trim();
 }
+
+function messageJson(m: Message): string {
+  // Screens are useful in the live client, but their base64 payloads make
+  // every transcript write expensive. The existing full-thread persistence
+  // already omits them, so keep the fast path consistent with it.
+  return JSON.stringify(m.kind === "screen" ? { ...m, png: undefined } : m);
+}
+
+/** Append one message without deleting and re-inserting the whole thread. */
+export function appendMessage(threadId: string, message: Message, botId?: string): void {
+  const db = openStoreDb();
+  db.prepare(
+    "INSERT INTO messages (id, thread_id, bot_id, at, text, json) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(message.id, threadId, botId ?? null, message.at, ftsText(message), messageJson(message));
+}
+
+/** Update one message without rewriting older transcript rows. */
+export function patchMessage(threadId: string, message: Message): void {
+  const db = openStoreDb();
+  db.prepare("UPDATE messages SET at = ?, text = ?, json = ? WHERE id = ? AND thread_id = ?").run(
+    message.at,
+    ftsText(message),
+    messageJson(message),
+    message.id,
+    threadId,
+  );
+}
+
 export function persistBots(bots: BotRecord[]): void {
   const db = openStoreDb();
   db.exec("BEGIN");
@@ -74,8 +104,7 @@ export function persistMessages(threadId: string, messages: Message[], botId?: s
     db.prepare("DELETE FROM messages WHERE thread_id = ?").run(threadId);
     const ins = db.prepare("INSERT INTO messages (id, thread_id, bot_id, at, text, json) VALUES (?, ?, ?, ?, ?, ?)");
     for (const m of messages) {
-      const slim = m.kind === "screen" ? { ...m, png: undefined } : m;
-      ins.run(m.id, threadId, botId ?? null, m.at, ftsText(m), JSON.stringify(slim));
+      ins.run(m.id, threadId, botId ?? null, m.at, ftsText(m), messageJson(m));
     }
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); throw e; }
@@ -133,16 +162,22 @@ export function loadMessagesFromDb(): Map<string, Message[]> {
 export type SearchHit = { messageId: string; threadId: string; botId: string | null; text: string; at: number };
 
 export function ftsMatchQuery(q: string): string | null {
-  const tokens = q.replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).filter(Boolean).slice(0, 12);
+  const sanitized = q.replace(/["*^~:(){}[\]\\]+/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const tokens = sanitized.split(/\s+/).filter(Boolean).slice(0, 12);
   if (!tokens.length) return null;
-  return tokens.map((t) => `"${t}"`).join(" AND ");
+  return tokens.map((t) => `"${t}"*`).join(" AND ");
 }
 
 export function searchMessages(q: string, limit = 50): SearchHit[] {
   const match = ftsMatchQuery(q);
   if (!match) return [];
-  const rows = openStoreDb().prepare(`SELECT m.id AS messageId, m.thread_id AS threadId, m.bot_id AS botId, m.text AS text, m.at AS at FROM messages_fts f JOIN messages m ON m.rowid = f.rowid WHERE messages_fts MATCH ? LIMIT ?`).all(match, limit) as Array<{ messageId: string; threadId: string; botId: string | null; text: string; at: number }>;
-  return rows.map((r) => ({ messageId: r.messageId, threadId: r.threadId, botId: r.botId, text: r.text, at: r.at }));
+  try {
+    const safeLimit = Math.min(100, Math.max(1, limit));
+    const rows = openStoreDb().prepare(`SELECT m.id AS messageId, m.thread_id AS threadId, m.bot_id AS botId, m.text AS text, m.at AS at FROM messages_fts f JOIN messages m ON m.rowid = f.rowid WHERE messages_fts MATCH ? LIMIT ?`).all(match, safeLimit) as Array<{ messageId: string; threadId: string; botId: string | null; text: string; at: number }>;
+    return rows.map((r) => ({ messageId: r.messageId, threadId: r.threadId, botId: r.botId, text: r.text, at: r.at }));
+  } catch {
+    return [];
+  }
 }
 function metaGet(key: string): string | null {
   const row = openStoreDb().prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
@@ -150,6 +185,14 @@ function metaGet(key: string): string | null {
 }
 function metaSet(key: string, value: string): void {
   openStoreDb().prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+}
+
+export function wasExplicitlyWiped(): boolean {
+  return metaGet("explicit_wipe") === "1";
+}
+
+export function clearExplicitWipeMarker(): void {
+  openStoreDb().prepare("DELETE FROM meta WHERE key = 'explicit_wipe'").run();
 }
 function importBotsJson(): BotRecord[] {
   try { const data = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")); return Array.isArray(data) ? (data as BotRecord[]) : []; } catch { return []; }
@@ -172,9 +215,14 @@ function importRoutinesJson(): Routine[] {
   try { const data = JSON.parse(readFileSync(join(DATA_DIR, "routines.json"), "utf8")); return Array.isArray(data) ? (data as Routine[]) : []; } catch { return []; }
 }
 
+export function jsonImportDone(): boolean {
+  openStoreDb();
+  return metaGet("imported_json") === "1";
+}
+
 export function importJsonIfNeeded(): { bots: number; messages: number; routines: number } {
   openStoreDb();
-  if (metaGet("imported_json") === "1") return { bots: 0, messages: 0, routines: 0 };
+  if (jsonImportDone()) return { bots: 0, messages: 0, routines: 0 };
   const existing = openStoreDb().prepare("SELECT COUNT(*) AS n FROM bots").get() as { n: number };
   if (existing.n > 0) { metaSet("imported_json", "1"); return { bots: 0, messages: 0, routines: 0 }; }
   const bots = importBotsJson();

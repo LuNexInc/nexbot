@@ -4,6 +4,12 @@ import { Plus, Mic, Square } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { NexAvatar } from "./Avatar";
+import {
+  buildRoutingMessage,
+  getClarificationChoices,
+  shouldAskClarification,
+  type ClarificationChoice,
+} from "@/lib/clarification";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -24,6 +30,10 @@ export function Composer({ bot }: { bot: Bot }) {
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
+  const [clarification, setClarification] = useState<{
+    text: string;
+    choices: ClarificationChoice[];
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<Array<{ name: string; data: string }>>([]);
@@ -32,14 +42,17 @@ export function Composer({ bot }: { bot: Bot }) {
 
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
+  const mentionPeers = useMemo(
+    () => state.bots.filter((b) => b.id !== bot.id && !b.hidden),
+    [state.bots, bot.id],
+  );
   const candidates = useMemo(() => {
     if (!mention || mention.start === dismissedAt) return [];
     const q = mention.query.trim().toLowerCase();
-    return state.bots
-      .filter((b) => b.id !== bot.id && !b.hidden)
+    return mentionPeers
       .filter((b) => !q || b.name.toLowerCase().includes(q))
       .slice(0, 6);
-  }, [mention, dismissedAt, state.bots, bot.id]);
+  }, [mention, dismissedAt, mentionPeers]);
   const pickerOpen = candidates.length > 0;
 
   useEffect(() => setHighlight(0), [mention?.start, mention?.query]);
@@ -100,16 +113,39 @@ export function Composer({ bot }: { bot: Bot }) {
   };
 
   const send = () => {
-    if ((!text.trim() && !files.length) || bot.busy) return;
+    const trimmed = text.trim();
+    if ((!trimmed && !files.length) || bot.busy || clarification) return;
+    if (!files.length && shouldAskClarification(trimmed, bot)) {
+      const choices = getClarificationChoices(trimmed, state.bots, bot.id);
+      if (choices.length >= 2) {
+        setClarification({ text: trimmed, choices });
+        return;
+      }
+    }
     dispatch({
       type: "send",
       botId: bot.id,
-      text: text.trim() || "See attached files.",
+      text: trimmed || "See attached files.",
       files: files.length ? files : undefined,
     });
     track("message_sent", { driver: bot.modelSelection?.instanceId });
     setText("");
     setFiles([]);
+  };
+
+  const confirmClarification = (choice?: ClarificationChoice) => {
+    if (!clarification || bot.busy) return;
+    dispatch({
+      type: "send",
+      botId: bot.id,
+      text: buildRoutingMessage(clarification.text, choice?.bot),
+    });
+    track("message_sent", {
+      driver: bot.modelSelection?.instanceId,
+      routing: choice ? "confirmed_teammate" : "chief_of_staff_choice",
+    });
+    setClarification(null);
+    setText("");
   };
 
   // Dictation: macOS uses the native Swift helper via preload; Windows/Linux
@@ -220,15 +256,62 @@ export function Composer({ bot }: { bot: Bot }) {
         </div>
       )}
       <div className="pointer-events-auto relative mx-auto max-w-[800px]">
+        {clarification && (
+          <div
+            role="dialog"
+            aria-label="Choose a teammate"
+            aria-live="polite"
+            className="glass-heavy absolute bottom-full left-0 right-0 z-20 mb-2 rounded-2xl border border-black/8 p-3 shadow-xl"
+          >
+            <div className="px-1">
+              <p className="text-[14px] font-semibold text-ink">Which teammate should take this?</p>
+              <p className="mt-0.5 text-[12px] text-ink-secondary">Pick a route, or let Chief of Staff decide.</p>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+              {clarification.choices.map((choice) => (
+                <button
+                  key={choice.bot.id}
+                  type="button"
+                  onClick={() => confirmClarification(choice)}
+                  className="pressable flex min-h-11 items-center gap-2 rounded-xl border border-black/7 bg-black/[0.025] px-2.5 py-2 text-left transition-colors hover:border-black/15 hover:bg-black/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+                  aria-label={`Route to ${choice.bot.name}`}
+                >
+                  <NexAvatar color={choice.bot.color} name={choice.bot.name} size={26} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold text-ink">{choice.bot.name}</span>
+                    <span className="block truncate text-[11px] text-ink-secondary">{choice.reason}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => confirmClarification()}
+              className="pressable mt-2 flex min-h-11 w-full items-center justify-center rounded-xl border border-black/7 px-3 py-2 text-[13px] font-medium text-ink-secondary transition-colors hover:bg-black/5 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+            >
+              Just handle it — let Chief of Staff choose
+            </button>
+          </div>
+        )}
+
         {pickerOpen && (
-          <div className="glass-heavy absolute bottom-full left-4 z-30 mb-2 w-72 overflow-hidden rounded-2xl p-1 shadow-2xl">
+          <div
+            id="nexbot-mention-picker"
+            role="listbox"
+            aria-label="NexBot teammates"
+            className="glass-heavy absolute bottom-full left-4 z-30 mb-2 w-72 overflow-hidden rounded-2xl p-1 shadow-2xl"
+          >
             {candidates.map((peer, i) => (
               <button
                 key={peer.id}
+                id={`nexbot-mention-${peer.id}`}
+                type="button"
+                role="option"
+                aria-selected={i === highlight}
                 onClick={() => pickMention(peer)}
                 onMouseEnter={() => setHighlight(i)}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
+                  "flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
                   i === highlight ? "bg-black/6" : "hover:bg-black/4",
                 )}
               >
@@ -251,8 +334,9 @@ export function Composer({ bot }: { bot: Bot }) {
                   <span className="max-w-[140px] truncate">{f.name}</span>
                   <button
                     onClick={() => removeFile(i)}
-                    className="text-ink-secondary hover:text-ink"
+                    className="flex min-h-11 min-w-11 items-center justify-center text-ink-secondary hover:text-ink"
                     title="Remove file"
+                    aria-label={`Remove ${f.name}`}
                   >
                     ×
                   </button>
@@ -290,16 +374,22 @@ export function Composer({ bot }: { bot: Bot }) {
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="pressable flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-black/6 hover:text-ink"
+              className="pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-black/6 hover:text-ink"
               title="Attach files"
+              aria-label="Attach files"
             >
               <Plus size={18} />
             </button>
             <button
               type="button"
               onClick={insertMentionTrigger}
-              className="pressable flex size-8 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-ink-secondary hover:bg-black/6 hover:text-ink"
-              title="Tag a teammate (@)"
+              disabled={mentionPeers.length === 0}
+              className={cn(
+                "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-ink-secondary hover:bg-black/6 hover:text-ink",
+                mentionPeers.length === 0 && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-ink-secondary",
+              )}
+              title={mentionPeers.length === 0 ? "Add another NexBot to tag" : "Tag a NexBot (@)"}
+              aria-label="Tag a NexBot"
             >
               @
             </button>
@@ -311,6 +401,7 @@ export function Composer({ bot }: { bot: Bot }) {
                 setText(e.target.value);
                 setCaret(e.target.selectionStart ?? e.target.value.length);
                 setDismissedAt(null);
+                setClarification(null);
               }}
               onKeyUp={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
               onClick={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
@@ -343,9 +434,18 @@ export function Composer({ bot }: { bot: Bot }) {
                     return;
                   }
                 }
-                if (e.key === "Enter") send();
+                if (e.key === "Enter") {
+                  // This is a single-line composer. Keep Enter deterministic:
+                  // choose a visible @mention first, otherwise send the turn.
+                  e.preventDefault();
+                  send();
+                  return;
+                }
                 if (e.key === "Escape" && recording) setRecording(false);
               }}
+              aria-keyshortcuts="Enter"
+              aria-controls={pickerOpen ? "nexbot-mention-picker" : undefined}
+              aria-activedescendant={pickerOpen ? `nexbot-mention-${candidates[highlight]?.id}` : undefined}
               placeholder={
                 recording ? "Listening…" : bot.busy ? `${bot.name} is working…` : `Message ${bot.name} · @ to tag`
               }
@@ -355,8 +455,9 @@ export function Composer({ bot }: { bot: Bot }) {
             {bot.busy ? (
               <button
                 onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
-                className="pressable flex size-8 shrink-0 items-center justify-center rounded-full bg-black/8 text-ink-secondary hover:bg-black/12 hover:text-ink"
+                className="pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full bg-black/8 text-ink-secondary hover:bg-black/12 hover:text-ink"
                 title="Stop turn"
+                aria-label="Stop turn"
               >
                 <Square size={13} className="fill-current" />
               </button>
@@ -364,12 +465,13 @@ export function Composer({ bot }: { bot: Bot }) {
               <button
                 onClick={toggleMic}
                 className={cn(
-                  "pressable flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                  "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-colors",
                   recording
                     ? "animate-pulse bg-danger/20 text-danger"
                     : "text-ink-secondary hover:bg-black/6 hover:text-ink",
                 )}
                 title={recording ? "Stop dictation (Esc)" : "Dictate"}
+                aria-label={recording ? "Stop dictation" : "Dictate"}
               >
                 <Mic size={17} />
               </button>
@@ -379,12 +481,13 @@ export function Composer({ bot }: { bot: Bot }) {
               onClick={send}
               disabled={(!text.trim() && !files.length) || bot.busy}
               className={cn(
-                "pressable flex size-8 shrink-0 items-center justify-center rounded-full transition-all",
+                "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-all",
                 text.trim() || files.length
                   ? "bg-ink text-white shadow-sm hover:opacity-90"
                   : "bg-black/6 text-ink-secondary opacity-40 cursor-not-allowed",
               )}
               title="Send message (Enter)"
+              aria-label="Send message"
             >
               <svg
                 width={14}

@@ -241,6 +241,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (sessionId) args.push("--resume", sessionId);
       else args.push("--session-id", newSessionId!);
       if (turn.model) args.push("--model", turn.model);
+      if (turn.reasoningEffort && turn.reasoningEffort !== "auto") {
+        args.push("--effort", turn.reasoningEffort === "max" ? "high" : turn.reasoningEffort);
+      }
       if (turn.system) args.push("--append-system-prompt", turn.system);
 
       // integrations → MCP servers; pre-allow their tools (a headless

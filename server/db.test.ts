@@ -50,6 +50,22 @@ describe("sqlite import + search", () => {
     expect(hits.some((h) => h.text.includes("cafe"))).toBe(true);
     expect(searchMessages("xyzzy-no-such")).toEqual([]);
   });
+  it("FTS5 search handles special characters, operators, and malformed queries safely", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Research" });
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Bloominary Google Forms reminder" });
+    
+    // Prefix matching
+    expect(searchMessages("Bloom").length).toBe(1);
+    expect(searchMessages("Bloominary").length).toBe(1);
+    
+    // Special chars and FTS operators shouldn't throw
+    expect(searchMessages('"""""').length).toBe(0);
+    expect(searchMessages('AND OR NOT').length).toBe(0);
+    expect(searchMessages('Forms (reminder) * ^ ~').length).toBe(1);
+    expect(searchMessages('   ').length).toBe(0);
+  });
+
   it("integrity_check is ok and WAL checkpoint runs", () => {
     openStoreDb();
     expect(integrityCheck()).toBe("ok");

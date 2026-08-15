@@ -26,6 +26,21 @@ export const NEX_COLORS: Record<NexColor, string> = {
   coral: "#C49688",
 };
 
+/** Soft surfaces used for bot cards and role tiles. Keep the stronger marks above
+ * for icons, borders, and status feedback so text contrast stays readable. */
+export const NEX_PASTELS: Record<NexColor, string> = {
+  green: "#D9F1E3",
+  blue: "#DCE7F8",
+  red: "#F6DCDD",
+  orange: "#F5E6D2",
+  purple: "#E9E2F6",
+  cyan: "#D9F0F3",
+  pink: "#F4DEE7",
+  yellow: "#F5EED1",
+  teal: "#D8EEE8",
+  coral: "#F3DFD8",
+};
+
 export const NEX_EXPRESSIONS = [
   "deadpan",
   "friendly",
@@ -48,6 +63,8 @@ export const NEX_MOTIONS = [
   "alert",
   "thinking",
   "working",
+  "waiting",
+  "handover",
   "launch",
   "success",
   "celebrate",
@@ -57,6 +74,78 @@ export const NEX_MOTIONS = [
 ] as const;
 
 export type NexMotion = "none" | (typeof NEX_MOTIONS)[number];
+
+export type NexMotionPhase = {
+  /** Human-readable state for motion previews and accessibility copy. */
+  label: string;
+  /** The visual language used by NexAvatar for this state. */
+  motion: NexMotion;
+  /** One-shot animations use a finite duration; looping states use null. */
+  durationMs: number | null;
+  /** Short explanation used by the motion map and future tooltips. */
+  description: string;
+};
+
+/**
+ * The NexBot motion vocabulary. Keep idle still and reserve motion for a
+ * meaningful state change so the sidebar does not compete with the answer.
+ */
+export const NEX_MOTION_PHASES: Record<string, NexMotionPhase> = {
+  idle: {
+    label: "Ready",
+    motion: "none",
+    durationMs: null,
+    description: "Still mark with no ambient loop.",
+  },
+  thinking: {
+    label: "Thinking",
+    motion: "thinking",
+    durationMs: null,
+    description: "Slow orbital ring while the bot decides what to do.",
+  },
+  working: {
+    label: "Working",
+    motion: "working",
+    durationMs: null,
+    description: "Focused scan while a tool or task is running.",
+  },
+  waiting: {
+    label: "Waiting",
+    motion: "waiting",
+    durationMs: null,
+    description: "One small pulse while a dependency or approval is pending.",
+  },
+  handover: {
+    label: "Handing over",
+    motion: "handover",
+    durationMs: 420,
+    description: "A short outbound pass when work moves to a teammate.",
+  },
+  success: {
+    label: "Complete",
+    motion: "success",
+    durationMs: 420,
+    description: "One spring ring, then settle back to still.",
+  },
+  alert: {
+    label: "Needs attention",
+    motion: "alert",
+    durationMs: 420,
+    description: "One restrained warning pulse for a blocked or failed turn.",
+  },
+  arrive: {
+    label: "Added",
+    motion: "arrive",
+    durationMs: 260,
+    description: "Soft scale-in when a NexBot joins the workspace.",
+  },
+  switch: {
+    label: "Selected",
+    motion: "switch",
+    durationMs: 220,
+    description: "Short turn when the active teammate changes.",
+  },
+};
 
 type MascotMessage = {
   kind: string;

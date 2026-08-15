@@ -50,6 +50,28 @@ describe("botPatched", () => {
     expect(next.bots[0].messages).toEqual(messages);
     expect(next.bots).toHaveLength(1);
   });
+
+  it("uses the thinking motion when a bot starts a turn", () => {
+    const state = {
+      ...initialState,
+      bots: [bot({ id: "known", busy: false })],
+    };
+    const next = reducer(state, {
+      type: "botPatched",
+      bot: { id: "known", busy: true },
+    });
+    expect(next.mascotMotion).toMatchObject({ botId: "known", kind: "thinking" });
+  });
+});
+
+describe("expert mode", () => {
+  it("toggles execution details without changing the rest of the state", () => {
+    const state = { ...initialState, selectedId: "b1" };
+    const next = reducer(state, { type: "setExpertMode", enabled: false });
+    expect(next.expertMode).toBe(false);
+    expect(next.selectedId).toBe("b1");
+    expect(reducer(next, { type: "setExpertMode", enabled: true }).expertMode).toBe(true);
+  });
 });
 
 
@@ -107,6 +129,26 @@ describe("optimistic send and nonce reconcile", () => {
     expect(next.bots[0].messages).toHaveLength(1);
     expect(next.bots[0].messages[0].status).toBe("failed");
   });
+
+  it("uses the handover motion for a teammate message", () => {
+    const state = {
+      ...initialState,
+      bots: [bot({ id: "b1", threadId: "t1" })],
+    };
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: "t1",
+      message: {
+        id: "handover-1",
+        role: "user",
+        kind: "text",
+        text: "Here is the result.",
+        fromBot: { id: "b2", name: "Research" },
+        at: 2,
+      },
+    });
+    expect(next.mascotMotion).toMatchObject({ botId: "b1", kind: "handover" });
+  });
 });
 
 describe("todosUpdated", () => {
@@ -118,5 +160,20 @@ describe("todosUpdated", () => {
     const items = [{ id: "td-1", content: "Draft", status: "in_progress" as const }];
     const next = reducer(state, { type: "todosUpdated", botId: "spec", items });
     expect(next.bots[0].todos).toEqual(items);
+  });
+});
+
+describe("bot-scoped runtime warnings", () => {
+  it("keeps one bot's warning out of another bot's chat", () => {
+    const state = {
+      ...initialState,
+      selectedId: "hands",
+      bots: [bot({ id: "hands" }), bot({ id: "luna" })],
+    };
+    const warned = reducer(state, { type: "botError", botId: "luna", message: "Luna stalled" });
+    expect(warned.botErrors).toEqual({ luna: "Luna stalled" });
+    expect(warned.error).toBeNull();
+    const cleared = reducer(warned, { type: "clearBotError", botId: "luna" });
+    expect(cleared.botErrors).toEqual({});
   });
 });

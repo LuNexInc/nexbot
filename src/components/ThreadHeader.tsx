@@ -1,7 +1,9 @@
-import { BookMarked, Loader2, Monitor, Square } from "lucide-react";
+import { BookMarked, Loader2, Monitor, PanelLeft, Square } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { NexAvatar } from "./Avatar";
 import { ModelPicker } from "./ModelPicker";
+import { ExpertToggle } from "./ExpertToggle";
+import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/cn";
 
 function TtfrChip({ ms }: { ms: number }) {
@@ -15,26 +17,45 @@ function TtfrChip({ ms }: { ms: number }) {
   );
 }
 
-export function ThreadHeader({ bot }: { bot: Bot }) {
+export function ThreadHeader({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?: () => void }) {
   const { state, dispatch } = useStore();
   const ttfr = bot.lastTtfrMs;
+  const mascot = state.mascotMotion?.botId === bot.id ? state.mascotMotion : undefined;
 
   return (
     <div className="flex items-center justify-between px-5 py-3">
-      <button
-        onClick={() => dispatch({ type: "toggleSettings" })}
-        className="pressable flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-black/6"
-        title="Bot settings"
-      >
-        <NexAvatar color={bot.color} name={bot.name} size={28} />
-        <span className="text-[15px] font-semibold tracking-tight text-ink">{bot.name}</span>
-        {bot.kind === "group" && (
-          <span className="text-[12px] text-ink-secondary">{bot.memberIds?.length ?? 0} teammates</span>
+      <div className="flex min-w-0 items-center gap-1">
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="pressable hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:bg-black/6 hover:text-ink max-[900px]:inline-flex"
+            title="Show sidebar"
+            aria-label="Show sidebar"
+          >
+            <PanelLeft size={18} />
+          </button>
         )}
-        {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
-      </button>
+        <button
+          onClick={() => dispatch({ type: "toggleSettings" })}
+          className="pressable flex min-h-11 min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-black/6"
+          title="Bot settings"
+        >
+          <NexAvatar
+            color={bot.color}
+            name={bot.name}
+            size={28}
+            motion={mascot?.kind ?? (bot.busy ? "thinking" : undefined)}
+            motionKey={mascot?.nonce}
+          />
+          <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{bot.name}</span>
+          {bot.kind === "group" && (
+            <span className="hidden text-[12px] text-ink-secondary sm:inline">{bot.memberIds?.length ?? 0} NexBots</span>
+          )}
+          {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
+        </button>
+      </div>
       <div className="flex items-center gap-2">
-        {bot.usage && (bot.usage.input > 0 || bot.usage.output > 0) && (
+        {state.expertMode && bot.usage && (bot.usage.input > 0 || bot.usage.output > 0) && (
           <span className="rounded-full bg-black/6 px-2 py-0.5 text-[11px] text-ink-secondary" title="Tokens this turn">
             {bot.usage.input + bot.usage.output} tok
           </span>
@@ -65,18 +86,21 @@ export function ThreadHeader({ bot }: { bot: Bot }) {
         {bot.kind !== "group" && (
           <div className="flex items-center gap-1.5">
             <ModelPicker bot={bot} />
-            {ttfr !== undefined && ttfr > 0 && <TtfrChip ms={ttfr} />}
+            {state.expertMode && ttfr !== undefined && ttfr > 0 && <TtfrChip ms={ttfr} />}
           </div>
         )}
-        {bot.kind === "group" && ttfr !== undefined && ttfr > 0 && <TtfrChip ms={ttfr} />}
+        {bot.kind === "group" && state.expertMode && ttfr !== undefined && ttfr > 0 && <TtfrChip ms={ttfr} />}
+        <ThemeToggle />
+        <ExpertToggle compact />
         {bot.kind !== "group" && (
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
             className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
+              "min-h-11 min-w-11 rounded-md p-1.5 hover:bg-raised",
               state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
             title="Bot's computer"
+            aria-label="Bot's computer"
           >
             <Monitor size={18} />
           </button>

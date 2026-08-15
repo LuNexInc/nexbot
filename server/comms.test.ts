@@ -1,7 +1,7 @@
 // Agent-to-agent comms, end to end: boots the real harness server with the
 // grokAgent driver pointed at the fake ACP CLI in ask-peer mode, then has
 // bot A's "agent" reach bot B through the injected agents proxy (list_bots →
-// ask_bot → B runs a real depth-1 turn → reply folds back into A's answer).
+// ask_bot → B runs a real child turn → reply folds back into A's answer).
 // This exercises the whole chain the packaged app uses: startTurn →
 // session/new mcpServers → agents-proxy → /api/internal/ask-bot →
 // askBotAndWait → bus fold. The internal endpoints' auth is pinned too.
@@ -46,18 +46,37 @@ describe("mentionedBots", () => {
   });
 });
 
-describe("POST /api/jobs comms depth", () => {
-  it("starts team jobs at commsDepth 0 so list_bots/ask_bot mount", () => {
+import { boundToolOutput } from "./comms-policy.ts";
+
+describe("boundToolOutput", () => {
+  it("leaves small strings untouched", () => {
+    expect(boundToolOutput("short output", 100)).toBe("short output");
+  });
+
+  it("truncates oversized strings with head, tail, and byte count marker", () => {
+    const huge = "A".repeat(500) + "B".repeat(500);
+    const bounded = boundToolOutput(huge, 100);
+    expect(bounded.length).toBeLessThan(huge.length);
+    expect(bounded).toMatch(/\[\.\.\. truncated \d+ bytes \.\.\.\]/);
+    expect(bounded.startsWith("A".repeat(50))).toBe(true);
+    expect(bounded.endsWith("B".repeat(50))).toBe(true);
+  });
+});
+
+describe("task-scoped team jobs", () => {
+  it("starts team jobs with a bounded context so every bot can coordinate", () => {
     const src = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
     const start = src.indexOf('path === "/api/jobs"');
     expect(start).toBeGreaterThan(-1);
     const block = src.slice(start, start + 900);
     expect(block).toContain("[Team job]");
     expect(block).toMatch(/startTurn\(id,/);
-    expect(block).not.toMatch(/commsDepth:\s*1/);
-    // Nested ask_bot still increments; the one-hop cap stays.
-    expect(src).toMatch(/const MAX_COMMS_DEPTH = 1/);
-    expect(src).toMatch(/startTurn\(targetBotId, message, \{ commsDepth: depth \+ 1/);
+    expect(block).not.toMatch(/taskContext:\s*createTaskContext/);
+    expect(src).toContain("delegateTask");
+    expect(src).toContain("taskContext: delegation.child");
+    expect(src).toContain("NEXBOT_TASK_CONTEXT");
+    expect(src).toContain('/api/internal/send-bot');
+    expect(src).toContain('queueAgentMessage');
   });
 });
 
@@ -191,7 +210,7 @@ posixOnly("comms e2e (fake ACP fleet)", () => {
   );
 
   it(
-    "POST /api/jobs starts at depth 0 so the bot can ask_bot a peer",
+    "POST /api/jobs gives the bot a task scope so it can ask a peer",
     async () => {
       const roster = (await api("GET", "/api/bots")).body.bots;
       for (const b of roster) {
