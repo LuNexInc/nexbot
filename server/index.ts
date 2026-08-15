@@ -73,6 +73,7 @@ import { createWatchdog, DEFAULT_MAX_TOKENS_PER_TURN, isComputerToolName } from 
 import { chooseAntigravityCosSelection, pickDefaultSelection } from "./selection.ts";
 import { isMeaningfulUpdate, proactivePrompt, shouldTriggerProactive, type ProactiveReason } from "./proactivity.ts";
 import { routingDirective, suggestSpecialistRoutes } from "./routing.ts";
+import { semanticRoute, type SemanticRouteDecision } from "./semantic-router.ts";
 import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./agent-inbox.ts";
 import { createTaskContext, delegateTask, isTaskDelegation, parseTaskContext, type TaskContext } from "./task-context.ts";
 import { wipeLocalData } from "./wipe.ts";
@@ -561,6 +562,70 @@ function appendHandoff(opts: {
   }
 }
 
+/**
+ * Route a Chief of Staff user turn in the harness before a provider call.
+ * This keeps orchestration available to print-mode drivers such as agy, which
+ * cannot receive NexBot's peer-agent tools through MCP.
+ */
+async function autoRouteChiefTurn(
+  bot: NonNullable<ReturnType<typeof store.bot>>,
+  text: string,
+  taskContext: TaskContext,
+): Promise<SemanticRouteDecision | null> {
+  const peers = store.bots.filter((peer) => peer.id !== bot.id && !peer.hidden);
+  const decision = await semanticRoute(text, peers);
+  if (!decision) return null;
+  const target = store.bot(decision.peer.id);
+  if (!target || target.hidden || target.id === bot.id) return null;
+  const delegation = authorizeTaskDelegation(taskContext, bot.id, target.id);
+  if (!isTaskDelegation(delegation)) return null;
+
+  appendHandoff({
+    from: { id: bot.id, name: bot.name, color: bot.color },
+    to: { id: target.id, name: target.name, color: target.color },
+    text,
+  });
+
+  const delegatedText = `[Task from Chief of Staff]\n\n${text}`;
+  try {
+    if (target.busy) {
+      queueAgentMessage(target.id, {
+        fromBotId: bot.id,
+        message: text,
+        taskContext: delegation.child,
+        at: Date.now(),
+      });
+      drainAgentInbox(target.id);
+    } else {
+      await startTurn(target.id, delegatedText, {
+        taskContext: delegation.child,
+        source: "agent",
+        fromBot: { id: bot.id, name: bot.name, color: bot.color },
+        chatText: text,
+      });
+    }
+  } catch (error) {
+    const failure = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "text",
+      source: "agent",
+      text: `I could not send this to ${target.name}. ${error instanceof Error ? error.message : String(error)} Try again or name the teammate directly.`,
+    });
+    broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+    console.error(`semantic handoff to ${target.name} failed:`, error);
+    return decision;
+  }
+
+  const status = store.appendMessage(bot.threadId, {
+    role: "bot",
+    kind: "text",
+    source: "agent",
+    text: `I sent this to ${target.name}. I’ll bring the result back here.`,
+  });
+  broadcast({ kind: "message", threadId: bot.threadId, message: status });
+  return decision;
+}
+
 const groupQueuedTurns = new Map<string, Array<{ text: string; groupId: string }>>();
 
 function triggerProactive(botId: string, reason: ProactiveReason, context = "") {
@@ -767,6 +832,39 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         });
   if (incoming) broadcast({ kind: "message", threadId: bot.threadId, message: incoming });
   const turnKind: TurnKind = isResume && existingJob ? existingJob.source : opts?.source ?? (opts?.fromBot ? "agent" : "user");
+
+  // Print-mode providers cannot receive the peer-agent MCP tools. Route a
+  // clear Chief of Staff task in the harness so the user still gets normal
+  // conversation while the right teammate does the work.
+  const hasExplicitMention = mentionedBots(
+    turnText,
+    store.bots.filter((peer) => peer.id !== bot.id && !peer.hidden),
+  ).length > 0;
+  const canAutoRoute =
+    incoming &&
+    turnKind === "user" &&
+    !isResume &&
+    !opts?.replay &&
+    !hasExplicitMention &&
+    isChiefOfStaffRole(bot.name, bot.title);
+  if (canAutoRoute) {
+    store.patchBot(bot.id, { busy: true, unread: false });
+    broadcast({ kind: "bot", bot: store.bot(bot.id) });
+    try {
+      const routed = await autoRouteChiefTurn(bot, turnText, taskContext);
+      if (routed) {
+        store.patchBot(bot.id, { busy: false, unread: true });
+        broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        enqueueConversationArchive(bot.id, store.messagesFor(bot.threadId));
+        return;
+      }
+    } catch (error) {
+      console.warn(`semantic routing failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    store.patchBot(bot.id, { busy: false });
+    broadcast({ kind: "bot", bot: store.bot(bot.id) });
+  }
+
   const job = isResume && existingJob
     ? updateJob(existingJob.id, {
         status: "running",

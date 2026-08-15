@@ -28,6 +28,7 @@
     "cua:install": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://cua.ai/driver/install.ps1 | iex\""
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@trycua/cua-driver": "^0.19.3",
     "clsx": "^2.1.1",
     "lucide-react": "^0.539.0",
