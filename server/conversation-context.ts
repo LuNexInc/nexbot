@@ -28,7 +28,8 @@ export function conversationSummaryPath(botId: string): string {
 function compactSummary(rows: Pick<Message, "id" | "at" | "role" | "text">[]): string {
   const older = rows.slice(0, -COMPACT_CONTEXT_WINDOW);
   const lines = older.map((message) => {
-    const excerpt = (message.text ?? "").replace(/\s+/g, " ").trim().slice(0, 360);
+    const raw = (message.text ?? "").replace(/\s+/g, " ").trim();
+    const excerpt = raw.length > 360 ? `${raw.slice(0, 200)} … ${raw.slice(-160)}` : raw;
     return `- ${new Date(message.at).toISOString()} · ${message.role === "user" ? "User" : "NexBot"}: ${excerpt}`;
   });
   const body = lines.join("\n");

@@ -16,7 +16,7 @@ import { readCuaConnection } from "./cua-connection.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
-import { buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory, inboxPath, MEMORY_FILE_MAX, memoryDir, memoryPrompt, readLog, readProfile, writeInboxFile, writeLog, writeProfile } from "./desk.ts";
+import { appendLog, buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory, inboxPath, MEMORY_FILE_MAX, memoryDir, memoryPrompt, readLog, readProfile, writeInboxFile, writeLog, writeProfile } from "./desk.ts";
 import { json, readBody, serveStatic, portBusyHint } from "./http-util.ts";
 import { searchMessages } from "./db.ts";
 import { forgetTurn, rememberTurn } from "./pending.ts";
@@ -878,6 +878,42 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         ? (ensureConversationArchive(bot.id, transcriptMessages), freshSessionContextPrompt(bot.id, transcriptMessages))
         : "";
 
+      const staticSystem = [
+        persona,
+        integrations.localComputer
+          ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+          : "",
+        integrations.agents
+          ? "You can work with the user's other bots through the agents tools. Every bot with peer-agent tools can coordinate from its active task. list_bots shows who's available, ask_bot waits for a peer reply, send_bot queues work, search_history searches past receipts, and save_memory/get_memory records durable facts and notes. The Chief of Staff coordinates the global queue, but specialists can delegate within their task scope. There is only one Chief of Staff — never create a second. Fight X / challenge X means use or spawn a specialist that critiques X's existing output; never ask_bot X to write the critique of itself."
+          : "",
+        integrations.composio
+          ? "Connected apps via Composio are available as tools. Use them when they fit."
+          : "",
+        integrations.todos
+          ? "You have a todo tool — a durable checklist for this job. Update it as you work; keep one item in_progress."
+          : "",
+        SLEEP_WARNING,
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      const dynamicSystem = [
+        integrations.agents
+          ? `The current task allows ${taskContext.maxHops - taskContext.hops} more delegation hop(s) and ${taskContext.maxMessages - taskContext.messages} more message(s); do not delegate to a bot already in the task path.`
+          : "",
+        deterministicRouting,
+        freshContext,
+        tagged.length
+          ? `The user also sent this job in parallel to ${tagged
+              .map((t) => `@${t.name}`)
+              .join(" and ")}. Coordinate if needed; do not wait for them unless you must.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const systemPrompt = dynamicSystem ? `${staticSystem}\n\n${dynamicSystem}` : staticSystem;
+
       await instance.adapter.sendTurn({
         threadId: bot.threadId,
         botId: bot.id,
@@ -886,28 +922,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         reasoningEffort: selection.reasoningEffort,
         resumeCursor: providerResumeCursor,
         transcript: clipForTurn(transcriptMessages, antigravity ? { window: 10, textCap: 2_000 } : undefined),
-        system:
-          persona +
-          (freshContext ? `\n\n${freshContext}` : "") +
-          (deterministicRouting ? `\n\n${deterministicRouting}` : "") +
-          (integrations.localComputer
-            ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-            : "") +
-          (integrations.agents
-            ? ` You can work with the user's other bots through the agents tools. Every bot with peer-agent tools can coordinate from its active task. list_bots shows who's available, ask_bot waits for a peer reply, and send_bot queues work. The task allows ${taskContext.maxHops - taskContext.hops} more delegation hop(s) and ${taskContext.maxMessages - taskContext.messages} more message(s); do not delegate to a bot already in the task path. The Chief of Staff coordinates the global queue, but specialists can delegate within their task scope. There is only one Chief of Staff — never create a second. Fight X / challenge X means use or spawn a specialist that critiques X's existing output; never ask_bot X to write the critique of itself.`
-            : "") +
-          (integrations.composio
-            ? " Connected apps via Composio are available as tools. Use them when they fit."
-            : "") +
-          (integrations.todos
-            ? " You have a todo tool — a durable checklist for this job. Update it as you work; keep one item in_progress."
-            : "") +
-          ` ${SLEEP_WARNING}` +
-          (tagged.length
-            ? ` The user also sent this job in parallel to ${tagged
-                .map((t) => `@${t.name}`)
-                .join(" and ")}. Coordinate if needed; do not wait for them unless you must.`
-            : ""),
+        system: systemPrompt,
         integrations,
       });
       /* no cloud-box screen poller — local frames come from Electron */
@@ -1103,6 +1118,44 @@ const server = createServer(async (req, res) => {
           return { ...hit, botId: bot?.id ?? hit.botId, botName: bot?.name };
         });
         return json(res, 200, { results });
+      }
+      if (method === "GET" && path === "/api/internal/memory") {
+        const botId = (url.searchParams.get("botId") ?? "").trim();
+        if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
+        const profile = readProfile(botId).trim();
+        const log = readLog(botId).trim();
+        const text = `# Memory for ${store.bot(botId)?.name ?? "Bot"}\n\n## profile.md\n${profile || "(empty)"}\n\n## Current Month Log\n${log || "(empty)"}`;
+        return json(res, 200, { text, profile, log });
+      }
+      if (method === "POST" && path === "/api/internal/memory") {
+        const body = await readBody(req);
+        const botId = String(body.botId ?? "").trim();
+        const target = String(body.target ?? "log").trim();
+        const content = String(body.content ?? "").trim();
+        const mode = String(body.mode ?? (target === "log" ? "append" : "replace")).trim();
+        if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
+        if (!content) return json(res, 400, { error: "content required" });
+
+        if (target === "profile") {
+          const current = mode === "append" ? readProfile(botId) : "";
+          const next = mode === "append" ? (current ? `${current}\n\n${content}` : content) : content;
+          if (next.length > MEMORY_FILE_MAX) {
+            return json(res, 400, { error: `profile exceeds ${MEMORY_FILE_MAX} byte limit` });
+          }
+          writeProfile(botId, next);
+          return json(res, 200, { text: `Updated profile.md (${next.length} bytes).` });
+        } else if (target === "log") {
+          const current = mode === "replace" ? "" : readLog(botId);
+          const next = mode === "replace" ? content : (current ? `${current}\n\n- ${new Date().toISOString()}: ${content}` : `- ${new Date().toISOString()}: ${content}`);
+          if (next.length > MEMORY_FILE_MAX) {
+            return json(res, 400, { error: `log exceeds ${MEMORY_FILE_MAX} byte limit` });
+          }
+          if (mode === "replace") writeLog(botId, next);
+          else appendLog(botId, `\n\n- ${new Date().toISOString()}: ${content}`);
+          return json(res, 200, { text: `Saved to dated log (${next.length} bytes).` });
+        } else {
+          return json(res, 400, { error: "target must be 'profile' or 'log'" });
+        }
       }
       return json(res, 404, { error: "unknown internal endpoint" });
     }

@@ -70,6 +70,40 @@ const TOOLS = [
     },
   },
   {
+    name: "save_memory",
+    description:
+      "Save durable facts or dated notes directly to this bot's memory files. Use 'profile' for persistent facts, user preferences, and project constants (profile.md). Use 'log' for append-only dated notes and event summaries in log/YYYY-MM.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "string",
+          enum: ["profile", "log"],
+          description: "Target memory file: 'profile' (durable facts) or 'log' (dated notes).",
+        },
+        content: {
+          type: "string",
+          description: "Text content to save or append.",
+        },
+        mode: {
+          type: "string",
+          enum: ["append", "replace"],
+          description: "Whether to append to the file or replace its content (default: 'append' for log, 'replace' for profile).",
+        },
+      },
+      required: ["target", "content"],
+    },
+  },
+  {
+    name: "get_memory",
+    description:
+      "Read the current durable profile (profile.md) and current month's dated log (log/YYYY-MM.md) for this bot.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "todo",
     description:
       "Durable checklist for this bot's current job. Call with no items to list. Call with items to replace the list (reuse ids when updating). Statuses: pending, in_progress, completed, cancelled. Keep exactly one item in_progress while you work.",
@@ -184,6 +218,21 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return `- [${date}] [receipt: thread=${hit.threadId} msg=${hit.messageId}] ${hit.botName ? `@${hit.botName}` : "user"}: ${hit.text}`;
     });
     return { text: `Found ${results.length} receipt(s) for "${query}":\n${lines.join("\n")}` };
+  }
+  if (name === "save_memory") {
+    const target = String(args.target ?? "log").trim();
+    const content = String(args.content ?? "").trim();
+    const mode = typeof args.mode === "string" ? args.mode.trim() : undefined;
+    if (!content) return { text: "save_memory needs content.", isError: true };
+    const r = await api(`/api/internal/memory`, {
+      method: "POST",
+      body: JSON.stringify({ botId: BOT_ID, target, content, mode }),
+    });
+    return { text: String(r.text ?? "Memory saved."), isError: Boolean(r.isError) };
+  }
+  if (name === "get_memory") {
+    const r = await api(`/api/internal/memory?botId=${encodeURIComponent(BOT_ID)}`);
+    return { text: String(r.text ?? ""), isError: Boolean(r.isError) };
   }
   if (name === "todo") {
     const payload: Record<string, unknown> = { botId: BOT_ID };

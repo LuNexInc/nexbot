@@ -127,6 +127,26 @@ beforeAll(async () => {
       }
       return res.end(JSON.stringify({ results: [] }));
     }
+    if (req.method === "GET" && req.url?.startsWith("/api/internal/memory")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(
+        JSON.stringify({
+          text: "# Memory for Helper\n\n## profile.md\nKey facts\n\n## Current Month Log\nLogged note",
+          profile: "Key facts",
+          log: "Logged note",
+        }),
+      );
+    }
+    if (req.method === "POST" && req.url === "/api/internal/memory") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        const body = JSON.parse(data || "{}");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ text: `Updated ${body.target}.md` }));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -173,6 +193,8 @@ describe("agents-proxy MCP surface", () => {
       "ask_bot",
       "send_bot",
       "search_history",
+      "save_memory",
+      "get_memory",
       "todo",
     ]);
     const ask = list.result.tools.find((t: { name: string }) => t.name === "ask_bot");
@@ -271,5 +293,25 @@ describe("agents-proxy MCP surface", () => {
     const res = await callTool("search_history", { query: "" });
     expect(res.result.isError).toBe(true);
     expect(res.result.content[0].text).toContain("needs a query");
+  });
+
+  it("save_memory persists facts and notes to bot memory files", async () => {
+    const res = await callTool("save_memory", { target: "profile", content: "Key preference" });
+    expect(res.result.isError).toBeFalsy();
+    expect(res.result.content[0].text).toContain("Updated profile.md");
+  });
+
+  it("save_memory validates missing content", async () => {
+    const res = await callTool("save_memory", { target: "profile", content: "" });
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toContain("needs content");
+  });
+
+  it("get_memory returns current memory files", async () => {
+    const res = await callTool("get_memory", {});
+    expect(res.result.isError).toBeFalsy();
+    const text = res.result.content[0].text;
+    expect(text).toContain("## profile.md");
+    expect(text).toContain("Key facts");
   });
 });
