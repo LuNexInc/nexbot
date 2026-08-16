@@ -117,6 +117,18 @@ function isConversational(text: string): boolean {
   return /^(?:hi|hey|hello|what(?:'s| is) up|thanks|thank you|good morning|good night)\b/i.test(text.trim());
 }
 
+/**
+ * Keep short task constraints from drowning out the user's opening intent.
+ * The first sentence is tried first; the full message remains as a fallback
+ * for requests whose useful context starts later.
+ */
+export function semanticRouteTextVariants(text: string): string[] {
+  const input = text.trim();
+  if (!input) return [];
+  const firstSentence = input.match(/^(.{12,400}?[.!?])(?:\s|$)/s)?.[1]?.trim();
+  return firstSentence && firstSentence !== input ? [firstSentence, input] : [input];
+}
+
 function dot(a: number[], b: number[]): number {
   let value = 0;
   const length = Math.min(a.length, b.length);
@@ -213,13 +225,17 @@ export async function semanticRoute(
     prototypeCache = { signature, vectors: prototypeVectors };
   }
 
-  const [query] = await encoder([input]);
-  if (!query) return null;
-  const scores = candidates.map((peer, index) => ({
-    peer,
-    score: Math.max(...prototypeVectors[index].map((vector) => dot(query, vector))),
-  }));
-  return chooseSemanticRoute(scores);
+  for (const queryText of semanticRouteTextVariants(input)) {
+    const [query] = await encoder([queryText]);
+    if (!query) continue;
+    const queryScores = candidates.map((peer, index) => ({
+      peer,
+      score: Math.max(...prototypeVectors[index].map((vector) => dot(query, vector))),
+    }));
+    const decision = chooseSemanticRoute(queryScores);
+    if (decision) return decision;
+  }
+  return null;
 }
 
 /** Test hook: clear the lazy model and roster caches without touching disk. */

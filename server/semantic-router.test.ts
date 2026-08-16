@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chooseSemanticRoute, type SemanticRoutePeer } from "./semantic-router.ts";
+import { chooseSemanticRoute, semanticRouteTextVariants, type SemanticRoutePeer } from "./semantic-router.ts";
 
 const spark: SemanticRoutePeer = {
   id: "spark",
@@ -15,6 +15,18 @@ const research: SemanticRoutePeer = {
   title: "Research & briefings",
   description: "Find useful sources and turn them into concise, sourced briefings.",
 };
+
+describe("semantic router input focus", () => {
+  it("tries the opening task before trailing constraints", () => {
+    const text =
+      "Brainstorm three bold visual directions for NexBot. This is a short routing smoke test; do not change files or send anything externally.";
+
+    expect(semanticRouteTextVariants(text)).toEqual([
+      "Brainstorm three bold visual directions for NexBot.",
+      text,
+    ]);
+  });
+});
 
 describe("semantic router decision gate", () => {
   it("selects the highest-confidence teammate", () => {
