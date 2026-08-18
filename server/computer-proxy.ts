@@ -1,5 +1,13 @@
 import { preToolHook } from "./tool-hooks.ts";
 import { boundToolOutput } from "./comms-policy.ts";
+import {
+  escapeShellArg,
+  isPromptInjection,
+  sanitizeCuaText,
+  sanitizeKeySequence,
+  sanitizeShellCommand,
+  sanitizeUrl,
+} from "./environ-guard.ts";
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
 // computer (box.ascii.dev) as CUA-grade tools.
@@ -16,7 +24,7 @@ const BOX_API = "https://ascii.dev/api/box/v1";
 const boxId = process.env.NEXBOT_BOX_ID ?? "";
 const token = process.env.NEXBOT_BOX_TOKEN ?? "";
 
-async function runOnBox(command: string, timeoutMs = 60_000) {
+export async function runOnBox(command: string, timeoutMs = 60_000) {
   const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -34,10 +42,11 @@ async function runOnBox(command: string, timeoutMs = 60_000) {
 
 /** Run a CUA computer-server command on the box's loopback; returns the
  * parsed JSON payload, or null when the server isn't up (→ fallback). */
-async function cuaCmd(command: string, params: Record<string, unknown>, timeoutMs = 30_000) {
-  const payload = JSON.stringify({ command, params }).replace(/'/g, "'\\''");
+export async function cuaCmd(command: string, params: Record<string, unknown>, timeoutMs = 30_000) {
+  const safeJson = JSON.stringify({ command, params });
+  const payload = escapeShellArg(safeJson);
   const out = await runOnBox(
-    `curl -sf -m ${Math.floor(timeoutMs / 1000)} -X POST http://127.0.0.1:8000/cmd -H 'Content-Type: application/json' -d '${payload}'`,
+    `curl -sf -m ${Math.floor(timeoutMs / 1000)} -X POST http://127.0.0.1:8000/cmd -H 'Content-Type: application/json' -d ${payload}`,
     timeoutMs + 15_000,
   );
   if (!out.ok || !out.stdout.trim()) return null;
@@ -66,7 +75,7 @@ const SHOT_CMD = [
 
 // real display size, fetched once per proxy lifetime (per turn)
 let geometryCache: { width: number; height: number } | null | undefined;
-async function displayGeometry() {
+export async function displayGeometry() {
   if (geometryCache !== undefined) return geometryCache;
   const out = await runOnBox(`${X}xdotool getdisplaygeometry`);
   const m = out.stdout.trim().match(/^(\d+)\s+(\d+)/);
@@ -74,7 +83,7 @@ async function displayGeometry() {
   return geometryCache;
 }
 
-async function readBoxFile(path: string): Promise<string | null> {
+export async function readBoxFile(path: string): Promise<string | null> {
   const res = await fetch(
     `${BOX_API}/boxes/${boxId}/files?path=${encodeURIComponent(path)}&encoding=base64`,
     { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000) },
@@ -84,11 +93,41 @@ async function readBoxFile(path: string): Promise<string | null> {
   return res.ok && typeof content === "string" && content ? content : null;
 }
 
+export async function captureScreenshot(): Promise<string | null> {
+  const out = await runOnBox(SHOT_CMD, 60_000);
+  if (!/captured/.test(out.stdout)) return null;
+  return await readBoxFile("/tmp/nexbot-shot.png");
+}
+
 const send = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const text = (id: unknown, t: string, isError = false) =>
   send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) } });
 
-const TOOLS = [
+export async function respondWithVerification(
+  id: unknown,
+  message: string,
+  verifyState?: boolean,
+) {
+  if (!verifyState) {
+    return text(id, message);
+  }
+  const shot = await captureScreenshot();
+  if (shot) {
+    return send({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        content: [
+          { type: "text", text: `${message} (visual state verified)` },
+          { type: "image", data: shot, mimeType: "image/png" },
+        ],
+      },
+    });
+  }
+  return text(id, `${message} (visual verification failed: could not capture frame)`);
+}
+
+export const TOOLS = [
   {
     name: "screenshot",
     description:
@@ -102,10 +141,30 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        x: { type: "number" },
-        y: { type: "number" },
+        x: { type: "number", description: "X coordinate on the screen" },
+        y: { type: "number", description: "Y coordinate on the screen" },
         button: { type: "string", enum: ["left", "right"], description: "default left" },
         double: { type: "boolean", description: "double-click" },
+        verifyState: {
+          type: "boolean",
+          description: "Capture a post-action screenshot verification check after clicking (OSWorld state verification)",
+        },
+      },
+      required: ["x", "y"],
+    },
+  },
+  {
+    name: "mouse_move",
+    description: "Move the mouse cursor to pixel coordinates on the computer's screen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        x: { type: "number", description: "X coordinate on the screen" },
+        y: { type: "number", description: "Y coordinate on the screen" },
+        verifyState: {
+          type: "boolean",
+          description: "Capture a post-action screenshot verification check after moving (OSWorld state verification)",
+        },
       },
       required: ["x", "y"],
     },
@@ -113,13 +172,33 @@ const TOOLS = [
   {
     name: "type_text",
     description: "Type text at the current focus on the computer.",
-    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to type" },
+        verifyState: {
+          type: "boolean",
+          description: "Capture a post-action screenshot verification check after typing (OSWorld state verification)",
+        },
+      },
+      required: ["text"],
+    },
   },
   {
     name: "press_key",
     description:
       'Press a key or chord on the computer, xdotool syntax: "Return", "Tab", "ctrl+c", "alt+F4", "ctrl+shift+t".',
-    inputSchema: { type: "object", properties: { keys: { type: "string" } }, required: ["keys"] },
+    inputSchema: {
+      type: "object",
+      properties: {
+        keys: { type: "string" },
+        verifyState: {
+          type: "boolean",
+          description: "Capture a post-action screenshot verification check after key press",
+        },
+      },
+      required: ["keys"],
+    },
   },
   {
     name: "scroll",
@@ -129,6 +208,10 @@ const TOOLS = [
       properties: {
         direction: { type: "string", enum: ["up", "down"] },
         clicks: { type: "number", description: "default 3" },
+        verifyState: {
+          type: "boolean",
+          description: "Capture a post-action screenshot verification check after scrolling",
+        },
       },
       required: ["direction"],
     },
@@ -146,7 +229,7 @@ const TOOLS = [
   },
 ];
 
-async function call(id: unknown, name: string, args: any) {
+export async function call(id: unknown, name: string, args: any) {
   if (name === "screenshot") {
     const out = await runOnBox(SHOT_CMD, 60_000);
     if (!/captured/.test(out.stdout)) {
@@ -163,7 +246,12 @@ async function call(id: unknown, name: string, args: any) {
   if (name === "click") {
     const x = Math.round(Number(args.x));
     const y = Math.round(Number(args.y));
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return text(id, "click needs numeric x,y", true);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+      return text(id, "click needs numeric non-negative x,y", true);
+    }
+    if (x > 10000 || y > 10000) {
+      return text(id, "click coordinates exceed display bounds", true);
+    }
     // screenshot space is 1280 wide (files-API capture is downscaled) but
     // the real display can be larger — scale uniformly by width or clicks
     // land short (probed live: 1920×1080 display, 1280×720 screenshots,
@@ -177,41 +265,76 @@ async function call(id: unknown, name: string, args: any) {
     const rep = args.double ? "--repeat 2 --delay 150 " : "";
     const out = await runOnBox(`${X}xdotool mousemove ${sx} ${sy} click ${rep}${btn}`);
     if (!out.ok) return text(id, `click failed: ${out.stderr.slice(0, 200)}`, true);
-    return text(
-      id,
-      `clicked ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}${args.double ? " (double)" : ""}${args.button === "right" ? " (right)" : ""} — screenshot to verify`,
-    );
+    const msg = `clicked ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}${args.double ? " (double)" : ""}${args.button === "right" ? " (right)" : ""} — screenshot to verify`;
+    return respondWithVerification(id, msg, Boolean(args.verifyState));
   }
-  if (name === "type_text") {
-    const t = String(args.text ?? "");
+  if (name === "mouse_move" || name === "move_cursor" || name === "move") {
+    const x = Math.round(Number(args.x));
+    const y = Math.round(Number(args.y));
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+      return text(id, "mouse_move needs numeric non-negative x,y", true);
+    }
+    if (x > 10000 || y > 10000) {
+      return text(id, "mouse_move coordinates exceed display bounds", true);
+    }
+    const geometry = await displayGeometry();
+    const scale = geometry ? geometry.width / SHOT_WIDTH : 1;
+    const sx = Math.round(x * scale);
+    const sy = Math.round(y * scale);
+    const cua = await cuaCmd("mouse_move", { x: sx, y: sy });
+    if (!cua) {
+      const out = await runOnBox(`${X}xdotool mousemove ${sx} ${sy}`);
+      if (!out.ok) return text(id, `mouse_move failed: ${out.stderr.slice(0, 200)}`, true);
+    }
+    const msg = `moved mouse to ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}`;
+    return respondWithVerification(id, msg, Boolean(args.verifyState));
+  }
+  if (name === "type_text" || name === "type") {
+    const raw = String(args.text ?? "");
+    const t = sanitizeCuaText(raw);
     if (!t) return text(id, "nothing to type", true);
+    if (isPromptInjection(t)) {
+      return text(id, "NexBot: blocked a potential prompt injection typing payload", true);
+    }
     const cua = await cuaCmd("type_text", { text: t });
     if (!cua) {
-      const safe = t.replace(/'/g, "'\\''");
-      const out = await runOnBox(`${X}xdotool type --delay 12 '${safe}'`);
+      const safe = escapeShellArg(t);
+      const out = await runOnBox(`${X}xdotool type --delay 12 ${safe}`);
       if (!out.ok) return text(id, `type failed: ${out.stderr.slice(0, 200)}`, true);
     }
-    return text(id, `typed ${t.length} chars`);
+    const msg = `typed ${t.length} chars`;
+    return respondWithVerification(id, msg, Boolean(args.verifyState));
   }
   if (name === "press_key") {
-    const keys = String(args.keys ?? "").replace(/[^\w+]/g, "");
+    const rawKeys = String(args.keys ?? "");
+    const keys = sanitizeKeySequence(rawKeys);
     if (!keys) return text(id, "press_key needs keys", true);
-    const out = await runOnBox(`${X}xdotool key ${keys}`);
-    return out.ok ? text(id, `pressed ${keys}`) : text(id, `key failed: ${out.stderr.slice(0, 200)}`, true);
+    const safeKeys = escapeShellArg(keys);
+    const out = await runOnBox(`${X}xdotool key ${safeKeys}`);
+    if (!out.ok) return text(id, `key failed: ${out.stderr.slice(0, 200)}`, true);
+    const msg = `pressed ${keys}`;
+    return respondWithVerification(id, msg, Boolean(args.verifyState));
   }
   if (name === "scroll") {
     const clicks = Math.min(Math.max(Math.round(Number(args.clicks) || 3), 1), 20);
-    const command = args.direction === "up" ? "scroll_up" : "scroll_down";
+    const direction = args.direction === "up" ? "up" : "down";
+    const command = direction === "up" ? "scroll_up" : "scroll_down";
     const cua = await cuaCmd(command, { clicks });
     if (!cua) {
-      const btn = args.direction === "up" ? 4 : 5;
+      const btn = direction === "up" ? 4 : 5;
       const out = await runOnBox(`${X}xdotool click --repeat ${clicks} ${btn}`);
       if (!out.ok) return text(id, `scroll failed: ${out.stderr.slice(0, 200)}`, true);
     }
-    return text(id, `scrolled ${args.direction} ${clicks}`);
+    const msg = `scrolled ${direction} ${clicks}`;
+    return respondWithVerification(id, msg, Boolean(args.verifyState));
   }
   if (name === "computer_exec") {
-    const command = String(args.command ?? "").slice(0, 4000);
+    const raw = String(args.command ?? "");
+    const command = sanitizeShellCommand(raw);
+    if (!command.trim()) return text(id, "nothing to execute", true);
+    if (isPromptInjection(command)) {
+      return text(id, "NexBot: blocked a potential prompt injection command", true);
+    }
     const hook = preToolHook({ name: "computer_exec", command });
     if (!hook.allow) {
       return text(id, "NexBot: " + (hook.reason ?? "blocked a request to read process environment secrets"), true);
@@ -221,11 +344,15 @@ async function call(id: unknown, name: string, args: any) {
     return text(id, boundToolOutput(combined, 8000));
   }
   if (name === "open_url") {
-    const url = String(args.url ?? "");
-    if (!/^https?:\/\//.test(url)) return text(id, "only http(s) URLs", true);
-    const q = url.replace(/'/g, "%27");
+    const rawUrl = String(args.url ?? "");
+    const url = sanitizeUrl(rawUrl);
+    if (!url) return text(id, "only valid http(s) URLs without unsafe characters", true);
+    if (isPromptInjection(url)) {
+      return text(id, "NexBot: blocked a potential prompt injection in URL", true);
+    }
+    const safeUrl = escapeShellArg(url);
     await runOnBox(
-      `${X}(google-chrome '${q}' || chromium '${q}' || chromium-browser '${q}' || xdg-open '${q}') >/dev/null 2>&1 & sleep 3; echo opened`,
+      `${X}(google-chrome ${safeUrl} || chromium ${safeUrl} || chromium-browser ${safeUrl} || xdg-open ${safeUrl}) >/dev/null 2>&1 & sleep 3; echo opened`,
       30_000,
     );
     return text(id, `opened ${url} — take a screenshot to see it`);

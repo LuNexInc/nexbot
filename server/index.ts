@@ -20,7 +20,7 @@ import { appendLog, buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory
 import { json, readBody, serveStatic, portBusyHint } from "./http-util.ts";
 import { searchMessages } from "./db.ts";
 import { forgetTurn, rememberTurn } from "./pending.ts";
-import { sessionDeathSettlement } from "./recovery.ts";
+import { prepareReflexionPrompt, sessionDeathSettlement } from "./recovery.ts";
 import { createJob, getJob, listJobs, updateJob } from "./jobs.ts";
 import {
   createRoutine,
@@ -757,7 +757,9 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     throw Object.assign(new Error("no such job for this bot"), { status: 404 });
   }
   const isResume = Boolean(opts?.resume && existingJob);
-  const turnText = isResume && existingJob ? existingJob.text : text;
+  const turnText = existingJob
+    ? (text ? prepareReflexionPrompt({ ...existingJob, text }, store) : prepareReflexionPrompt(existingJob, store))
+    : text;
   let taskContext = opts?.taskContext ?? (isResume ? existingJob?.taskContext : undefined) ?? createTaskContext(bot.id);
 
   if (bot.kind === "group") {
@@ -865,15 +867,17 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     broadcast({ kind: "bot", bot: store.bot(bot.id) });
   }
 
-  const job = isResume && existingJob
+  const job = existingJob
     ? updateJob(existingJob.id, {
         status: "running",
         attempt: existingJob.attempt + 1,
         error: undefined,
+        text: turnText,
         taskContext,
         providerInstanceId: selection.instanceId,
         model: selection.model,
         reasoningEffort: selection.reasoningEffort,
+        resumeCursor: isResume ? existingJob.resumeCursor : undefined,
         onComplete: opts?.onComplete ?? existingJob.onComplete,
         maxTokens: opts?.maxTokens ?? existingJob.maxTokens,
       })!
@@ -2043,7 +2047,8 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(job.botId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (bot.busy) return json(res, 409, { error: "the bot is already working — interrupt it first" });
-      await startTurn(job.botId, job.text, {
+      const promptText = prepareReflexionPrompt(job, store);
+      await startTurn(job.botId, promptText, {
         jobId: job.id,
         resume: m[2] === "resume",
         replay: true,

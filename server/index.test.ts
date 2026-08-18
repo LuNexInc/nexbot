@@ -656,6 +656,13 @@ describe("harness HTTP API", () => {
     expect(Array.isArray(feed.body.items)).toBe(true);
   });
 
+  it("POST /api/jobs/:id/retry and /resume return 404 for unknown jobs", async () => {
+    const retry = await api("POST", "/api/jobs/nonexistent-id/retry");
+    expect(retry.status).toBe(404);
+    const resume = await api("POST", "/api/jobs/nonexistent-id/resume");
+    expect(resume.status).toBe(404);
+  });
+
   it("requires the wipe password and confirmation, then clears local bot data", async () => {
     const denied = await fetch(`${BASE}/api/wipe`, {
       method: "POST",

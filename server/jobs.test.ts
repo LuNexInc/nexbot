@@ -54,4 +54,36 @@ describe("durable jobs", () => {
       maxTokens: 80_000,
     });
   });
+
+  it("persists error context and tracks retry attempts", () => {
+    const job = createJob({
+      botId: "bot-1",
+      threadId: "t1",
+      messageId: "m1",
+      text: "deploy service",
+      source: "user",
+      providerInstanceId: "codex",
+      model: "gpt-5",
+    });
+
+    updateJob(job.id, { status: "failed", error: "deployment timeout after 60s" });
+    expect(getJob(job.id)).toMatchObject({
+      status: "failed",
+      error: "deployment timeout after 60s",
+      attempt: 1,
+    });
+
+    const retried = updateJob(job.id, {
+      status: "running",
+      attempt: job.attempt + 1,
+      error: undefined,
+      text: '[Reflexion Recovery - Previous failure context: "deployment timeout after 60s"]\nDiagnose why the previous attempt failed and adjust your strategy to complete the original task:\n\ndeploy service',
+    });
+    expect(retried).toMatchObject({
+      status: "running",
+      attempt: 2,
+      error: undefined,
+    });
+    expect(getJob(job.id)?.text).toContain("Reflexion Recovery");
+  });
 });
