@@ -1,5 +1,13 @@
 # NexBot — DECISIONS
 
+## 2026-08-19 — Reflexion recovery & OSWorld CUA state verification with prompt injection guards
+
+- **Choice:** Job retries and resumptions via `/api/jobs/:id/(resume|retry)` automatically construct a Reflexion-style self-critique prompt (`[Reflexion Recovery - Previous failure context: "..."]`) containing the error message and original user task, unwrapping prior Reflexion envelopes to prevent nested accumulation.
+- **Choice:** CUA desktop tools (`click`, `mouse_move`, `type_text`, `press_key`, `scroll`) accept optional `verifyState: true` to capture a post-action screenshot verification check.
+- **Choice:** Shell commands and CUA payloads enforce strict bounds (4k command / 10k text / 2k URL), dangerous character stripping (null bytes, control chars, zero-width evasion), POSIX single-quote escaping, and prompt injection detection in `environ-guard.ts` before tool execution.
+- **Why:** Prevents agents from repeating identical failure modes on turn resumption, verifies visual desktop state transitions without blind execution, and blocks indirect prompt injection via untrusted browser content.
+- **Reverse if:** Charles wants un-critiqued blind retries or raw unsanitized shell inputs.
+
 ## 2026-08-15 — Android Connect companion uses a native shell
 
 - **Choice:** Build Connect as a native Android app that stores pairing data
