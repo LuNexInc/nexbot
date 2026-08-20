@@ -57,6 +57,12 @@ export function OptionCard({
               {card.subtitle}
             </p>
           )}
+          {card.risk && (
+            <p className="text-[12px] leading-relaxed text-ink-secondary">
+              Risk: <strong className="uppercase text-ink">{card.risk}</strong>
+              {card.riskReason ? ` — ${card.riskReason}` : ""}
+            </p>
+          )}
         </div>
         <button
           onClick={() => dispatch({ type: "dismissCard", botId, messageId: message.id })}

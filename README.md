@@ -44,8 +44,22 @@ NexBot does not use a cloud desktop (no Box). Local CUA drives this PC.
 ```sh
 pnpm typecheck
 pnpm test
+pnpm run doctor     # local store, CUA, queue, jobs, and provider readiness
 pnpm package:win    # NSIS installer + portable .exe under release/
 pnpm package:mac    # macOS (on a Mac)
+```
+
+Busy bots accept durable `queue`, next-turn `steer`, and interrupting `replace`
+messages. Execution receipts distinguish a tool attempt from a verified state
+change. App Settings also provides operator takeover, an encrypted per-bot
+credential vault, custom ACP providers, and the same doctor report.
+
+The live benchmark sends real turns and writes its report under `outputs/`.
+Run it against a disposable profile or an intended test bot because it uses
+provider quota and adds benchmark messages to that bot's transcript.
+
+```sh
+pnpm run benchmark -- --bot Luna --runs 3
 ```
 
 ## Status
@@ -65,7 +79,7 @@ owns agent processes and normalizes each provider protocol into one event stream
 
 | Layer | Path | Role |
 |-------|------|------|
-| Drivers | `server/drivers/` | Claude, Codex, Grok, cloud computer |
+| Drivers | `server/drivers/` | Claude, Codex, Grok, and generic ACP |
 | Harness | `server/harness/` | Registry + event bus |
 | API | `server/index.ts` | Bots, turns, approvals, connectors, config |
 | App | `src/` | Chat UI |
@@ -73,8 +87,9 @@ owns agent processes and normalizes each provider protocol into one event stream
 
 ## Security notes
 
-- Local harness has **no auth** (trusts the machine user). Bind is `127.0.0.1` only.
-- Agents run with your user privileges. Approve shell and computer actions deliberately.
+- Loopback is trusted. Non-loopback API clients need the configured access token.
+- Agents run with your user privileges. High-risk actions require approval by default.
+- Credential values are encrypted and granted per bot. Focused-field fill does not return a value to the model.
 - Report issues per `SECURITY.md`.
 
 ## License

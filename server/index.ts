@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { configStatus } from "./app-meta.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, DATA_DIR, EVENTS_DIR, NATIVE_DIR, wipePassword } from "./config.ts";
+import { defaultInstanceConfigs, ensureDirs, instanceConfigs, loadConfig, saveConfig, DATA_DIR, EVENTS_DIR, NATIVE_DIR, wipePassword } from "./config.ts";
 import type { ModelSelection, ReasoningEffort, RuntimeEvent } from "./contracts.ts";
 import { readCuaConnection } from "./cua-connection.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -19,6 +19,12 @@ import { ProviderRegistry } from "./harness/registry.ts";
 import { appendLog, buildPersona, deskPath, deskPrompt, ensureDesk, ensureMemory, inboxPath, MEMORY_FILE_MAX, memoryDir, memoryPrompt, readLog, readProfile, writeInboxFile, writeLog, writeProfile } from "./desk.ts";
 import { json, readBody, serveStatic, portBusyHint } from "./http-util.ts";
 import { searchMessages } from "./db.ts";
+import { completeReceipt, interruptReceipts, listReceipts, observeFrame, startReceipt, type ExecutionReceipt } from "./execution-evidence.ts";
+import { classifyPermission } from "./risk-policy.ts";
+import { enqueueTurn, queuedTurns, removeQueuedTurnsForBot, takeNextTurn } from "./turn-queue.ts";
+import { listMemoryFacts, memoryFactsPrompt, saveMemoryFact, searchMemoryFacts } from "./memory-facts.ts";
+import { createCredential, credentialsForBot, deleteCredential, listCredentials, revealGrantedCredential, setCredentialGrants } from "./credentials.ts";
+import { doctorOverall, localDoctorChecks } from "./doctor.ts";
 import { forgetTurn, rememberTurn } from "./pending.ts";
 import { prepareReflexionPrompt, sessionDeathSettlement } from "./recovery.ts";
 import { createJob, getJob, listJobs, updateJob } from "./jobs.ts";
@@ -145,6 +151,45 @@ function todosIntegration(botId: string) {
   };
 }
 
+const credentialProxyPath = (() => {
+  const ts = join(dirname(fileURLToPath(import.meta.url)), "credential-proxy.ts");
+  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+})();
+
+function credentialsIntegration(botId: string) {
+  const cua = readCuaConnection();
+  return {
+    command: process.execPath,
+    args: [credentialProxyPath],
+    env: {
+      ...AGENTS_NODE_FLAG,
+      NEXBOT_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+      NEXBOT_BOT_ID: botId,
+      NEXBOT_COMMS_TOKEN: COMMS_TOKEN,
+      ...(cua ? { NEXBOT_CUA_SPEC: JSON.stringify(cua) } : {}),
+    },
+  };
+}
+
+const cuaGateProxyPath = (() => {
+  const ts = join(dirname(fileURLToPath(import.meta.url)), "cua-gate-proxy.ts");
+  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+})();
+
+function localComputerIntegration(botId: string, cua: NonNullable<ReturnType<typeof readCuaConnection>>) {
+  return {
+    command: process.execPath,
+    args: [cuaGateProxyPath],
+    env: {
+      ...AGENTS_NODE_FLAG,
+      NEXBOT_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+      NEXBOT_BOT_ID: botId,
+      NEXBOT_COMMS_TOKEN: COMMS_TOKEN,
+      NEXBOT_CUA_SPEC: JSON.stringify(cua),
+    },
+  };
+}
+
 /** Run a turn on `targetBotId` and resolve with its assistant text — the
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
  * for that thread, resolves on turn.completed (or a 4-min ceiling). */
@@ -160,6 +205,8 @@ type StartTurnOpts = {
   source?: "user" | "agent" | "routine" | "proactive" | "completion";
   onComplete?: { targetBotId: string; messageTemplate?: string };
   maxTokens?: number;
+  /** Reuse a durable pending message when draining the user turn queue. */
+  existingMessageId?: string;
 };
 
 const nonceCache = createNonceCache(60_000);
@@ -276,8 +323,26 @@ const screens = createScreenPoller({
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
 const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
+const receiptByItem = new Map<string, string>(); // itemId -> receiptId
+const receiptMessage = new Map<string, { threadId: string; messageId: string }>();
 const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
 const turnTools = new Map<string, { names: string[]; okNames: string[] }>();
+
+function patchReceiptMessage(receipt: ExecutionReceipt): void {
+  const link = receiptMessage.get(receipt.id);
+  if (!link) return;
+  const existing = store.messagesFor(link.threadId).find((message) => message.id === link.messageId);
+  if (!existing?.tool) return;
+  const patched = store.patchMessage(link.threadId, link.messageId, {
+    tool: {
+      ...existing.tool,
+      ok: receipt.status === "running" ? undefined : receipt.status === "succeeded",
+      receiptId: receipt.id,
+      evidence: receipt.verification,
+    },
+  });
+  if (patched) broadcast({ kind: "message.patch", threadId: link.threadId, message: patched });
+}
 
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
@@ -359,13 +424,18 @@ bus.subscribe((event: RuntimeEvent) => {
         else postToolHook({ name: existingName, title: existingName });
         const tools = turnTools.get(bot.id);
         if (tools && event.ok !== false) tools.okNames.push(existingName);
+        const receiptId = receiptByItem.get(event.itemId);
+        const receipt = receiptId ? completeReceipt(receiptId, event.ok !== false) : null;
+        if (receipt) patchReceiptMessage(receipt);
         if (messageId) {
+          const existingTool = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
           const patched = store.patchMessage(event.threadId, messageId, {
-            tool: { name: existingName, ok: event.ok },
+            tool: { ...existingTool, name: existingName, ok: event.ok },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(event.itemId);
         }
+        receiptByItem.delete(event.itemId);
         screens.poke(bot.id);
       }
       break;
@@ -395,17 +465,54 @@ bus.subscribe((event: RuntimeEvent) => {
         const row = turnTools.get(bot.id) ?? { names: [], okNames: [] };
         row.names.push(name);
         turnTools.set(bot.id, row);
-        const message = pushMessage({ role: "bot", kind: "activity", tool: { name: hook.allow ? name : `blocked: ${name}`, ok: hook.allow ? undefined : false } });
-        if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
+        const receipt = startReceipt({
+          botId: bot.id,
+          threadId: event.threadId,
+          jobId: turnMeta.get(bot.id)?.jobId,
+          itemId: event.itemId,
+          eventId: event.eventId,
+          action: name,
+          visual: isComputerToolName(name),
+        });
+        const message = pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: {
+            name: hook.allow ? name : `blocked: ${name}`,
+            ok: hook.allow ? undefined : false,
+            receiptId: receipt.id,
+            evidence: receipt.verification,
+          },
+        });
+        receiptMessage.set(receipt.id, { threadId: event.threadId, messageId: message.id });
+        if (event.itemId) {
+          toolMessageByItem.set(event.itemId, message.id);
+          receiptByItem.set(event.itemId, receipt.id);
+        }
       }
       break;
     }
     case "request.opened": {
       if (event.requestType === "permission" && event.requestId) {
-        const instance = registry.get(bot.modelSelection.instanceId);
-        void instance?.adapter
-          .respondToRequest(bot.threadId, event.requestId, { behavior: "allow" })
-          .catch(() => {});
+        const decision = classifyPermission(event.tool, event.summary);
+        if (decision.action === "allow") {
+          const instance = registry.get(bot.modelSelection.instanceId);
+          void instance?.adapter.respondToRequest(bot.threadId, event.requestId, { behavior: "allow" }).catch(() => {});
+          break;
+        }
+        const message = pushMessage({
+          role: "bot",
+          kind: "options",
+          card: {
+            title: "Approve this action?",
+            subtitle: event.summary,
+            options: ["Allow", "Deny"],
+            requestId: event.requestId,
+            risk: decision.level,
+            riskReason: decision.reason,
+          },
+        });
+        askMessageByRequest.set(event.requestId, message.id);
         break;
       }
       const message = pushMessage({
@@ -533,7 +640,9 @@ bus.subscribe((event: RuntimeEvent) => {
         proactivePending.delete(bot.id);
         setTimeout(() => triggerProactive(bot.id, reason), 50);
       }
-      if (queued && queued.length > 0) {
+      if (queuedTurns(bot.id).length > 0) {
+        setTimeout(() => drainUserQueue(bot.id), 50);
+      } else if (queued && queued.length > 0) {
         groupQueuedTurns.delete(bot.id);
         const mergedText = queued.map((q) => q.text).join("\n\n---\n\n");
         const gid = queued[0]?.groupId;
@@ -588,7 +697,7 @@ async function autoRouteChiefTurn(
 
   const delegatedText = `[Task from Chief of Staff]\n\n${text}`;
   try {
-    if (target.busy) {
+    if (target.busy || target.operatorControl) {
       queueAgentMessage(target.id, {
         fromBotId: bot.id,
         message: text,
@@ -634,7 +743,7 @@ function triggerProactive(botId: string, reason: ProactiveReason, context = "") 
   const reasons = proactivePending.get(botId) ?? new Set<ProactiveReason>();
   reasons.add(reason);
   proactivePending.set(botId, reasons);
-  if (bot.busy) return;
+  if (bot.busy || bot.operatorControl) return;
   proactivePending.delete(botId);
   void startTurn(botId, proactivePrompt(reason, context), {
     source: "proactive",
@@ -670,7 +779,7 @@ function queueAgentMessage(targetBotId: string, item: QueuedAgentMessage): numbe
 function drainAgentInbox(botId: string) {
   const target = store.bot(botId);
   const queue = agentInbox.get(botId);
-  if (!target || target.busy || !queue?.length) return;
+  if (!target || target.busy || target.operatorControl || !queue?.length) return;
   const item = queue.shift()!;
   if (!queue.length) agentInbox.delete(botId);
   persistAgentInbox(agentInbox);
@@ -748,9 +857,44 @@ function enqueueCompletionReport(bot: ReturnType<typeof store.bot>, text: string
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
+async function stopActiveTurn(botId: string, reason: string): Promise<void> {
+  const bot = store.bot(botId);
+  if (!bot) return;
+  const instance = registry.get(bot.modelSelection.instanceId);
+  try { await instance?.adapter.interruptTurn(bot.threadId); } catch {}
+  const interruptedTurn = turnMeta.get(bot.id);
+  if (interruptedTurn?.jobId) updateJob(interruptedTurn.jobId, { status: "interrupted", error: reason });
+  for (const receipt of interruptReceipts(bot.id)) patchReceiptMessage(receipt);
+  watchdog.end(bot.id);
+  screens.stop(bot.id);
+  turnGroup.delete(bot.id);
+  turnMeta.delete(bot.id);
+  turnTools.delete(bot.id);
+  store.patchBot(bot.id, { busy: false });
+  forgetTurn(bot.id);
+  broadcast({ kind: "bot", bot: store.bot(bot.id) });
+}
+
+function drainUserQueue(botId: string): void {
+  const bot = store.bot(botId);
+  if (!bot || bot.busy || bot.operatorControl) return;
+  const queued = takeNextTurn(botId);
+  if (!queued) return;
+  void startTurn(botId, queued.text, {
+    clientNonce: queued.clientNonce,
+    existingMessageId: queued.messageId,
+    source: "user",
+  }).catch(() => {
+    const failed = store.patchMessage(bot.threadId, queued.messageId, { status: "failed" });
+    if (failed) broadcast({ kind: "message.patch", threadId: bot.threadId, message: failed });
+    setTimeout(() => drainUserQueue(botId), 50);
+  });
+}
+
 async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (bot.operatorControl) throw Object.assign(new Error("operator takeover is active — release control before starting the bot"), { status: 409 });
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const existingJob = opts?.jobId ? getJob(opts.jobId) : null;
   if (opts?.jobId && (!existingJob || existingJob.botId !== bot.id)) {
@@ -774,7 +918,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     for (const member of targets) {
       if (!member) continue;
        const promptText = `[Group @${bot.name}]\n\n${turnText}`;
-      if (member.busy) {
+      if (member.busy || member.operatorControl) {
         const existing = groupQueuedTurns.get(member.id) ?? [];
         existing.push({ text: promptText, groupId: bot.id });
         groupQueuedTurns.set(member.id, existing);
@@ -815,24 +959,33 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     selection = chooseAntigravityCosSelection(selection, turnText);
   }
 
+  const existingIncoming = opts?.existingMessageId
+    ? store.messagesFor(bot.threadId).find((message) => message.id === opts.existingMessageId)
+    : undefined;
+  if (existingIncoming?.status === "pending") {
+    const confirmed = store.patchMessage(bot.threadId, existingIncoming.id, { status: "confirmed" });
+    if (confirmed) broadcast({ kind: "message.patch", threadId: bot.threadId, message: confirmed });
+  }
   const incoming = isResume
     ? null
-    : opts?.fromBot
-      ? store.appendMessage(bot.threadId, {
-          role: "bot",
-          kind: "text",
-          text: opts.chatText ?? turnText,
-          fromBot: opts.fromBot,
-          source: opts.source ?? "agent",
-        })
-      : store.appendMessage(bot.threadId, {
-          role: "user",
-          kind: "text",
-          text: turnText,
-          clientNonce: opts?.clientNonce,
-          source: opts?.source ?? "user",
-        });
-  if (incoming) broadcast({ kind: "message", threadId: bot.threadId, message: incoming });
+    : existingIncoming ?? (
+        opts?.fromBot
+          ? store.appendMessage(bot.threadId, {
+              role: "bot",
+              kind: "text",
+              text: opts.chatText ?? turnText,
+              fromBot: opts.fromBot,
+              source: opts.source ?? "agent",
+            })
+          : store.appendMessage(bot.threadId, {
+              role: "user",
+              kind: "text",
+              text: turnText,
+              clientNonce: opts?.clientNonce,
+              source: opts?.source ?? "user",
+            })
+      );
+  if (incoming && !existingIncoming) broadcast({ kind: "message", threadId: bot.threadId, message: incoming });
   const turnKind: TurnKind = isResume && existingJob ? existingJob.source : opts?.source ?? (opts?.fromBot ? "agent" : "user");
 
   // Print-mode providers cannot receive the peer-agent MCP tools. Route a
@@ -896,7 +1049,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       });
   turnMeta.set(bot.id, {
     kind: turnKind,
-    messageStart: incoming ? store.messagesFor(bot.threadId).length - 1 : store.messagesFor(bot.threadId).length,
+    messageStart: incoming ? Math.max(0, store.messagesFor(bot.threadId).findIndex((message) => message.id === incoming.id)) : store.messagesFor(bot.threadId).length,
     startedAt: Date.now(),
     sourceBotId: opts?.fromBot?.id,
     jobId: job.id,
@@ -908,7 +1061,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
   ensureMemory(bot.id);
   const builtPersona = buildPersona(bot, {
     desk: deskPrompt(bot.id),
-    memory: bot.memoryEnabled ? memoryPrompt(bot.id) : "",
+    memory: bot.memoryEnabled ? `${memoryPrompt(bot.id)}${memoryFactsPrompt(bot.id)}` : "",
     skills: skillsPrompt(bot.enabledSkillSlugs),
   });
   const persona = withRolePrompt(bot, builtPersona);
@@ -968,7 +1121,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       const wants = bot.computer;
       if (wants !== "off") {
         const cua = readCuaConnection();
-        if (cua) integrations.localComputer = cua;
+        if (cua) integrations.localComputer = localComputerIntegration(bot.id, cua);
       }
       // Every active bot on a peer-agent capable driver gets the same tools.
       // The task context limits delegation depth, rejects cycles, and bounds
@@ -984,6 +1137,9 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         integrations.agents = agentsIntegration(bot.id, taskContext);
       }
       integrations.todos = todosIntegration(bot.id);
+      if (instance.adapter.capabilities.agentsMcp === true && credentialsForBot(bot.id).length > 0) {
+        integrations.credentials = credentialsIntegration(bot.id);
+      }
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit delegation nudge — the agent still does the ask_bot call
       // itself, so the harness stays the single owner of turns/permissions
@@ -1022,6 +1178,9 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
           : "",
         integrations.todos
           ? "You have a todo tool — a durable checklist for this job. Update it as you work; keep one item in_progress."
+          : "",
+        integrations.credentials
+          ? "You have a per-bot credential vault. list_credentials shows only grants for this bot. fill_credential types a granted secret into the focused local field without returning the secret to you."
           : "",
         SLEEP_WARNING,
       ]
@@ -1072,7 +1231,8 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       turnMeta.delete(bot.id);
       forgetTurn(bot.id);
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
-      setTimeout(() => drainAgentInbox(bot.id), 50);
+      if (queuedTurns(bot.id).length > 0) setTimeout(() => drainUserQueue(bot.id), 50);
+      else setTimeout(() => drainAgentInbox(bot.id), 50);
     }
   })();
 }
@@ -1152,7 +1312,7 @@ const server = createServer(async (req, res) => {
         if (!target || target.hidden) return json(res, 404, { error: "no such bot" });
         const from = store.bot(fromBotId);
         if (!from || from.hidden) return json(res, 404, { error: "no such sender bot" });
-        if (target.busy) return json(res, 200, { busy: true, taskContext });
+        if (target.busy || target.operatorControl) return json(res, 200, { busy: true, taskContext });
         if (isForbiddenFightAsk(from, target, message)) {
           return json(res, 200, {
             error: "Fight/challenge X cannot ask_bot X. Critique their existing output, or spawn a specialist.",
@@ -1262,23 +1422,59 @@ const server = createServer(async (req, res) => {
         const result = applyTodoTool(botId, "items" in body ? { items: body.items as any[] } : {});
         return json(res, 200, result);
       }
+      if (method === "GET" && path === "/api/internal/operator") {
+        const botId = (url.searchParams.get("botId") ?? "").trim();
+        const bot = store.bot(botId);
+        if (!bot) return json(res, 404, { error: "no such bot" });
+        return json(res, 200, { active: Boolean(bot.operatorControl) });
+      }
+      if (method === "GET" && path === "/api/internal/credentials") {
+        const botId = (url.searchParams.get("botId") ?? "").trim();
+        if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
+        return json(res, 200, { credentials: credentialsForBot(botId) });
+      }
+      const internalCredential = path.match(/^\/api\/internal\/credentials\/([\w-]+)\/reveal$/);
+      if (method === "GET" && internalCredential) {
+        const botId = (url.searchParams.get("botId") ?? "").trim();
+        if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
+        const credential = revealGrantedCredential(internalCredential[1], botId);
+        if (!credential) return json(res, 403, { error: "credential is not granted to this bot" });
+        return json(res, 200, credential);
+      }
       if (method === "GET" && path === "/api/internal/search") {
         const q = (url.searchParams.get("q") ?? "").trim();
         const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
         if (!q) return json(res, 400, { error: "q required" });
-        const results = searchMessages(q, limit).map((hit) => {
+        const messageResults = searchMessages(q, limit).map((hit) => {
           const bot = hit.botId ? store.bot(hit.botId) : store.botByThread(hit.threadId);
           return { ...hit, botId: bot?.id ?? hit.botId, botName: bot?.name };
         });
-        return json(res, 200, { results });
+        const factResults = searchMemoryFacts(q, { limit }).map((fact) => {
+          const bot = store.bot(fact.botId);
+          return {
+            messageId: `memory:${fact.id}`,
+            threadId: bot?.threadId ?? fact.botId,
+            botId: fact.botId,
+            botName: bot?.name,
+            text: fact.fact,
+            at: fact.sourceAt,
+            provenance: { sourceType: fact.sourceType, sourceId: fact.sourceId, sourceAt: fact.sourceAt, confidence: fact.confidence },
+          };
+        });
+        const results = [...factResults, ...messageResults].sort((a, b) => b.at - a.at).slice(0, limit);
+        return json(res, 200, { results, retrieval: "structured-memory + transcript-fts" });
       }
       if (method === "GET" && path === "/api/internal/memory") {
         const botId = (url.searchParams.get("botId") ?? "").trim();
         if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
         const profile = readProfile(botId).trim();
         const log = readLog(botId).trim();
-        const text = `# Memory for ${store.bot(botId)?.name ?? "Bot"}\n\n## profile.md\n${profile || "(empty)"}\n\n## Current Month Log\n${log || "(empty)"}`;
-        return json(res, 200, { text, profile, log });
+        const facts = listMemoryFacts(botId);
+        const factText = facts.length
+          ? facts.map((fact) => `- ${fact.fact} [${fact.sourceType}:${fact.sourceId}; ${new Date(fact.sourceAt).toISOString()}]`).join("\n")
+          : "(empty)";
+        const text = `# Memory for ${store.bot(botId)?.name ?? "Bot"}\n\n## Structured facts\n${factText}\n\n## profile.md\n${profile || "(empty)"}\n\n## Current Month Log\n${log || "(empty)"}`;
+        return json(res, 200, { text, profile, log, facts });
       }
       if (method === "POST" && path === "/api/internal/memory") {
         const body = await readBody(req);
@@ -1288,6 +1484,19 @@ const server = createServer(async (req, res) => {
         const mode = String(body.mode ?? (target === "log" ? "append" : "replace")).trim();
         if (!botId || !store.bot(botId)) return json(res, 404, { error: "no such bot" });
         if (!content) return json(res, 400, { error: "content required" });
+        const sourceAt = Number.isFinite(Number(body.sourceAt)) ? Number(body.sourceAt) : Date.now();
+        const currentJobId = turnMeta.get(botId)?.jobId;
+        saveMemoryFact({
+          botId,
+          fact: content,
+          kind: body.kind === "preference" || body.kind === "procedure" || body.kind === "event" ? body.kind : target === "log" ? "event" : "fact",
+          sourceType: body.sourceType === "user" || body.sourceType === "tool" || body.sourceType === "import" || body.sourceType === "system" ? body.sourceType : "assistant",
+          sourceId: String(body.sourceId ?? currentJobId ?? `memory:${Date.now()}`).slice(0, 240),
+          sourceAt,
+          validFrom: Number.isFinite(Number(body.validFrom)) ? Number(body.validFrom) : undefined,
+          validUntil: Number.isFinite(Number(body.validUntil)) ? Number(body.validUntil) : undefined,
+          confidence: Number.isFinite(Number(body.confidence)) ? Number(body.confidence) : 0.8,
+        });
 
         if (target === "profile") {
           const current = mode === "append" ? readProfile(botId) : "";
@@ -1474,7 +1683,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "kind cannot be changed" });
       }
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "personality", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "memoryEnabled", "enabledSkillSlugs", "memberIds", "proactiveEnabled", "completionPings", "sortOrder"] as const) {
+      for (const key of ["name", "title", "description", "personality", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "memoryEnabled", "enabledSkillSlugs", "memberIds", "proactiveEnabled", "completionPings", "sortOrder", "operatorControl"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       if (patch.memberIds !== undefined) {
@@ -1510,6 +1719,7 @@ const server = createServer(async (req, res) => {
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       screens.stop(bot.id);
       store.deleteBot(bot.id);
+      removeQueuedTurnsForBot(bot.id);
       agentInbox.delete(bot.id);
       persistAgentInbox(agentInbox);
       deleteRoutinesForBot(bot.id);
@@ -1552,6 +1762,8 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       const body = await readBody(req);
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
       const clientNonce = typeof body.clientNonce === "string" ? body.clientNonce.trim() : undefined;
       if (clientNonce && nonceCache.isDuplicate(m[1], clientNonce)) {
         return json(res, 200, { ok: true, duplicate: true });
@@ -1572,7 +1784,35 @@ const server = createServer(async (req, res) => {
         text = `${text}\n\nAttached files are in ${inboxPath(m[1])}.`.trim();
       }
       if (!text) return json(res, 400, { error: "text required" });
+      const delivery = body.delivery === "steer" || body.delivery === "replace" ? body.delivery : "queue";
+      if (!registry.get(bot.modelSelection.instanceId)) {
+        const fallback = await defaultSelection();
+        if (!registry.get(fallback.instanceId)) {
+          return json(res, 409, { error: "No AI provider is ready: the selected provider is unavailable." });
+        }
+      }
       nonceCache.record(m[1], clientNonce);
+      if (bot.busy || bot.operatorControl) {
+        if (delivery === "replace") {
+          if (bot.operatorControl) {
+            nonceCache.forget(m[1], clientNonce);
+            return json(res, 409, { error: "operator takeover is active — release control before replacing the turn" });
+          }
+          await stopActiveTurn(bot.id, "turn replaced by the user");
+        } else {
+          const pending = store.appendMessage(bot.threadId, {
+            role: "user",
+            kind: "text",
+            text,
+            clientNonce,
+            source: "user",
+            status: "pending",
+          });
+          broadcast({ kind: "message", threadId: bot.threadId, message: pending });
+          const queued = enqueueTurn({ botId: bot.id, text, messageId: pending.id, clientNonce, delivery });
+          return json(res, 202, { ok: true, queued: true, delivery, queueId: queued.id, position: queuedTurns(bot.id).findIndex((row) => row.id === queued.id) + 1, clientNonce });
+        }
+      }
       try {
         await startTurn(m[1], text, { clientNonce });
       } catch (err) {
@@ -1598,26 +1838,40 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const instance = registry.get(bot.modelSelection.instanceId);
-      // Provider interrupt is best-effort. A throw must never leave busy stuck
-      // or the Stop button looks dead — always clear local turn state.
-      try {
-        await instance?.adapter.interruptTurn(bot.threadId);
-      } catch {
-        /* provider failed; local busy still clears below */
-      }
-      const interruptedTurn = turnMeta.get(bot.id);
-      if (interruptedTurn?.jobId) {
-        updateJob(interruptedTurn.jobId, { status: "interrupted", error: "turn interrupted by the user" });
-      }
-      watchdog.end(bot.id);
-      turnGroup.delete(bot.id);
-      turnMeta.delete(bot.id);
-      store.patchBot(bot.id, { busy: false });
-      forgetTurn(bot.id);
-      broadcast({ kind: "bot", bot: store.bot(bot.id) });
-      setTimeout(() => drainAgentInbox(bot.id), 50);
+      await stopActiveTurn(bot.id, "turn interrupted by the user");
+      if (queuedTurns(bot.id).length > 0) setTimeout(() => drainUserQueue(bot.id), 50);
+      else setTimeout(() => drainAgentInbox(bot.id), 50);
       return json(res, 200, { ok: true });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/takeover$/);
+    if (m && (method === "POST" || method === "DELETE")) {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body: Record<string, unknown> = method === "POST" ? await readBody(req).catch(() => ({})) : {};
+      const active = method === "POST" ? body.active !== false : false;
+      if (active && bot.busy) await stopActiveTurn(bot.id, "operator takeover");
+      const updated = store.patchBot(bot.id, { operatorControl: active });
+      broadcast({ kind: "bot", bot: updated });
+      if (!active) {
+        setTimeout(() => {
+          if (queuedTurns(bot.id).length > 0) return drainUserQueue(bot.id);
+          const groupQueue = groupQueuedTurns.get(bot.id);
+          if (groupQueue?.length) {
+            groupQueuedTurns.delete(bot.id);
+            const mergedText = groupQueue.map((item) => item.text).join("\n\n---\n\n");
+            void startTurn(bot.id, mergedText, { taskContext: createTaskContext(bot.id), source: "agent", groupId: groupQueue[0]?.groupId }).catch(() => {});
+            return;
+          }
+          drainAgentInbox(bot.id);
+        }, 50);
+      }
+      return json(res, 200, { ok: true, active });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/queue$/);
+    if (m && method === "GET") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      return json(res, 200, { turns: queuedTurns(bot.id) });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/preview$/);
     if (m && method === "POST") {
@@ -1626,6 +1880,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const png = String(body.png ?? "");
       if (!png) return json(res, 400, { error: "png required" });
+      for (const receipt of observeFrame(bot.id, png)) patchReceiptMessage(receipt);
       broadcast({ kind: "screen", botId: bot.id, png, mime: String(body.mime ?? "image/png") });
       return json(res, 200, { ok: true });
     }
@@ -2046,7 +2301,7 @@ const server = createServer(async (req, res) => {
       if (!job) return json(res, 404, { error: "no such job" });
       const bot = store.bot(job.botId);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if (bot.busy) return json(res, 409, { error: "the bot is already working — interrupt it first" });
+      if (bot.busy || bot.operatorControl) return json(res, 409, { error: "the bot is busy or under operator control" });
       const promptText = prepareReflexionPrompt(job, store);
       await startTurn(job.botId, promptText, {
         jobId: job.id,
@@ -2075,8 +2330,9 @@ const server = createServer(async (req, res) => {
       return json(res, 202, { started });
     }
     if (method === "GET" && path === "/api/jobs") {
+      const all = url.searchParams.get("all") === "1";
       return json(res, 200, {
-        jobs: listJobs({ statuses: ["running", "interrupted"] }).map((job) => ({
+        jobs: listJobs(all ? undefined : { statuses: ["running", "interrupted"] }).map((job) => ({
           ...job,
           botName: store.bot(job.botId)?.name ?? "Unknown bot",
         })),
@@ -2089,14 +2345,44 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/health") {
       return json(res, 200, { app: "nexbot", pid: process.pid, static: Boolean(STATIC_DIR) });
     }
+    if (method === "GET" && path === "/api/execution-receipts") {
+      const botId = url.searchParams.get("botId") ?? undefined;
+      const jobId = url.searchParams.get("jobId") ?? undefined;
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
+      return json(res, 200, { receipts: listReceipts({ botId, jobId, limit }) });
+    }
+    if (method === "GET" && path === "/api/doctor") {
+      const runningJobs = listJobs({ statuses: ["running"] });
+      const queueCount = store.bots.reduce((count, bot) => count + queuedTurns(bot.id).length, 0);
+      const checks = localDoctorChecks({ cuaReady: Boolean(readCuaConnection()), queuedTurns: queueCount, runningJobs: runningJobs.length });
+      for (const instance of await registry.describe()) {
+        checks.push({
+          id: `provider:${instance.instanceId}`,
+          status: instance.snapshot.state === "available" ? "pass" : "warn",
+          detail: instance.snapshot.state === "available"
+            ? `${instance.displayName ?? instance.instanceId} is available.`
+            : `${instance.displayName ?? instance.instanceId}: ${instance.snapshot.reason ?? "unavailable"}`,
+        });
+      }
+      return json(res, 200, { overall: doctorOverall(checks), checks, at: Date.now() });
+    }
     if (method === "GET" && path === "/api/search") {
       const q = (url.searchParams.get("q") ?? "").trim();
       if (!q) return json(res, 400, { error: "q required" });
-      const results = searchMessages(q).map((hit) => {
+      const messages = searchMessages(q).map((hit) => {
         const bot = hit.botId ? store.bot(hit.botId) : store.botByThread(hit.threadId);
         return { ...hit, botId: bot?.id ?? hit.botId, botName: bot?.name };
       });
-      return json(res, 200, { results });
+      const facts = searchMemoryFacts(q).map((fact) => ({
+        messageId: `memory:${fact.id}`,
+        threadId: store.bot(fact.botId)?.threadId ?? fact.botId,
+        botId: fact.botId,
+        botName: store.bot(fact.botId)?.name,
+        text: fact.fact,
+        at: fact.sourceAt,
+        provenance: { sourceType: fact.sourceType, sourceId: fact.sourceId, confidence: fact.confidence },
+      }));
+      return json(res, 200, { results: [...facts, ...messages].sort((a, b) => b.at - a.at).slice(0, 100), retrieval: "structured-memory + transcript-fts" });
     }
 
     if (method === "GET" && path === "/api/feed") {
@@ -2199,6 +2485,46 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/instances") {
       return json(res, 200, { instances: await registry.describe() });
     }
+    if (method === "POST" && path === "/api/instances") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "provider setup is available on the host app only" });
+      const body = await readBody(req);
+      const instanceId = String(body.instanceId ?? "").trim();
+      const cli = String(body.cli ?? "").trim();
+      const args = Array.isArray(body.args) ? body.args.map(String) : String(body.args ?? "").split(/\s+/).filter(Boolean);
+      const model = String(body.model ?? "default").trim() || "default";
+      if (!/^[a-z][a-z0-9_-]{1,39}$/i.test(instanceId)) return json(res, 400, { error: "instanceId must use letters, numbers, dashes, or underscores" });
+      if (!cli) return json(res, 400, { error: "CLI command required" });
+      const instances = {
+        ...(cfg.instances ?? defaultInstanceConfigs()),
+        [instanceId]: {
+          driver: "acp",
+          displayName: String(body.displayName ?? instanceId).trim().slice(0, 80),
+          config: {
+            cli,
+            args: args.slice(0, 40),
+            model,
+            workspace: typeof body.workspace === "string" ? body.workspace.trim() : undefined,
+            authMethod: typeof body.authMethod === "string" ? body.authMethod.trim() : undefined,
+            fullAuto: false,
+          },
+        },
+      };
+      saveConfig({ instances });
+      Object.assign(cfg, loadConfig());
+      await reloadProviders();
+      return json(res, 201, { instances: await registry.describe() });
+    }
+    m = path.match(/^\/api\/instances\/([\w-]+)$/);
+    if (m && method === "DELETE") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "provider setup is available on the host app only" });
+      if (!cfg.instances?.[m[1]] || cfg.instances[m[1]].driver !== "acp") return json(res, 404, { error: "no custom ACP instance" });
+      const instances = { ...cfg.instances };
+      delete instances[m[1]];
+      saveConfig({ instances });
+      Object.assign(cfg, loadConfig());
+      await reloadProviders();
+      return json(res, 200, { instances: await registry.describe() });
+    }
 
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "GET" && path === "/api/config") {
@@ -2219,6 +2545,40 @@ const server = createServer(async (req, res) => {
       const status = configStatus(cfg, BIND);
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
+    }
+
+    // ── encrypted credential vault (host app only) ──
+    if (path === "/api/credentials" && method === "GET") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "credential management is available on the host app only" });
+      return json(res, 200, { credentials: listCredentials() });
+    }
+    if (path === "/api/credentials" && method === "POST") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "credential management is available on the host app only" });
+      const body = await readBody(req);
+      const botIds = Array.isArray(body.botIds) ? body.botIds.map(String).filter((id) => store.bot(id)) : [];
+      try {
+        const credential = createCredential({
+          label: String(body.label ?? ""),
+          envName: String(body.envName ?? ""),
+          secret: String(body.secret ?? ""),
+          botIds,
+        });
+        return json(res, 201, { credential });
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    m = path.match(/^\/api\/credentials\/([\w-]+)$/);
+    if (m && method === "PATCH") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "credential management is available on the host app only" });
+      const body = await readBody(req);
+      const botIds = Array.isArray(body.botIds) ? body.botIds.map(String).filter((id) => store.bot(id)) : [];
+      const credential = setCredentialGrants(m[1], botIds);
+      return credential ? json(res, 200, { credential }) : json(res, 404, { error: "no such credential" });
+    }
+    if (m && method === "DELETE") {
+      if (!requestIsLoopback(req)) return json(res, 403, { error: "credential management is available on the host app only" });
+      return deleteCredential(m[1]) ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such credential" });
     }
 
     // ── connectors (Composio) ──
@@ -2314,7 +2674,7 @@ function repoMatches(filter: string, body: { repository?: { full_name?: string }
 
 function fireRoutineEvent(r: { id: string; botId: string; name: string; prompt: string }, extra: string): boolean {
   const bot = store.bot(r.botId);
-  if (!bot || bot.busy) return false;
+  if (!bot || bot.busy || bot.operatorControl) return false;
   const text = `[Routine: ${r.name}]\n\n${r.prompt}\n\n${extra}`;
   markRan(r.id);
   rememberTurn(r.botId, text, "routine");
@@ -2351,7 +2711,7 @@ function syncFileWatches() {
           const current = listRoutines().find((x) => x.id === routineId);
           if (!current?.enabled || current.kind !== "file") return;
           const bot = store.bot(current.botId);
-          if (!bot || bot.busy) return;
+          if (!bot || bot.busy || bot.operatorControl) return;
           const changed = filename ? String(filename) : watchPath;
           fireRoutineEvent(current, `File changed: ${changed}`);
         }, 400);
@@ -2366,7 +2726,7 @@ function syncFileWatches() {
 function runDueRoutines() {
   for (const r of dueRoutines()) {
     const bot = store.bot(r.botId);
-    if (!bot || bot.busy) continue;
+    if (!bot || bot.busy || bot.operatorControl) continue;
     markRan(r.id);
     rememberTurn(r.botId, `[Routine: ${r.name}]\n\n${r.prompt}`, "routine");
     void startTurn(r.botId, `[Routine: ${r.name}]\n\n${r.prompt}`, {
@@ -2400,8 +2760,13 @@ server.listen(PORT, BIND, () => {
   syncFileWatches();
   setTimeout(recoverAfterBoot, 2500);
   setTimeout(() => {
-    for (const botId of agentInbox.keys()) drainAgentInbox(botId);
+    for (const bot of store.bots) {
+      if (queuedTurns(bot.id).length > 0) drainUserQueue(bot.id);
+    }
   }, 2600);
+  setTimeout(() => {
+    for (const botId of agentInbox.keys()) drainAgentInbox(botId);
+  }, 2700);
 });
 
 setInterval(runDueRoutines, 30_000);

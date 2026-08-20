@@ -27,6 +27,7 @@ export function Composer({ bot }: { bot: Bot }) {
   const [text, setText] = useState("");
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<"queue" | "steer" | "replace">("queue");
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
@@ -114,7 +115,7 @@ export function Composer({ bot }: { bot: Bot }) {
 
   const send = () => {
     const trimmed = text.trim();
-    if ((!trimmed && !files.length) || bot.busy || clarification) return;
+    if ((!trimmed && !files.length) || clarification) return;
     if (!files.length && shouldAskClarification(trimmed, bot)) {
       const choices = getClarificationChoices(trimmed, state.bots, bot.id);
       if (choices.length >= 2) {
@@ -126,6 +127,7 @@ export function Composer({ bot }: { bot: Bot }) {
       type: "send",
       botId: bot.id,
       text: trimmed || "See attached files.",
+      delivery: bot.busy || bot.operatorControl ? delivery : undefined,
       files: files.length ? files : undefined,
     });
     track("message_sent", { driver: bot.modelSelection?.instanceId });
@@ -134,11 +136,12 @@ export function Composer({ bot }: { bot: Bot }) {
   };
 
   const confirmClarification = (choice?: ClarificationChoice) => {
-    if (!clarification || bot.busy) return;
+    if (!clarification) return;
     dispatch({
       type: "send",
       botId: bot.id,
       text: buildRoutingMessage(clarification.text, choice?.bot),
+      delivery: bot.busy || bot.operatorControl ? delivery : undefined,
     });
     track("message_sent", {
       driver: bot.modelSelection?.instanceId,
@@ -256,6 +259,27 @@ export function Composer({ bot }: { bot: Bot }) {
         </div>
       )}
       <div className="pointer-events-auto relative mx-auto max-w-[800px]">
+        {(bot.busy || bot.operatorControl) && (
+          <div className="mb-2 flex items-center justify-center gap-1 text-[11px] text-ink-secondary">
+            <span className="mr-1">New message:</span>
+            {(["queue", "steer", "replace"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={bot.operatorControl && mode === "replace"}
+                onClick={() => setDelivery(mode)}
+                className={cn(
+                  "rounded-full px-2.5 py-1 capitalize transition-colors",
+                  delivery === mode ? "bg-ink text-paper" : "bg-black/5 hover:bg-black/8",
+                  bot.operatorControl && mode === "replace" && "cursor-not-allowed opacity-40",
+                )}
+                title={mode === "queue" ? "Run after existing queued messages" : mode === "steer" ? "Run next when the active turn ends" : "Stop the active turn and use this message instead"}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        )}
         {clarification && (
           <div
             role="dialog"
@@ -447,7 +471,7 @@ export function Composer({ bot }: { bot: Bot }) {
               aria-controls={pickerOpen ? "nexbot-mention-picker" : undefined}
               aria-activedescendant={pickerOpen ? `nexbot-mention-${candidates[highlight]?.id}` : undefined}
               placeholder={
-                recording ? "Listening…" : bot.busy ? `${bot.name} is working…` : `Message ${bot.name} · @ to tag`
+                recording ? "Listening…" : bot.operatorControl ? "Operator control is active — messages will queue" : bot.busy ? `Message while ${bot.name} works…` : `Message ${bot.name} · @ to tag`
               }
               className="w-full bg-transparent px-1 py-1 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none"
             />
@@ -479,7 +503,7 @@ export function Composer({ bot }: { bot: Bot }) {
 
             <button
               onClick={send}
-              disabled={(!text.trim() && !files.length) || bot.busy}
+              disabled={!text.trim() && !files.length}
               className={cn(
                 "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-all",
                 text.trim() || files.length

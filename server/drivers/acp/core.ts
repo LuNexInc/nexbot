@@ -36,6 +36,10 @@ export interface AcpConfig {
   fullAuto: boolean;
   /** Optional home for this instance's sessions. */
   workspace?: string;
+  /** Generic ACP argv template. {model} is replaced for each turn. */
+  args?: string[];
+  authMethod?: string;
+  model?: string;
 }
 
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
@@ -55,7 +59,7 @@ export interface AcpSupport {
   transformEnv?(env: Record<string, string | undefined>): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
    * authMethods; return null to skip the authenticate step. */
-  pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
+  pickAuthMethod(authMethods: Array<{ id?: string }>, config: AcpConfig): string | null;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
@@ -74,8 +78,11 @@ function decodeAcpConfig(defaultCli: string) {
     const o = (raw ?? {}) as Record<string, unknown>;
     return {
       cli: typeof o.cli === "string" ? o.cli : defaultCli,
-      fullAuto: o.fullAuto === false ? false : o.fullAuto === undefined || o.fullAuto === true,
-      workspace: typeof o.workspace === "string" ? o.workspace : undefined,
+      fullAuto: o.fullAuto === true,
+      ...(typeof o.workspace === "string" ? { workspace: o.workspace } : {}),
+      ...(Array.isArray(o.args) ? { args: o.args.filter((arg): arg is string => typeof arg === "string").slice(0, 40) } : {}),
+      ...(typeof o.authMethod === "string" ? { authMethod: o.authMethod } : {}),
+      ...(typeof o.model === "string" ? { model: o.model } : {}),
     };
   };
 }
@@ -144,6 +151,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         push("agents", turn.integrations?.agents);
         push("todos", turn.integrations?.todos);
+        push("credentials", turn.integrations?.credentials);
+        push("computer", turn.integrations?.localComputer);
         return servers;
       };
 
@@ -417,7 +426,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               INIT_TIMEOUT,
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
-            const methodId = support.pickAuthMethod(methods);
+            const methodId = support.pickAuthMethod(methods, config);
             if (methodId) {
               try {
                 await request("authenticate", { methodId }, INIT_TIMEOUT);
@@ -500,7 +509,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models: support.models,
+        models: config.model
+          ? { default: config.model, options: [{ id: config.model, label: config.model }] }
+          : support.models,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

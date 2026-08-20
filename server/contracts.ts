@@ -118,6 +118,9 @@ export interface SendTurnInput {
     agents?: { command: string; args: string[]; env: Record<string, string> };
     /** Durable checklist MCP (todo tool). Always attached so specialists can plan. */
     todos?: { command: string; args: string[]; env: Record<string, string> };
+    /** Per-bot encrypted vault. The proxy can list grants and type a secret
+     * into the focused local field without returning it to the model. */
+    credentials?: { command: string; args: string[]; env: Record<string, string> };
   };
   cwd?: string;
 }

@@ -90,6 +90,19 @@ const TOOLS = [
           enum: ["append", "replace"],
           description: "Whether to append to the file or replace its content (default: 'append' for log, 'replace' for profile).",
         },
+        kind: {
+          type: "string",
+          enum: ["fact", "preference", "event", "procedure"],
+          description: "What kind of memory this is.",
+        },
+        valid_until: {
+          type: "string",
+          description: "Optional ISO date when this fact stops being valid.",
+        },
+        confidence: {
+          type: "number",
+          description: "Confidence from 0 to 1. Use less than 1 for an inference.",
+        },
       },
       required: ["target", "content"],
     },
@@ -226,7 +239,16 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!content) return { text: "save_memory needs content.", isError: true };
     const r = await api(`/api/internal/memory`, {
       method: "POST",
-      body: JSON.stringify({ botId: BOT_ID, target, content, mode }),
+      body: JSON.stringify({
+        botId: BOT_ID,
+        target,
+        content,
+        mode,
+        kind: args.kind,
+        validUntil: typeof args.valid_until === "string" ? Date.parse(args.valid_until) : undefined,
+        confidence: args.confidence,
+        sourceType: "assistant",
+      }),
     });
     return { text: String(r.text ?? "Memory saved."), isError: Boolean(r.isError) };
   }

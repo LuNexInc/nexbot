@@ -17,20 +17,29 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fakeCliShim } from "../../testing/fake-cli-shim.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
+import { GenericAcpDriver } from "./generic.ts";
 
 const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
-    expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: true, workspace: undefined });
+    expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false });
   });
   it("gemini defaults to the gemini binary", () => {
-    expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: true, workspace: undefined });
+    expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: false });
   });
-  it("fullAuto is on by default; only explicit false turns it off", () => {
+  it("fullAuto is off by default; only explicit true turns it on", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
     expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
     expect(GrokAgentDriver.decodeConfig({ fullAuto: false }).fullAuto).toBe(false);
+  });
+  it("decodes a configurable generic ACP command", () => {
+    expect(GenericAcpDriver.decodeConfig({ cli: "goose", args: ["acp", "--model", "{model}"], model: "m1" })).toMatchObject({
+      cli: "goose",
+      args: ["acp", "--model", "{model}"],
+      model: "m1",
+      fullAuto: false,
+    });
   });
 });
 

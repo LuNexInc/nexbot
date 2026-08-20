@@ -102,6 +102,11 @@ function ExpertModeSection() {
 function ProvidersSection() {
   const { state, dispatch } = useStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [instanceId, setInstanceId] = useState("");
+  const [cli, setCli] = useState("");
+  const [args, setArgs] = useState("");
+  const [model, setModel] = useState("default");
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -178,9 +183,128 @@ function ProvidersSection() {
               ) : (
                 <span className="mt-0.5 text-[11px] text-ink-secondary">optional</span>
               )}
+              {row.driverKind === "acp" && (
+                <button
+                  type="button"
+                  title="Remove custom ACP provider"
+                  onClick={() => void fetch(`/api/instances/${row.instanceId}`, { method: "DELETE" }).then(refresh)}
+                  className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-danger"
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
             </div>
           );
         })}
+      </div>
+      {adding ? (
+        <form
+          className="mt-3 flex flex-col gap-2 rounded-lg border border-hairline/40 bg-inset p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            let parsedArgs: string[] = [];
+            try { parsedArgs = args.trim().startsWith("[") ? JSON.parse(args) : args.split(/\s+/).filter(Boolean); } catch { return; }
+            void fetch("/api/instances", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ instanceId, displayName: instanceId, cli, args: parsedArgs, model }),
+            }).then((response) => response.json()).then((data) => {
+              if (data.instances) dispatch({ type: "instances", instances: data.instances });
+              setAdding(false);
+            });
+          }}
+        >
+          <div className="text-[13px] font-medium text-ink">Add an ACP CLI</div>
+          <input value={instanceId} onChange={(event) => setInstanceId(event.target.value)} placeholder="Instance id, for example goose" className="rounded-lg border border-hairline/40 bg-surface px-3 py-2 text-[13px]" required />
+          <input value={cli} onChange={(event) => setCli(event.target.value)} placeholder="CLI command or full path" className="rounded-lg border border-hairline/40 bg-surface px-3 py-2 text-[13px]" required />
+          <input value={args} onChange={(event) => setArgs(event.target.value)} placeholder={'ACP arguments, for example ["acp","serve"]'} className="rounded-lg border border-hairline/40 bg-surface px-3 py-2 text-[13px]" />
+          <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Model id" className="rounded-lg border border-hairline/40 bg-surface px-3 py-2 text-[13px]" />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setAdding(false)} className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary">Cancel</button>
+            <button type="submit" className="rounded-lg bg-ink px-3 py-2 text-[12px] text-paper">Add provider</button>
+          </div>
+        </form>
+      ) : (
+        <button type="button" onClick={() => setAdding(true)} className="mt-3 flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline">
+          <Plus size={13} /> Add ACP provider
+        </button>
+      )}
+    </div>
+  );
+}
+
+type CredentialRow = { id: string; label: string; envName: string; botIds: string[] };
+
+function CredentialsSection() {
+  const { state } = useStore();
+  const [rows, setRows] = useState<CredentialRow[]>([]);
+  const [label, setLabel] = useState("");
+  const [envName, setEnvName] = useState("");
+  const [secret, setSecret] = useState("");
+  const [botIds, setBotIds] = useState<string[]>([]);
+  const refresh = useCallback(() => {
+    void fetch("/api/credentials").then((response) => response.json()).then((data) => setRows(data.credentials ?? [])).catch(() => {});
+  }, []);
+  useEffect(refresh, [refresh]);
+  const specialists = state.bots.filter((bot) => bot.kind !== "group" && !bot.hidden);
+  const toggleGrant = (row: CredentialRow, botId: string) => {
+    const next = row.botIds.includes(botId) ? row.botIds.filter((id) => id !== botId) : [...row.botIds, botId];
+    void fetch(`/api/credentials/${row.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ botIds: next }),
+    }).then(refresh);
+  };
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="text-[15px] font-medium text-ink">Credential vault</div>
+      <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+        Secrets are encrypted locally. A granted bot can type one into the focused local field. The value is not shown in chat.
+      </div>
+      <form
+        className="mt-3 flex flex-col gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void fetch("/api/credentials", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ label, envName, secret, botIds }),
+          }).then((response) => response.json()).then(() => {
+            setLabel(""); setEnvName(""); setSecret(""); setBotIds([]); refresh();
+          });
+        }}
+      >
+        <div className="grid grid-cols-2 gap-2">
+          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Credential label" className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px]" required />
+          <input value={envName} onChange={(event) => setEnvName(event.target.value.toUpperCase())} placeholder="ENV_NAME" className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px]" required />
+        </div>
+        <input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Secret value" autoComplete="off" className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px]" required />
+        <div className="flex flex-wrap gap-2">
+          {specialists.map((bot) => (
+            <label key={bot.id} className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
+              <input type="checkbox" checked={botIds.includes(bot.id)} onChange={() => setBotIds((current) => current.includes(bot.id) ? current.filter((id) => id !== bot.id) : [...current, bot.id])} />
+              {bot.name}
+            </label>
+          ))}
+        </div>
+        <button type="submit" className="self-start rounded-lg bg-ink px-3 py-2 text-[12px] text-paper">Save credential</button>
+      </form>
+      <div className="mt-3 flex flex-col gap-2">
+        {rows.map((row) => (
+          <div key={row.id} className="rounded-lg border border-hairline/40 bg-inset p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div><span className="text-[13px] font-medium text-ink">{row.label}</span><span className="ml-2 text-[11px] text-ink-secondary">{row.envName}</span></div>
+              <button type="button" onClick={() => void fetch(`/api/credentials/${row.id}`, { method: "DELETE" }).then(refresh)} className="rounded p-1 text-ink-secondary hover:text-danger"><Trash2 size={13} /></button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {specialists.map((bot) => (
+                <label key={bot.id} className="flex items-center gap-1 text-[11px] text-ink-secondary">
+                  <input type="checkbox" checked={row.botIds.includes(bot.id)} onChange={() => toggleGrant(row, bot.id)} /> {bot.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -253,6 +377,45 @@ function ComputerUseSection() {
           <code className="mt-2 block rounded bg-raised px-2 py-1.5 text-[11px] text-ink">{hint}</code>
         )}
       </div>
+    </div>
+  );
+}
+
+type DoctorReport = { overall: "pass" | "warn" | "fail"; checks: Array<{ id: string; status: "pass" | "warn" | "fail"; detail: string }> };
+
+function DoctorSection() {
+  const [report, setReport] = useState<DoctorReport | null>(null);
+  const [checking, setChecking] = useState(false);
+  const run = useCallback(() => {
+    setChecking(true);
+    void fetch("/api/doctor")
+      .then((response) => response.json())
+      .then(setReport)
+      .catch(() => setReport(null))
+      .finally(() => setChecking(false));
+  }, []);
+  useEffect(run, [run]);
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[15px] font-medium text-ink">System health</div>
+          <div className="mt-0.5 text-[13px] text-ink-secondary">The same checks are available with pnpm doctor.</div>
+        </div>
+        <button type="button" onClick={run} disabled={checking} title="Run health checks" className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50">
+          <RefreshCw size={15} className={cn(checking && "animate-spin")} />
+        </button>
+      </div>
+      {report && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {report.checks.map((check) => (
+            <div key={check.id} className="flex items-start gap-2 rounded-lg bg-inset px-2.5 py-2 text-[12px]">
+              <span className={cn("mt-1 size-2 shrink-0 rounded-full", check.status === "pass" ? "bg-success" : check.status === "warn" ? "bg-warning" : "bg-danger")} />
+              <span className="text-ink-secondary">{check.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -863,8 +1026,10 @@ export function AppSettingsPanel() {
                     Composio unlocks Gmail/Slack/etc. in Plugins. There is no cloud computer.
                   </div>
                 </div>
+                <CredentialsSection />
                 <ProvidersSection />
                 <ComputerUseSection />
+                <DoctorSection />
                 <DesktopPermissions />
                 <AboutSection />
                 <WipeSection />

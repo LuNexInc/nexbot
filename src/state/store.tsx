@@ -114,7 +114,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const bot = stateRef.current.bots.find((b) => b.id === sendAct.botId);
         api(`/api/bots/${sendAct.botId}/messages`, {
           method: "POST",
-          body: JSON.stringify({ text: sendAct.text, files: sendAct.files, clientNonce: nonce }),
+          body: JSON.stringify({ text: sendAct.text, files: sendAct.files, clientNonce: nonce, delivery: sendAct.delivery }),
         }).catch((e) => {
           if (bot) {
             rawDispatch({ type: "messageFailed", threadId: bot.threadId, clientNonce: nonce });

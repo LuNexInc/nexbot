@@ -1,7 +1,7 @@
 // Local computer only (this PC). Cloud Box is not part of NexBot.
 // Frames come from Electron main (desktopCapturer over the preload bridge).
 import { useEffect, useState } from "react";
-import { CalendarClock, ExternalLink, Loader2, Monitor, Power, Settings, X } from "lucide-react";
+import { CalendarClock, ExternalLink, Hand, Loader2, Monitor, Power, Settings, X } from "lucide-react";
 import { api, useStore, type Bot, type Routine } from "@/state/store";
 import { cn } from "@/lib/cn";
 
@@ -350,6 +350,20 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           >
             <ExternalLink size={14} />
             Open in window
+          </button>
+          <button
+            type="button"
+            onClick={() => void api(`/api/bots/${bot.id}/takeover`, {
+              method: "POST",
+              body: JSON.stringify({ active: !bot.operatorControl }),
+            })}
+            className={cn(
+              "pressable flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[13px]",
+              bot.operatorControl ? "bg-amber-500/15 text-amber-700" : "bg-raised text-ink hover:bg-raised-hover",
+            )}
+          >
+            <Hand size={14} />
+            {bot.operatorControl ? "Release control" : "Take over"}
           </button>
         </div>
 

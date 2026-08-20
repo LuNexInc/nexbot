@@ -185,7 +185,7 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   }
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
-    permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "bypassPermissions",
+    permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "auto",
   };
 }
 
@@ -283,6 +283,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.agents) {
         mcpServers.agents = { ...turn.integrations.agents };
         allowed.push("mcp__agents");
+      }
+      if (turn.integrations?.credentials) {
+        mcpServers.credentials = { ...turn.integrations.credentials };
+        allowed.push("mcp__credentials");
       }
       // permission broker: anything acceptEdits would silently deny becomes
       // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in

@@ -148,6 +148,7 @@ export function reducer(state: AppState, action: Action): AppState {
           messages: incoming.messages ?? [],
           mascotExpression: incoming.mascotExpression,
           busy: incoming.busy,
+          operatorControl: incoming.operatorControl,
           computer: incoming.computer,
           pinned: incoming.pinned,
           sortOrder: incoming.sortOrder,

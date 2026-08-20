@@ -1,5 +1,6 @@
 import { preToolHook } from "./tool-hooks.ts";
 import { boundToolOutput } from "./comms-policy.ts";
+import { createHash } from "node:crypto";
 import {
   escapeShellArg,
   isPromptInjection,
@@ -107,18 +108,27 @@ export async function respondWithVerification(
   id: unknown,
   message: string,
   verifyState?: boolean,
+  beforeFrame?: string | null,
 ) {
   if (!verifyState) {
     return text(id, message);
   }
   const shot = await captureScreenshot();
   if (shot) {
+    const changed = beforeFrame
+      ? createHash("sha256").update(beforeFrame).digest("hex") !== createHash("sha256").update(shot).digest("hex")
+      : null;
+    const result = changed === true
+      ? "visual state changed"
+      : changed === false
+        ? "visual state did not change"
+        : "post-action frame captured; comparison unavailable";
     return send({
       jsonrpc: "2.0",
       id,
       result: {
         content: [
-          { type: "text", text: `${message} (visual state verified)` },
+          { type: "text", text: `${message} (${result})` },
           { type: "image", data: shot, mimeType: "image/png" },
         ],
       },
@@ -263,10 +273,11 @@ export async function call(id: unknown, name: string, args: any) {
     const sy = Math.round(y * scale);
     const btn = args.button === "right" ? 3 : 1;
     const rep = args.double ? "--repeat 2 --delay 150 " : "";
+    const before = args.verifyState ? await captureScreenshot() : null;
     const out = await runOnBox(`${X}xdotool mousemove ${sx} ${sy} click ${rep}${btn}`);
     if (!out.ok) return text(id, `click failed: ${out.stderr.slice(0, 200)}`, true);
     const msg = `clicked ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}${args.double ? " (double)" : ""}${args.button === "right" ? " (right)" : ""} — screenshot to verify`;
-    return respondWithVerification(id, msg, Boolean(args.verifyState));
+    return respondWithVerification(id, msg, Boolean(args.verifyState), before);
   }
   if (name === "mouse_move" || name === "move_cursor" || name === "move") {
     const x = Math.round(Number(args.x));
@@ -281,13 +292,14 @@ export async function call(id: unknown, name: string, args: any) {
     const scale = geometry ? geometry.width / SHOT_WIDTH : 1;
     const sx = Math.round(x * scale);
     const sy = Math.round(y * scale);
+    const before = args.verifyState ? await captureScreenshot() : null;
     const cua = await cuaCmd("mouse_move", { x: sx, y: sy });
     if (!cua) {
       const out = await runOnBox(`${X}xdotool mousemove ${sx} ${sy}`);
       if (!out.ok) return text(id, `mouse_move failed: ${out.stderr.slice(0, 200)}`, true);
     }
     const msg = `moved mouse to ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}`;
-    return respondWithVerification(id, msg, Boolean(args.verifyState));
+    return respondWithVerification(id, msg, Boolean(args.verifyState), before);
   }
   if (name === "type_text" || name === "type") {
     const raw = String(args.text ?? "");
@@ -296,6 +308,7 @@ export async function call(id: unknown, name: string, args: any) {
     if (isPromptInjection(t)) {
       return text(id, "NexBot: blocked a potential prompt injection typing payload", true);
     }
+    const before = args.verifyState ? await captureScreenshot() : null;
     const cua = await cuaCmd("type_text", { text: t });
     if (!cua) {
       const safe = escapeShellArg(t);
@@ -303,22 +316,24 @@ export async function call(id: unknown, name: string, args: any) {
       if (!out.ok) return text(id, `type failed: ${out.stderr.slice(0, 200)}`, true);
     }
     const msg = `typed ${t.length} chars`;
-    return respondWithVerification(id, msg, Boolean(args.verifyState));
+    return respondWithVerification(id, msg, Boolean(args.verifyState), before);
   }
   if (name === "press_key") {
     const rawKeys = String(args.keys ?? "");
     const keys = sanitizeKeySequence(rawKeys);
     if (!keys) return text(id, "press_key needs keys", true);
     const safeKeys = escapeShellArg(keys);
+    const before = args.verifyState ? await captureScreenshot() : null;
     const out = await runOnBox(`${X}xdotool key ${safeKeys}`);
     if (!out.ok) return text(id, `key failed: ${out.stderr.slice(0, 200)}`, true);
     const msg = `pressed ${keys}`;
-    return respondWithVerification(id, msg, Boolean(args.verifyState));
+    return respondWithVerification(id, msg, Boolean(args.verifyState), before);
   }
   if (name === "scroll") {
     const clicks = Math.min(Math.max(Math.round(Number(args.clicks) || 3), 1), 20);
     const direction = args.direction === "up" ? "up" : "down";
     const command = direction === "up" ? "scroll_up" : "scroll_down";
+    const before = args.verifyState ? await captureScreenshot() : null;
     const cua = await cuaCmd(command, { clicks });
     if (!cua) {
       const btn = direction === "up" ? 4 : 5;
@@ -326,7 +341,7 @@ export async function call(id: unknown, name: string, args: any) {
       if (!out.ok) return text(id, `scroll failed: ${out.stderr.slice(0, 200)}`, true);
     }
     const msg = `scrolled ${direction} ${clicks}`;
-    return respondWithVerification(id, msg, Boolean(args.verifyState));
+    return respondWithVerification(id, msg, Boolean(args.verifyState), before);
   }
   if (name === "computer_exec") {
     const raw = String(args.command ?? "");

@@ -46,6 +46,8 @@ export interface OptionCardData {
   requestId?: string;
   /** Mask the free-text answer (API keys, tokens). */
   secret?: boolean;
+  risk?: "low" | "medium" | "high" | "critical";
+  riskReason?: string;
 }
 
 export interface Message {
@@ -59,7 +61,12 @@ export interface Message {
   effort?: TurnEffort;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  tool?: {
+    name: string;
+    ok?: boolean;
+    receiptId?: string;
+    evidence?: "not_requested" | "pending" | "changed" | "unchanged" | "unavailable";
+  };
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
@@ -104,6 +111,8 @@ export interface BotRecord {
   pinned?: boolean;
   hidden?: boolean;
   busy?: boolean;
+  /** True while the user has paused the agent to control the computer. */
+  operatorControl?: boolean;
   /** When true, startTurn injects ~/.nexbot/memory/<id>/profile.md + log/YYYY-MM.md into the system prompt. */
   memoryEnabled?: boolean;
   /** null/missing = all desk skills on; string[] = only those slugs for this bot. */
@@ -164,13 +173,13 @@ export const TRANSCRIPT_TEXT_CAP = 3_000;
 /** Last-12 text turns for sendTurn. Cap each body so a huge paste cannot blow context,
  * without shrinking the window. */
 export function clipForTurn(
-  messages: Pick<Message, "kind" | "role" | "fromBot" | "text">[],
+  messages: Pick<Message, "kind" | "role" | "fromBot" | "text" | "status">[],
   options: { window?: number; textCap?: number } = {},
 ): { role: "user" | "assistant"; text: string }[] {
   const window = Number.isFinite(options.window) ? Math.max(1, Math.floor(options.window!)) : TRANSCRIPT_WINDOW;
   const textCap = Number.isFinite(options.textCap) ? Math.max(1, Math.floor(options.textCap!)) : TRANSCRIPT_TEXT_CAP;
   return messages
-    .filter((m) => m.kind === "text" && (m.text ?? "").trim())
+    .filter((m) => m.kind === "text" && m.status !== "pending" && (m.text ?? "").trim())
     .slice(-window)
     .map((m) => {
       const raw = m.text ?? "";

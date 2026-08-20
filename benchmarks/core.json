@@ -1,0 +1,22 @@
+{
+  "bot": "Luna",
+  "runs": 3,
+  "timeoutMs": 180000,
+  "cases": [
+    {
+      "id": "instruction-fidelity",
+      "prompt": "Reliability check. Reply with exactly NEXBOT_BENCH_OK and no other text.",
+      "expected": { "replyIncludes": ["NEXBOT_BENCH_OK"], "minSuccessfulTools": 0, "minStateChanges": 0 }
+    },
+    {
+      "id": "peer-discovery",
+      "prompt": "Reliability check. Use list_bots once. Then reply with NEXBOT_PEERS_OK and one teammate name.",
+      "expected": { "replyIncludes": ["NEXBOT_PEERS_OK"], "minSuccessfulTools": 1, "minStateChanges": 0 }
+    },
+    {
+      "id": "evidence-search",
+      "prompt": "Reliability check. Use search_history for NEXBOT_BENCH_OK. Then reply with NEXBOT_SEARCH_OK and say whether a receipt was found.",
+      "expected": { "replyIncludes": ["NEXBOT_SEARCH_OK"], "minSuccessfulTools": 1, "minStateChanges": 0 }
+    }
+  ]
+}

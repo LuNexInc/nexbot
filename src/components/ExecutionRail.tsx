@@ -142,6 +142,14 @@ export function ExecutionRail({
                       {durationMs}ms
                     </span>
                   )}
+                  {tool.receiptId && (
+                    <span
+                      className="rounded bg-black/6 px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                      title={`Receipt ${tool.receiptId}`}
+                    >
+                      {tool.evidence === "changed" ? "state changed" : tool.evidence === "unchanged" ? "no state change" : tool.evidence === "pending" ? "checking state" : "receipt"}
+                    </span>
+                  )}
                   {tool.ok === undefined ? (
                     <Loader2 size={12} className="animate-spin text-ink-secondary" />
                   ) : tool.ok ? (

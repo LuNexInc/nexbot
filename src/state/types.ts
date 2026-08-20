@@ -13,6 +13,8 @@ export interface OptionCardData {
   requestId?: string;
   /** Mask the free-text answer (API keys, tokens). */
   secret?: boolean;
+  risk?: "low" | "medium" | "high" | "critical";
+  riskReason?: string;
 }
 export interface Message {
   id: string;
@@ -25,7 +27,16 @@ export interface Message {
   effort?: TurnEffort;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean; durationMs?: number; output?: string; error?: string; input?: unknown };
+  tool?: {
+    name: string;
+    ok?: boolean;
+    durationMs?: number;
+    output?: string;
+    error?: string;
+    input?: unknown;
+    receiptId?: string;
+    evidence?: "not_requested" | "pending" | "changed" | "unchanged" | "unavailable";
+  };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -84,6 +95,7 @@ export interface Bot {
   mascotExpression?: NexExpression | null;
   unread: boolean;
   busy?: boolean;
+  operatorControl?: boolean;
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "local" | "off";
@@ -228,7 +240,7 @@ export type Action =
   | { type: "setExpertMode"; enabled: boolean }
   | { type: "setTheme"; theme: Theme }
   | { type: "select"; id: string }
-  | { type: "send"; botId: string; text: string; clientNonce?: string; files?: Array<{ name: string; data?: string; path?: string }> }
+  | { type: "send"; botId: string; text: string; clientNonce?: string; delivery?: "queue" | "steer" | "replace"; files?: Array<{ name: string; data?: string; path?: string }> }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
   | {

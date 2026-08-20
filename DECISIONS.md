@@ -1,5 +1,45 @@
 # NexBot — DECISIONS
 
+## 2026-08-21 — Evidence-first execution and repeat-run evaluation
+
+- **Choice:** Record every tool attempt in SQLite with its job, risk, outcome, timing, and verification status. Computer actions compare before and after frame hashes and report changed, unchanged, or unavailable evidence.
+- **Choice:** Evaluate live end-to-end turns with repeated attempts, durable jobs, execution receipts, state-change requirements, timing, and pass@k instead of judging reply text alone.
+- **Why:** A tool-call event is evidence of an attempt. It is not evidence that the requested state changed or that the workflow is reliable across runs.
+- **Reverse if:** A stronger local state evaluator replaces frame comparison and receipt scoring.
+
+## 2026-08-21 — Risk-based permissions and exclusive operator control
+
+- **Choice:** Auto-allow low-risk reads and reversible local work. Ask for destructive, external, financial, credential, unknown, and critical actions. New Claude, Codex, and ACP instances use these safer defaults.
+- **Choice:** Takeover is a durable per-bot lock. New CUA calls, routines, proactive work, and delegation stop while the operator owns the computer. Release resumes pending work.
+- **Why:** Blanket permission bypass and simultaneous human and agent input can cause irreversible actions and control conflicts.
+- **Reverse if:** A later policy engine proves a more precise action model, or the CUA provider adds native atomic handoff.
+
+## 2026-08-21 — Encrypted credentials use per-bot grants
+
+- **Choice:** Store credential values with the existing AES envelope, grant each credential to selected bots, and expose only list and focused-field fill tools. The fill path sends the value directly to local CUA and never returns it in the tool result.
+- **Why:** Agents need scoped login help without receiving a reusable secret in their prompts or transcripts.
+- **Reverse if:** An operating-system credential broker can provide the same per-bot and no-echo contract.
+
+## 2026-08-21 — Durable queue modes replace busy-message rejection
+
+- **Choice:** A busy bot accepts `queue`, `steer`, or `replace`. Queue is FIFO. Steer runs before ordinary queued work after the active turn. Replace interrupts the active turn and starts the new request. Pending messages remain durable but outside the active transcript until they start.
+- **Why:** Dropping a second instruction loses user intent. Mixing an unstarted request into the current provider context corrupts turn boundaries.
+- **Supersedes:** 2026-08-13 busy second message is 409 drop.
+- **Reverse if:** Providers expose a reliable native mid-turn steering protocol across all drivers.
+
+## 2026-08-21 — Provenance memory and generic ACP are shared platform layers
+
+- **Choice:** Structured memory facts carry kind, source, source date, validity window, and confidence. Expired facts are excluded from retrieval. Transcript FTS and fact FTS remain distinct evidence types.
+- **Choice:** A generic ACP driver accepts a local CLI, arguments, auth method, model, and workspace. Custom instances can be added and removed through App Settings while the default local fleet remains intact.
+- **Why:** Time-sensitive facts need provenance, and provider growth should not require a new hard-coded adapter for every ACP-compatible CLI.
+- **Reverse if:** The ACP standard changes incompatibly or all providers converge on one native runtime.
+
+## 2026-08-21 — Doctor reports local readiness
+
+- **Choice:** `nexbot doctor` checks the data directory, SQLite integrity, local CUA, queue and job state, and every configured provider. The Settings panel shows the same report.
+- **Why:** Local-agent failures often come from missing CLIs, permissions, a damaged store, or a stalled queue. A single report makes those causes visible.
+- **Reverse if:** Desktop startup gains an equivalent always-visible diagnostic surface.
+
 ## 2026-08-19 — Reflexion recovery & OSWorld CUA state verification with prompt injection guards
 
 - **Choice:** Job retries and resumptions via `/api/jobs/:id/(resume|retry)` automatically construct a Reflexion-style self-critique prompt (`[Reflexion Recovery - Previous failure context: "..."]`) containing the error message and original user task, unwrapping prior Reflexion envelopes to prevent nested accumulation.

@@ -44,7 +44,7 @@ function decodeConfig(raw: unknown): CodexConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   return {
     cli: typeof o.cli === "string" ? o.cli : "codex",
-    fullAuto: o.fullAuto === false ? false : o.fullAuto === undefined || o.fullAuto === true,
+    fullAuto: o.fullAuto === true,
   };
 }
 

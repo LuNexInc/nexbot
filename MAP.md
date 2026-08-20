@@ -1,6 +1,6 @@
 # NexBot — MAP
 
-Last verified: 2026-08-15
+Last verified: 2026-08-21
 
 ## Stay-local workflow
 
@@ -32,7 +32,15 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 | Harness HTTP + SSE | `server/index.ts` |
 | Turn recovery | `server/jobs.ts` + `server/recovery.ts` — SQLite job rows, provider checkpoints, Resume/Retry cards |
 | Agent coordination | `server/task-context.ts` — equal bot delegation with bounded task scope |
-| Busy second message | `POST /api/bots/:id/messages` while busy is **409 drop** (`the bot is already working — interrupt it first`); interrupt to replace, not queue |
+| Busy message control | `server/turn-queue.ts` + `src/components/Composer.tsx` — durable FIFO queue, next-turn steer, or interrupt-and-replace |
+| Execution evidence | `server/execution-evidence.ts` + `src/components/ExecutionRail.tsx` — durable receipts and CUA frame-change evidence |
+| Risk permissions | `server/risk-policy.ts` — low-risk reads and reversible local work can proceed; destructive, external, financial, credential, and unknown actions ask |
+| Operator takeover | `server/cua-gate-proxy.ts` + `POST/DELETE /api/bots/:id/takeover` — blocks new bot computer actions until control is released |
+| Credential grants | `server/credentials.ts` + `server/credential-proxy.ts` — encrypted vault and per-bot grants; focused-field fill does not return the secret to chat |
+| Structured memory | `server/memory-facts.ts` — source, date, validity, confidence, and FTS retrieval for time-aware facts |
+| Custom ACP providers | `server/drivers/acp/generic.ts` + `/api/instances` — add or remove a CLI-based ACP instance |
+| Health checks | `server/doctor.ts` + `scripts/nexbot.mjs` — `pnpm run doctor` in source or `nexbot doctor` from an installed package |
+| Benchmarks | `server/evaluation.ts` + `benchmarks/core.json` + `scripts/nexbot-benchmark.mjs` — repeated live turns scored from jobs and execution receipts |
 | Last CoS | `DELETE /api/bots/:id` of the only Luna/Chief of Staff is **409**; `PATCH hidden: true` on that seat is **400**; groups cannot take the CoS name |
 | Config / data dir | `server/config.ts` → `~/.nexbot` |
 | Windows CLI spawn | `server/cli-spawn.ts` |

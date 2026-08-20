@@ -169,6 +169,9 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     }
     disk[key] = current;
   }
+  if (patch.instances && typeof patch.instances === "object") {
+    disk.instances = patch.instances;
+  }
   writeDisk(disk);
 }
 
@@ -176,20 +179,24 @@ export function saveConfig(patch: Partial<AppConfig>): void {
 // instanceId defaults to the driver kind.
 // Config-file keys are injected as per-instance environment so drivers
 // see them without needing real process env vars.
-export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
+export function defaultInstanceConfigs(): InstanceConfigMap {
   // The default `grok` instance rides the `grokAgent` driver, not the API-key
   // one: like claude and codex it needs no credential from us, just the CLI
   // installed and logged in (it shows up unavailable otherwise). The API-key
   // `grok` driver stays registered but out of the default fleet — that key is
   // a credential NexBot does not manage by default; an `instances` entry brings
   // it back anytime.
-  const defaultMap: InstanceConfigMap = {
+  return {
     grok: { driver: "grokAgent" },
     gemini: { driver: "geminiAgent" },
     antigravity: { driver: "antigravity" },
     claude: { driver: "claudeAgent" },
     codex: { driver: "codex" },
   };
+}
+
+export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
+  const defaultMap = defaultInstanceConfigs();
   // Cloud Box is not part of NexBot's product surface. Ignore legacy
   // boxAgent entries so the picker and provider status stay local-only.
   const configuredMap = cfg.instances && Object.keys(cfg.instances).length
