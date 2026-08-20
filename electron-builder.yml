@@ -58,8 +58,8 @@ win:
     - target: portable
       arch:
         - x64
-  # electron-builder accepts PNG and generates multi-size ICO
-  icon: build/icon-1024.png
+  # Use a committed ICO so packaging does not depend on the host Node module mode.
+  icon: build/icon.ico
   artifactName: NexBot-Setup-${version}.${ext}
 
 nsis:

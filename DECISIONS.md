@@ -1,5 +1,11 @@
 # NexBot — DECISIONS
 
+## 2026-08-21 — Windows packaging uses a committed ICO asset
+
+- **Choice:** The Windows Electron Builder target uses `build/icon.ico` instead of converting `build/icon-1024.png` during packaging.
+- **Why:** Electron Builder's cached icon converter can inherit a machine-level `package.json` with `type: module` and fail while loading CommonJS code. A committed multi-size ICO makes the build reproducible and leaves the user's root package configuration unchanged.
+- **Reverse if:** Electron Builder ships a converter that is independent of the host package scope, or the project adopts a signed packaging service.
+
 ## 2026-08-21 — Evidence-first execution and repeat-run evaluation
 
 - **Choice:** Record every tool attempt in SQLite with its job, risk, outcome, timing, and verification status. Computer actions compare before and after frame hashes and report changed, unchanged, or unavailable evidence.
