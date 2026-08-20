@@ -14,7 +14,7 @@ import type { NexColor } from "@/lib/mascot";
 // Rendered as React nodes — model output never reaches the DOM as HTML.
 import { CodeBlock } from "./CodeBlock";
 import { ExecutionRail } from "./ExecutionRail";
-import { parseMarkdownTable } from "@/lib/markdown";
+import { normalizeMarkdown, parseMarkdownTable } from "@/lib/markdown";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -187,7 +187,7 @@ function Markdownish({ text, botId }: { text: string; botId?: string }) {
   while ((match = codeBlockRegex.exec(text)) !== null) {
     if (match.index > lastIdx) {
       const plain = text.slice(lastIdx, match.index);
-      blocks.push(renderPlainMarkdown(plain, `plain-${blockKey++}`));
+      blocks.push(renderPlainMarkdown(normalizeMarkdown(plain), `plain-${blockKey++}`));
     }
     const lang = match[1] || "text";
     const code = match[2] || "";
@@ -196,7 +196,7 @@ function Markdownish({ text, botId }: { text: string; botId?: string }) {
   }
 
   if (lastIdx < text.length) {
-    blocks.push(renderPlainMarkdown(text.slice(lastIdx), `plain-${blockKey++}`));
+    blocks.push(renderPlainMarkdown(normalizeMarkdown(text.slice(lastIdx)), `plain-${blockKey++}`));
   }
 
   return <>{blocks}</>;
@@ -270,6 +270,21 @@ function renderPlainMarkdown(text: string, keyBase: string) {
     }
 
     const line = lines[i];
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      content.push(
+        <blockquote key={`${keyBase}-${i}`} className="border-l-2 border-black/15 pl-3 text-ink-secondary">
+          {inlineMd(quote[1], `${keyBase}-q-${i}`)}
+        </blockquote>,
+      );
+      i += 1;
+      continue;
+    }
+    if (/^\s*(?:\*\s*){3,}$/.test(line) || /^\s*(?:-\s*){3,}$/.test(line) || /^\s*(?:_\s*){3,}$/.test(line)) {
+      content.push(<hr key={`${keyBase}-${i}`} className="my-3 border-black/10" />);
+      i += 1;
+      continue;
+    }
     const heading = line.match(/^#{1,4}\s+(.*)$/);
     if (heading) {
       content.push(

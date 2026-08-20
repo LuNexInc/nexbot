@@ -30,6 +30,7 @@ import { execFileCli, spawnCli, stopChild } from "../../cli-spawn.ts";
 import { appendNative } from "../native.ts";
 import { scrubAgentChildEnv } from "../../environ-guard.ts";
 import { preToolHook } from "../../tool-hooks.ts";
+import { discoverCliModels } from "../../model-catalog.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -49,6 +50,8 @@ export interface AcpSupport {
   models: { default: string; options: Array<{ id: string; label: string }> };
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
+  /** Optional argv after the binary name for a human-readable model list. */
+  modelListArgs?: string[];
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
   /** Message shown when the CLI is present but not signed in. */
@@ -504,14 +507,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return { state: "available", version, authenticated: support.isAuthenticated(env) };
       };
 
+      const models = config.model
+        ? { default: config.model, options: [{ id: config.model, label: config.model }] }
+        : support.modelListArgs
+          ? await discoverCliModels(config.cli, support.modelListArgs, childEnv(), support.models)
+          : support.models;
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models: config.model
-          ? { default: config.model, options: [{ id: config.model, label: config.model }] }
-          : support.models,
+        models,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

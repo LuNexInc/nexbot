@@ -22,6 +22,11 @@ if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
+if (argv.includes("models")) {
+  console.log("* fake-acp-2.0 (default)");
+  console.log("- fake-acp-1.0");
+  process.exit(0);
+}
 if (process.env.FAKE_ACP_DUMP) {
   writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }

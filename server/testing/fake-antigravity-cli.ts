@@ -11,6 +11,12 @@ const argAfter = (flag: string): string | null => {
 };
 const out = (value: unknown) => process.stdout.write(JSON.stringify(value) + "\n");
 
+if (argv.includes("models")) {
+  process.stdout.write("gemini-fake-medium\tGemini Fake Medium\n");
+  process.stdout.write("gemini-fake-low\tGemini Fake Low\n");
+  process.exit(0);
+}
+
 if (process.env.FAKE_ANTIGRAVITY_DUMP) {
   writeFileSync(process.env.FAKE_ANTIGRAVITY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }

@@ -21,6 +21,7 @@ import { augmentedPath } from "../env-path.ts";
 import { execFileCli, spawnCli, stopChild } from "../cli-spawn.ts";
 import { appendNative } from "./native.ts";
 import { scrubAgentChildEnv } from "../environ-guard.ts";
+import { discoverCliModels } from "../model-catalog.ts";
 
 const DRIVER_KIND = "antigravity";
 const WINDOWS_AGY = join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe");
@@ -32,7 +33,7 @@ export interface AntigravityConfig {
   fullAuto: boolean;
 }
 
-const MODELS = {
+export const ANTIGRAVITY_MODELS = {
   default: "gemini-3.7-flash-medium",
   options: [
     { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
@@ -86,13 +87,20 @@ export function buildAntigravityArgs(turn: SendTurnInput, fullAuto: boolean): st
 export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
-  models: MODELS,
+  models: ANTIGRAVITY_MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<AntigravityConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
     const listeners = new Set<RuntimeEventListener>();
+    const envForCli = (): Record<string, string | undefined> => ({
+      ...process.env,
+      ...input.environment,
+      PATH: augmentedPath(),
+      NPM_CONFIG_LOGLEVEL: "error",
+    });
+    const models = await discoverCliModels(config.cli, ["models"], envForCli(), ANTIGRAVITY_MODELS);
     const active = new Map<string, { stop: () => void; turnId: string }>();
 
     const emit = (event: RuntimeEvent) => {
@@ -173,7 +181,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         const eventName = message?.event;
         if (eventName === "init") {
           state.sessionId = typeof message.conversation_id === "string" ? message.conversation_id : state.sessionId;
-          const model = typeof message.init?.model === "string" ? message.init.model : turn.model ?? MODELS.default;
+          const model = typeof message.init?.model === "string" ? message.init.model : turn.model ?? models.default;
           emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: state.sessionId, model });
           return;
         }
@@ -267,7 +275,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
-      models: MODELS,
+      models,
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
@@ -290,7 +298,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       },
       generateText: (prompt: string) =>
         new Promise((resolve, reject) => {
-          const args = ["-p", prompt, "--output-format", "text", "--model", MODELS.default];
+          const args = ["-p", prompt, "--output-format", "text", "--model", models.default];
           if (config.fullAuto) args.push("--dangerously-skip-permissions");
           execFileCli(config.cli, args, { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } }, (error, stdout) =>
             error ? reject(error) : resolve(stdout.trim()),

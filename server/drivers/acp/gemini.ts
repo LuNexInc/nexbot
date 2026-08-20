@@ -31,6 +31,7 @@ const support: AcpSupport = {
     ],
   },
   defaultCli: "gemini",
+  modelListArgs: ["models"],
   nativeSource: "gemini.acp",
   loginNote: "Gemini CLI is not signed in — run `gemini` once to log in, or set GEMINI_API_KEY",
 

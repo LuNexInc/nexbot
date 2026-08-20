@@ -47,7 +47,6 @@ import { detectCapabilities } from "./capabilities.ts";
 import { clipForTurn, handoffThreadIds, mentionedBots, Store, type Message, type NexColor, type TurnEffort } from "./store.ts";
 import { isChiefOfStaffRole, roleByTitle, SLEEP_WARNING, teammateGreeting, withRolePrompt, isForbiddenFightAsk } from "./roles.ts";
 import { applyTodoTool, listTodos, onTodosChange } from "./todo.ts";
-import { enqueueMemoryJob } from "./memory-worker.ts";
 import { autoDistillFromTurn, deleteSkill, listSkills, saveSkill, skillFromTurn, skillsPrompt } from "./skills.ts";
 import { onToolError, postToolHook, preToolHook } from "./tool-hooks.ts";
 import { checkSteerToken, loadSteerToken, rotateSteerToken, tokenFromRequest } from "./steer.ts";
@@ -614,10 +613,6 @@ bus.subscribe((event: RuntimeEvent) => {
       turnGroup.delete(bot.id);
       turnMeta.delete(bot.id);
       forgetTurn(bot.id);
-      if (bot.memoryEnabled) {
-        const last = [...store.messagesFor(bot.threadId)].reverse().find((m) => m.role === "bot" && m.kind === "text");
-        enqueueMemoryJob(bot.id, last?.text);
-      }
       enqueueConversationArchive(bot.id, store.messagesFor(bot.threadId));
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       if (bot.notifications !== false && !(currentTurn?.kind === "proactive" && !isMeaningfulUpdate(turnText))) {

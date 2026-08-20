@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { isTableDivider, parseMarkdownTable, splitPipeRow } from "./markdown";
+import { isTableDivider, normalizeMarkdown, parseMarkdownTable, splitPipeRow } from "./markdown";
+
+describe("Markdown normalization", () => {
+  it("breaks collapsed labelled bullets into separate lines", () => {
+    expect(normalizeMarkdown("- **Answer:** first - **Status:** done - **Owner:** Charles")).toBe(
+      "- **Answer:** first\n- **Status:** done\n- **Owner:** Charles",
+    );
+  });
+
+  it("preserves ordinary hyphenated prose and normalizes line endings", () => {
+    expect(normalizeMarkdown("A well-known fact -5 is still prose.\r\nNext line.")).toBe("A well-known fact -5 is still prose.\nNext line.");
+  });
+});
 
 describe("Markdown table parsing", () => {
   it("parses a pipe row and divider", () => {

@@ -5,6 +5,24 @@ export interface MarkdownTable {
   nextIndex: number;
 }
 
+/** Recover block boundaries from providers that collapse Markdown newlines.
+ * Only split a dash when it clearly starts a labelled list item, so ordinary
+ * prose such as "well-known" and "-5 degrees" remains unchanged. */
+export function normalizeMarkdown(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .flatMap((line) => {
+      const parts = line.split(/\s+[-•]\s+(?=(?:\*\*[^*\n]+\*\*|[A-Z][^:\n]{1,100}:))/g);
+      if (parts.length === 1) {
+        const numbered = line.split(/\s+(?=\d+\.\s+(?:\*\*|[A-Z][^\n]*))/g);
+        return numbered.length > 1 ? numbered : [line];
+      }
+      return parts.map((part, index) => (index === 0 ? part : `- ${part}`));
+    })
+    .join("\n");
+}
+
 /** Parse a pipe-delimited Markdown row. We require a leading or trailing pipe
  * so ordinary prose that happens to contain a pipe stays ordinary prose. */
 export function splitPipeRow(line: string): string[] | null {

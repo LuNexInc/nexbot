@@ -19,7 +19,7 @@ asar: true
 extraResources:
   - from: dist
     to: ui
-  - from: dist-server
+  - from: dist-server/server
     to: server
   - from: scripts/install-autostart.ps1
     to: install-autostart.ps1
