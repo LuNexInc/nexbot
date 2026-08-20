@@ -22,6 +22,7 @@ import { useStore, type Bot } from "@/state/store";
 import { NexAvatar, InitialsAvatar } from "./Avatar";
 import { NexMark } from "./NexMark";
 import { cn } from "@/lib/cn";
+import { pickerInstances } from "@/lib/provider-visibility";
 import { stripWorkingNarration } from "@/lib/activity";
 import { NEXBOT_TEMPLATES, nexBotCopy } from "@/lib/nexbot-templates";
 import { NEX_COLORS, NEX_COLOR_NAMES, NEX_PASTELS, type NexColor } from "@/lib/mascot";
@@ -387,7 +388,8 @@ export function Sidebar({ open = true }: { open?: boolean }) {
     return b.name.trim().toLowerCase().includes(hq);
   });
 
-  const availableMeetInstances = state.instances.filter((i) => i.snapshot.state === "available");
+  const visibleInstances = pickerInstances(state.instances);
+  const availableMeetInstances = visibleInstances.filter((i) => i.snapshot.state === "available");
   const meetInstance =
     availableMeetInstances.find((i) => i.instanceId === meetInstanceId) ?? availableMeetInstances[0];
   const meetModelOption =
@@ -721,7 +723,7 @@ export function Sidebar({ open = true }: { open?: boolean }) {
                 className="mt-1.5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] font-normal normal-case tracking-normal text-ink"
               >
                 {state.instances.length === 0 && <option value="">Loading providers…</option>}
-                {state.instances.map((instance) => (
+                {visibleInstances.map((instance) => (
                   <option key={instance.instanceId} value={instance.instanceId} disabled={instance.snapshot.state !== "available"}>
                     {instance.displayName} · {instance.driverKind}
                     {instance.snapshot.state !== "available" ? " — optional" : ""}

@@ -6,6 +6,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { useStore, type Bot, type InstanceInfo, type ReasoningEffort } from "@/state/store";
 import { ProviderMark } from "./ProviderIcons";
 import { cn } from "@/lib/cn";
+import { pickerInstances } from "@/lib/provider-visibility";
 
 function modelLabel(instance: InstanceInfo | undefined, model: string): string {
   return instance?.models.options.find((o) => o.id === model)?.label ?? model;
@@ -28,10 +29,10 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
   const selection = bot.modelSelection;
   const reasoningEffort = selection.reasoningEffort ?? "auto";
   const reasoningLabel = REASONING_OPTIONS.find((option) => option.value === reasoningEffort)?.label ?? "Auto";
+  const visibleInstances = pickerInstances(state.instances);
   const active = state.instances.find((i) => i.instanceId === selection.instanceId);
   const railInstance =
-    state.instances.find((i) => i.instanceId === (railId ?? selection.instanceId)) ??
-    state.instances[0];
+    visibleInstances.find((i) => i.instanceId === (railId ?? selection.instanceId)) ?? visibleInstances[0];
 
   useEffect(() => {
     if (!open) return;
@@ -85,7 +86,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
         >
           {/* instance rail */}
           <div className="flex flex-col gap-1 border-r border-hairline/40 bg-panel p-2">
-            {state.instances.map((instance) => {
+            {visibleInstances.map((instance) => {
               const unavailable = instance.snapshot.state !== "available";
               const onRail = instance.instanceId === railInstance?.instanceId;
               return (
