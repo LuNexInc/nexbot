@@ -30,7 +30,7 @@ export function OptionCard({
   };
 
   return (
-    <div className="w-full max-w-[840px] rounded-2xl border border-black/10 bg-black/[0.03] dark:bg-white/[0.04] p-4.5 shadow-sm transition-all">
+    <div className="w-full max-w-[840px] rounded-2xl border border-black/10 bg-black/[0.03] dark:bg-white/[0.04] p-4.5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -67,7 +67,7 @@ export function OptionCard({
         <button
           onClick={() => dispatch({ type: "dismissCard", botId, messageId: message.id })}
           aria-label="Dismiss card"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:bg-black/8 hover:text-ink transition-colors"
+          className="pressable flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-black/8 hover:text-ink"
         >
           <X size={15} />
         </button>
@@ -79,7 +79,7 @@ export function OptionCard({
           type="button"
           onClick={() => setShowDetails(!showDetails)}
           aria-expanded={showDetails}
-          className="flex min-h-11 items-center gap-1 text-[12px] font-medium text-ink-secondary hover:text-ink transition-colors"
+          className="pressable flex min-h-11 items-center gap-1 text-[12px] font-medium text-ink-secondary transition-colors hover:text-ink"
         >
           {showDetails ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           <span>{showDetails ? "Hide the details" : "Show the details"}</span>

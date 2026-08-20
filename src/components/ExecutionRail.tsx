@@ -62,7 +62,7 @@ export function ExecutionRail({
   }
 
   return (
-    <div className="my-2 flex flex-col gap-1.5 rounded-xl border border-black/8 bg-black/3 p-2 font-mono text-[12px] transition-all">
+    <div className="my-2 flex flex-col gap-1.5 rounded-xl border border-black/8 bg-black/3 p-2 font-mono text-[12px]">
       {/* Header bar */}
       <div className="flex items-center justify-between px-1.5 py-0.5 text-[11px] font-semibold text-ink-secondary">
         <div className="flex items-center gap-2">
@@ -116,7 +116,7 @@ export function ExecutionRail({
           return (
             <div
               key={m.id}
-              className="overflow-hidden rounded-lg border border-black/6 bg-white/70 transition-all"
+              className="overflow-hidden rounded-lg border border-black/6 bg-white/70"
             >
               <button
                 onClick={() => setExpandedId(isExpanded ? null : m.id)}

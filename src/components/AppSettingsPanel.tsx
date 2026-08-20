@@ -836,7 +836,7 @@ function KeepaliveSection() {
         >
           <span
             className={cn(
-              "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+              "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
               on ? "left-[21px]" : "left-[3px]",
             )}
           />
@@ -955,8 +955,10 @@ export function AppSettingsPanel() {
         <span className="w-6" />
         <span className="text-[15px] font-semibold text-ink">Settings</span>
         <button
+          type="button"
           onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="pressable rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          aria-label="Close app settings"
         >
           <X size={18} />
         </button>

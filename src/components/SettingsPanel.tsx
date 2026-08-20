@@ -162,7 +162,7 @@ function AgentSkills({
             >
               <span
                 className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
                   isOn(s.slug) ? "left-[21px]" : "left-[3px]",
                 )}
               />
@@ -249,8 +249,10 @@ export function SettingsPanel({
       <div className="flex items-center justify-between px-4 py-3">
         {page === "identity" ? (
           <button
+            type="button"
             onClick={() => setPage("overview")}
-            className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            className="pressable rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            aria-label="Back to agent settings"
           >
             <ChevronLeft size={18} />
           </button>
@@ -261,16 +263,19 @@ export function SettingsPanel({
         <div className="flex items-center gap-0.5">
           {page === "overview" && (
             <button
+              type="button"
               onClick={() => setPage("identity")}
-              className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+              className="pressable rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
               title="Name, title, memory"
             >
               <Settings size={18} />
             </button>
           )}
           <button
+            type="button"
             onClick={() => dispatch({ type: "toggleSettings", open: false })}
-            className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            className="pressable rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            aria-label="Close agent settings"
           >
             <X size={18} />
           </button>
@@ -445,7 +450,7 @@ export function SettingsPanel({
               >
                 <span
                   className={cn(
-                    "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                    "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
                     bot.memoryEnabled ? "left-[21px]" : "left-[3px]",
                   )}
                 />
@@ -502,7 +507,7 @@ export function SettingsPanel({
                 >
                   <span
                     className={cn(
-                      "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                    "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
                       bot.proactiveEnabled !== false ? "left-[21px]" : "left-[3px]",
                     )}
                   />
@@ -524,7 +529,7 @@ export function SettingsPanel({
                 >
                   <span
                     className={cn(
-                      "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                    "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
                       bot.completionPings !== false ? "left-[21px]" : "left-[3px]",
                     )}
                   />
@@ -553,7 +558,7 @@ export function SettingsPanel({
             >
               <span
                 className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
                   bot.notifications ? "left-[21px]" : "left-[3px]",
                 )}
               />

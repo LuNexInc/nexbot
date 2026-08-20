@@ -30,9 +30,24 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
   const reasoningEffort = selection.reasoningEffort ?? "auto";
   const reasoningLabel = REASONING_OPTIONS.find((option) => option.value === reasoningEffort)?.label ?? "Auto";
   const visibleInstances = pickerInstances(state.instances);
-  const active = state.instances.find((i) => i.instanceId === selection.instanceId);
+  const visibleActive = visibleInstances.find((i) => i.instanceId === selection.instanceId);
+  const active = visibleActive ?? visibleInstances[0];
   const railInstance =
     visibleInstances.find((i) => i.instanceId === (railId ?? selection.instanceId)) ?? visibleInstances[0];
+
+  useEffect(() => {
+    if (visibleActive || visibleInstances.length === 0) return;
+    const fallback = visibleInstances[0];
+    const fallbackModel =
+      fallback.models.options.find((option) => option.id === fallback.models.default)?.id ??
+      fallback.models.options[0]?.id;
+    if (!fallbackModel) return;
+    dispatch({
+      type: "setModel",
+      botId: bot.id,
+      selection: { ...selection, instanceId: fallback.instanceId, model: fallbackModel },
+    });
+  }, [bot.id, dispatch, selection, visibleActive, visibleInstances]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,7 +83,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
           setRailId(selection.instanceId);
           setOpen((o) => !o);
         }}
-        className="flex min-h-11 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised"
+        className="pressable flex min-h-11 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink transition-colors hover:bg-raised"
         title={active ? `${active.displayName} · ${modelLabel(active, selection.model)} · Reasoning ${reasoningLabel}` : selection.model}
         aria-label={active ? `${active.displayName} · ${modelLabel(active, selection.model)} · Reasoning ${reasoningLabel}` : selection.model}
         aria-haspopup="listbox"
@@ -82,16 +97,20 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
       {open && (
         <div
           data-model-picker-content
-          className="absolute right-0 top-full z-30 mt-2 flex w-[320px] overflow-hidden rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/50"
+          role="listbox"
+          aria-label="Choose a provider and model"
+          className="animate-popover-in absolute right-0 top-full z-30 mt-2 flex max-h-[calc(100vh-6rem)] min-h-0 w-[320px] origin-top-right overflow-hidden rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/50"
         >
           {/* instance rail */}
-          <div className="flex flex-col gap-1 border-r border-hairline/40 bg-panel p-2">
+          <div className="flex shrink-0 flex-col gap-1 overflow-y-auto border-r border-hairline/40 bg-panel p-2">
             {visibleInstances.map((instance) => {
               const unavailable = instance.snapshot.state !== "available";
               const onRail = instance.instanceId === railInstance?.instanceId;
               return (
                 <button
                   key={instance.instanceId}
+                  role="option"
+                  aria-selected={onRail}
                   onClick={() => setRailId(instance.instanceId)}
                   title={
                     unavailable
@@ -99,7 +118,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                       : instance.displayName
                   }
                   className={cn(
-                    "flex min-h-11 min-w-11 items-center justify-center rounded-lg",
+                    "pressable flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors",
                     onRail ? "bg-raised" : "hover:bg-raised/60",
                     unavailable && "opacity-40",
                   )}
@@ -111,7 +130,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
           </div>
 
           {/* model list for the rail-selected instance */}
-          <div className="min-w-0 flex-1 p-2">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-2">
             {railInstance ? (
               <>
                 <div className="px-2 pb-1 pt-1">
@@ -129,10 +148,12 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                   return (
                     <button
                       key={option.id}
+                      role="option"
+                      aria-selected={current}
                       disabled={disabled}
                       onClick={() => pick(railInstance, option.id)}
                       className={cn(
-                        "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]",
+                        "pressable flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors",
                         disabled ? "cursor-not-allowed text-ink-secondary/50" : "text-ink hover:bg-raised/60",
                         current && "bg-raised",
                       )}

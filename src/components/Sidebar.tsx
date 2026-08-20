@@ -54,8 +54,14 @@ function preview(bot: Bot): string {
     if (message.kind === "options" && message.card) return nexBotCopy(message.card.title);
     if (message.kind === "activity" && message.tool) return message.tool.name;
     if (message.kind === "screen") return "Screen frame";
-    const clean = stripWorkingNarration(message.text ?? "");
-    if (clean) return clean;
+    const clean = stripWorkingNarration(message.text ?? "")
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/\[([^\]]+)\]\((?:https?:\/\/|mailto:)[^)]+\)/g, "$1")
+      .replace(/[*_`>#]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^(?:Answer|Status|Owner|Need from you):\s*/i, "");
+    if (clean) return clean.slice(0, 140);
   }
   return "";
 }
@@ -405,7 +411,7 @@ export function Sidebar({ open = true }: { open?: boolean }) {
     <aside className={cn(
       "glass-heavy flex h-full w-[300px] shrink-0 flex-col border-r border-black/8",
       !open && "hidden",
-      "max-[900px]:fixed max-[900px]:inset-y-0 max-[900px]:left-0 max-[900px]:z-40",
+      "max-[900px]:fixed max-[900px]:inset-y-0 max-[900px]:left-0 max-[900px]:z-40 mobile-sidebar-surface",
     )}>
       {/* Titlebar: real traffic lights in Electron, faux ones in the browser */}
       <div

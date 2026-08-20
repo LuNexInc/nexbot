@@ -347,7 +347,7 @@ export function Composer({ bot }: { bot: Bot }) {
           </div>
         )}
 
-        <div className="glass-floating flex flex-col gap-2 rounded-2xl p-2.5 transition-all">
+        <div className="glass-floating flex flex-col gap-2 rounded-2xl p-2.5">
           {files.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
               {files.map((f, i) => (
@@ -505,7 +505,7 @@ export function Composer({ bot }: { bot: Bot }) {
               onClick={send}
               disabled={!text.trim() && !files.length}
               className={cn(
-                "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-all",
+                "pressable flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-colors",
                 text.trim() || files.length
                   ? "bg-ink text-white shadow-sm hover:opacity-90"
                   : "bg-black/6 text-ink-secondary opacity-40 cursor-not-allowed",

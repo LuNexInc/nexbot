@@ -109,8 +109,10 @@ export function SkillsPanel() {
       <div className="flex items-center justify-between px-4 py-3">
         <span className="text-[15px] font-semibold text-ink">Skills</span>
         <button
+          type="button"
           onClick={() => dispatch({ type: "toggleSkills", open: false })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="pressable rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          aria-label="Close skills"
         >
           <X size={18} />
         </button>

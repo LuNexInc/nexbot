@@ -94,7 +94,7 @@ function ThinkingBlock({
         aria-expanded={open}
         aria-label={label}
         className={cn(
-          "group flex min-h-11 items-center gap-1.5 rounded-lg border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 py-1 text-[12px] font-medium text-ink-secondary hover:border-black/12 hover:bg-black/6 hover:text-ink transition-all",
+          "pressable group flex min-h-11 items-center gap-1.5 rounded-lg border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 py-1 text-[12px] font-medium text-ink-secondary transition-colors hover:border-black/12 hover:bg-black/6 hover:text-ink",
           open && "bg-black/6 border-black/12 text-ink rounded-b-none"
         )}
       >
@@ -104,7 +104,7 @@ function ThinkingBlock({
       </button>
 
       {open && (
-        <div className="w-full rounded-b-lg rounded-tr-lg border border-t-0 border-black/6 bg-black/[0.02] dark:bg-white/[0.02] p-3 text-[13px] leading-relaxed text-ink-secondary/90 max-h-[300px] overflow-y-auto whitespace-pre-wrap font-sans transition-all">
+        <div className="animate-popover-in w-full rounded-b-lg rounded-tr-lg border border-t-0 border-black/6 bg-black/[0.02] dark:bg-white/[0.02] p-3 text-[13px] leading-relaxed text-ink-secondary/90 max-h-[300px] overflow-y-auto whitespace-pre-wrap font-sans">
           <div className="border-l-2 border-black/15 pl-2.5 font-sans italic text-ink-secondary">
             {body || "No reasoning text was provided for this turn."}
           </div>
@@ -116,7 +116,7 @@ function ThinkingBlock({
 
 function inlineMd(text: string, keyBase: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  const re = /(\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\)|\*\*[^*]+\*\*|`[^`]+`)/g;
+  const re = /(\[[^\]]+\]\((?:https?:\/\/|mailto:|file:\/\/\/|desk:\/\/)[^)]+\)|\*\*[^*]+\*\*|`[^`]+`)/g;
   let last = 0;
   let i = 0;
   let m: RegExpExecArray | null;
@@ -124,7 +124,7 @@ function inlineMd(text: string, keyBase: string): React.ReactNode[] {
     if (m.index > last) parts.push(text.slice(last, m.index));
     const tok = m[0];
     if (tok.startsWith("[")) {
-      const link = tok.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)]+)\)$/);
+      const link = tok.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:|file:\/\/\/|desk:\/\/)[^)]+)\)$/);
       if (link) {
         parts.push(
           <a
@@ -272,9 +272,12 @@ function renderPlainMarkdown(text: string, keyBase: string) {
     const line = lines[i];
     const quote = line.match(/^\s*>\s?(.*)$/);
     if (quote) {
+      // Some providers collapse a quoted paragraph as `> text >`; the final
+      // marker is a delimiter, not part of the sentence.
+      const quoteText = quote[1].replace(/\s+>\s*$/, "");
       content.push(
         <blockquote key={`${keyBase}-${i}`} className="border-l-2 border-black/15 pl-3 text-ink-secondary">
-          {inlineMd(quote[1], `${keyBase}-q-${i}`)}
+          {inlineMd(quoteText, `${keyBase}-q-${i}`)}
         </blockquote>,
       );
       i += 1;
@@ -395,7 +398,7 @@ function Bubble({
         {(cleanText || user) && (
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm transition-all",
+              "rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm transition-colors",
               user
                 ? isFailed
                   ? "whitespace-pre-wrap border border-danger/30 bg-danger/10 text-danger"
@@ -526,7 +529,7 @@ function CommsCluster({
         aria-expanded={open}
         aria-label={`${open ? "Hide" : "Show"} conversation with ${participantNames}`}
         className={cn(
-          "group flex min-h-11 items-center gap-2.5 rounded-full border border-black/8 bg-black/[0.03] dark:bg-white/[0.04] px-3.5 py-1.5 text-[13px] font-medium text-ink-secondary transition-all shadow-xs",
+          "pressable group flex min-h-11 items-center gap-2.5 rounded-full border border-black/8 bg-black/[0.03] dark:bg-white/[0.04] px-3.5 py-1.5 text-[13px] font-medium text-ink-secondary transition-colors shadow-xs",
           "hover:border-black/15 hover:bg-black/6 hover:text-ink",
           open && "bg-black/8 text-ink border-black/15"
         )}
@@ -555,7 +558,7 @@ function CommsCluster({
       </button>
 
       {open && (
-        <div className="mt-2.5 flex w-full max-w-[840px] flex-col gap-2.5 rounded-2xl border border-black/8 bg-black/[0.02] dark:bg-white/[0.02] p-4 transition-all animate-fadeIn">
+        <div className="animate-popover-in mt-2.5 flex w-full max-w-[840px] flex-col gap-2.5 rounded-2xl border border-black/8 bg-black/[0.02] dark:bg-white/[0.02] p-4">
           <div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary px-1">
             NexBot conversation · {participantNames}
           </div>
