@@ -207,9 +207,15 @@ type StartTurnOpts = {
   maxTokens?: number;
   /** Reuse a durable pending message when draining the user turn queue. */
   existingMessageId?: string;
+  /** The caller waits for this turn and relays its result, so do not emit a second completion ping. */
+  relayResult?: boolean;
 };
 
 const nonceCache = createNonceCache(60_000);
+// A relay wait owns the user-facing result when the target finishes within
+// the wait window. If the wait times out, the target's completion report must
+// still reach Chief of Staff after the target eventually finishes.
+const relayResolvedThreads = new Set<string>();
 
 function askBotAndWait(
   fromBotId: string,
@@ -242,11 +248,18 @@ function askBotAndWait(
       if (e.type === "item.completed" && e.itemType === "assistant_text") {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
+        if (!e.ok) {
+          finish(ASK_BOT_STILL_WORKING);
+          return;
+        }
+        relayResolvedThreads.add(threadId);
         finish(boundToolOutput(text) || "(the bot finished without a text reply)");
       }
     });
-    const timer = setTimeout(() => finish(boundToolOutput(text) || ASK_BOT_STILL_WORKING), ASK_BOT_WAIT_MS);
-    startTurn(targetBotId, message, { taskContext, source: "agent", ...extra }).catch((err) =>
+    // Never relay an unfinished progress stream as the specialist's answer.
+    // The target's later completion report remains the source of truth.
+    const timer = setTimeout(() => finish(ASK_BOT_STILL_WORKING), ASK_BOT_WAIT_MS);
+    startTurn(targetBotId, message, { taskContext, source: "agent", relayResult: true, ...extra }).catch((err) =>
       finish(`(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})`),
     );
   });
@@ -282,6 +295,7 @@ const turnMeta = new Map<string, {
   startedAt: number;
   sourceBotId?: string;
   jobId?: string;
+  relayResult?: boolean;
   reasoningText?: string;
   reasoningTokens?: number;
   inputTokens?: number;
@@ -622,7 +636,17 @@ bus.subscribe((event: RuntimeEvent) => {
         broadcast({ kind: "notify", botId: bot.id, title: bot.name, body: `${bot.name} finished.` });
       }
       if (currentTurn?.kind !== "proactive" && currentTurn?.kind !== "completion") {
-        enqueueCompletionReport(bot, turnText);
+        if (currentTurn?.relayResult) {
+          // askBotAndWait runs as a later bus subscriber. Defer this check by
+          // one tick so a completed relay can suppress the duplicate report;
+          // a timed-out relay leaves the set empty and keeps the report.
+          setTimeout(() => {
+            if (relayResolvedThreads.delete(bot.threadId)) return;
+            enqueueCompletionReport(bot, turnText);
+          }, 0);
+        } else {
+          enqueueCompletionReport(bot, turnText);
+        }
       }
       if (completionReports.length > 0) scheduleCompletionReport();
 
@@ -704,12 +728,36 @@ async function autoRouteChiefTurn(
       });
       drainAgentInbox(target.id);
     } else {
-      await startTurn(target.id, delegatedText, {
-        taskContext: delegation.child,
-        source: "agent",
-        fromBot: { id: bot.id, name: bot.name, color: bot.color },
-        chatText: text,
-      });
+      void (async () => {
+        try {
+          const result = await askBotAndWait(bot.id, target.id, delegatedText, delegation.child, {
+            fromBot: { id: bot.id, name: bot.name, color: bot.color },
+            chatText: text,
+          });
+          if (!result || result === ASK_BOT_STILL_WORKING) return;
+          const targetReply = [...store.messagesFor(target.threadId)]
+            .reverse()
+            .find((message) => message.role === "bot" && message.kind === "text" && message.text?.trim());
+          const files = targetReply?.files?.length ? targetReply.files : renderArtifactsForReply(target.id, result);
+          const reply = store.appendMessage(bot.threadId, {
+            role: "bot",
+            kind: "text",
+            text: result,
+            source: "agent",
+            fromBot: { id: target.id, name: target.name, color: target.color },
+            ...(files?.length ? { files } : {}),
+          });
+          broadcast({ kind: "message", threadId: bot.threadId, message: reply });
+        } catch (error) {
+          const failure = store.appendMessage(bot.threadId, {
+            role: "bot",
+            kind: "text",
+            source: "agent",
+            text: `I could not bring back ${target.name}'s result. ${error instanceof Error ? error.message : String(error)}`,
+          });
+          broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+        }
+      })();
     }
   } catch (error) {
     const failure = store.appendMessage(bot.threadId, {
@@ -727,7 +775,7 @@ async function autoRouteChiefTurn(
     role: "bot",
     kind: "text",
     source: "agent",
-    text: `I sent this to ${target.name}. I’ll bring the result back here.`,
+    text: `I sent this to ${target.name}. The result will appear here when it finishes.`,
   });
   broadcast({ kind: "message", threadId: bot.threadId, message: status });
   return decision;
@@ -821,7 +869,11 @@ function scheduleCompletionReport() {
 
 async function flushCompletionReports() {
   const cos = chiefOfStaffBot();
-  if (!cos || cos.busy || completionReports.length === 0) return;
+  if (!cos || completionReports.length === 0) return;
+  if (cos.busy) {
+    scheduleCompletionReport();
+    return;
+  }
   const reports = completionReports.splice(0, completionReports.length);
   const lines = reports.slice(-12).map((r) => `- @${r.name}: ${r.text.slice(0, 700)}`);
   const prompt = `[Completion report]
@@ -1051,6 +1103,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     startedAt: Date.now(),
     sourceBotId: opts?.fromBot?.id,
     jobId: job.id,
+    relayResult: opts?.relayResult,
   });
 
   // The active replay window stays small; the full transcript is durable.
