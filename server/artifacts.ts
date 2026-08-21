@@ -4,7 +4,7 @@ import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { DATA_DIR } from "./config.ts";
-import { deskPath } from "./desk.ts";
+import { DESK_ROOT, deskPath } from "./desk.ts";
 
 /** Files that the chat can preview without handing arbitrary filesystem paths to the browser. */
 export const ARTIFACT_MIME: Record<string, string> = {
@@ -99,10 +99,18 @@ const RENDER_WORDS = /\b(render(?:s|ed|ing)?|poster(?:s)?|mockup(?:s)?|visual(?:
 /** Find fresh image outputs that a creative/render reply should show in chat. */
 export function renderArtifactsForReply(botId: string, text: string): Array<{ name: string; path: string; mime: string }> {
   if (!RENDER_WORDS.test(text)) return [];
-  const out = join(deskPath(botId), "out");
-  if (!existsSync(out)) return [];
+  const botOut = join(deskPath(botId), "out");
+  const outDirs = [botOut];
+  if (existsSync(DESK_ROOT)) {
+    for (const entry of readdirSync(DESK_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === botId) continue;
+      const out = join(DESK_ROOT, entry.name, "out");
+      if (existsSync(out)) outDirs.push(out);
+    }
+  }
+  if (!outDirs.some((out) => existsSync(out))) return [];
   const tokens = new Set((text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
-  const candidates = readdirSync(out, { withFileTypes: true })
+  const candidates = outDirs.flatMap((out) => readdirSync(out, { withFileTypes: true })
     .filter((entry) => entry.isFile() && RENDER_EXTENSIONS.has(extname(entry.name).toLowerCase()))
     .map((entry) => {
       const path = join(out, entry.name);
@@ -111,7 +119,7 @@ export function renderArtifactsForReply(botId: string, text: string): Array<{ na
       let mtime = 0;
       try { mtime = statSync(path).mtimeMs; } catch { /* disappeared between readdir and stat */ }
       return { name: entry.name, path, mime: artifactMime(path), score, mtime };
-    })
+    }))
     .filter((entry) => entry.mtime > 0)
     .sort((a, b) => b.score - a.score || b.mtime - a.mtime);
   if (!candidates.length) return [];
