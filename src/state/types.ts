@@ -49,8 +49,8 @@ export interface Message {
   clientNonce?: string;
   /** delivery status for optimistic UI */
   status?: "pending" | "confirmed" | "failed";
-  /** attached files kept for retry */
-  files?: Array<{ name: string; data?: string; path?: string }>;
+  /** attached files kept for retry, or local artifacts attached by a bot */
+  files?: Array<{ name: string; data?: string; path?: string; mime?: string }>;
 }
 
 export interface TurnEffort {

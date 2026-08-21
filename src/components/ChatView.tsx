@@ -16,6 +16,85 @@ import { CodeBlock } from "./CodeBlock";
 import { ExecutionRail } from "./ExecutionRail";
 import { normalizeMarkdown, parseMarkdownTable } from "@/lib/markdown";
 
+interface ArtifactOpen {
+  reference: string;
+  name?: string;
+  mime?: string;
+}
+
+const ARTIFACT_EVENT = "nexbot:open-artifact";
+
+function artifactSrc(reference: string): string {
+  return `/api/artifacts?path=${encodeURIComponent(reference)}`;
+}
+
+function emitArtifactOpen(artifact: ArtifactOpen) {
+  window.dispatchEvent(new CustomEvent<ArtifactOpen>(ARTIFACT_EVENT, { detail: artifact }));
+}
+
+function artifactIsImage(artifact: ArtifactOpen): boolean {
+  if (artifact.mime?.startsWith("image/")) return true;
+  return /\.(?:png|jpe?g|webp|gif|avif|svg)(?:$|[?#])/i.test(artifact.reference);
+}
+
+function ArtifactDialog({ artifact, onClose }: { artifact: ArtifactOpen; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={artifact.name ?? "Artifact preview"}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <div className="relative flex max-h-[92vh] max-w-[min(1100px,96vw)] flex-col overflow-hidden rounded-2xl border border-white/20 bg-surface shadow-2xl">
+        <div className="flex items-center justify-between gap-4 border-b border-black/8 px-4 py-3 text-[13px] font-medium text-ink">
+          <span className="truncate">{artifact.name ?? "Artifact preview"}</span>
+          <button type="button" onClick={onClose} className="pressable rounded-lg px-2.5 py-1.5 text-ink-secondary hover:bg-black/6 hover:text-ink" aria-label="Close artifact preview">Close</button>
+        </div>
+        {artifactIsImage(artifact) ? (
+          <img src={artifactSrc(artifact.reference)} alt={artifact.name ?? "Artifact"} className="max-h-[calc(92vh-58px)] max-w-[min(1100px,96vw)] object-contain" />
+        ) : (
+          <iframe title={artifact.name ?? "Artifact preview"} src={artifactSrc(artifact.reference)} className="h-[calc(92vh-58px)] min-h-[420px] w-[min(1000px,92vw)] bg-white" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArtifactGallery({ files }: { files?: Message["files"] }) {
+  const artifacts = (files ?? []).filter((file): file is { name: string; path: string; mime?: string } => Boolean(file.path));
+  if (!artifacts.length) return null;
+  return (
+    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {artifacts.map((file) => {
+        const artifact = { reference: file.path, name: file.name, mime: file.mime };
+        return (
+          <button
+            key={file.path}
+            type="button"
+            onClick={() => emitArtifactOpen(artifact)}
+            className="pressable group overflow-hidden rounded-xl border border-black/8 bg-card text-left shadow-xs transition-colors hover:border-accent/45"
+            aria-label={`Open ${file.name}`}
+          >
+            {artifactIsImage(artifact) ? (
+              <img src={artifactSrc(file.path)} alt="" className="aspect-[16/10] w-full object-cover transition-transform duration-200 group-hover:scale-[1.015]" />
+            ) : (
+              <div className="flex aspect-[16/10] items-center justify-center bg-black/[0.035] px-4 text-center text-[13px] text-ink-secondary">Open document</div>
+            )}
+            <span className="block truncate px-3 py-2 text-[12px] font-medium text-ink">{file.name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface ErrorBoundaryProps {
   children: ReactNode;
   fallback?: ReactNode;
@@ -126,12 +205,14 @@ function inlineMd(text: string, keyBase: string): React.ReactNode[] {
     if (tok.startsWith("[")) {
       const link = tok.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:|file:\/\/\/|desk:\/\/)[^)]+)\)$/);
       if (link) {
+        const local = /^(?:file:\/\/\/|desk:\/\/)/i.test(link[2]);
         parts.push(
           <a
             key={`${keyBase}-${i++}`}
-            href={link[2]}
-            target="_blank"
-            rel="noreferrer"
+            href={local ? artifactSrc(link[2]) : link[2]}
+            target={local ? undefined : "_blank"}
+            rel={local ? undefined : "noreferrer"}
+            onClick={local ? (event) => { event.preventDefault(); emitArtifactOpen({ reference: link[2], name: link[1] }); } : undefined}
             className="font-medium text-accent underline decoration-accent/35 underline-offset-2 hover:decoration-accent"
           >
             {link[1]}
@@ -395,7 +476,7 @@ function Bubble({
           <ThinkingBlock thinking={message.reasoning ?? thinking ?? undefined} effort={message.effort} />
         )}
 
-        {(cleanText || user) && (
+        {(cleanText || user || message.files?.length) && (
           <div
             className={cn(
               "rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm transition-colors",
@@ -409,6 +490,7 @@ function Bubble({
             {user ? message.text : <Markdownish text={cleanText} botId={botId} />}
           </div>
         )}
+        {!user && <ArtifactGallery files={message.files} />}
         {isFailed && onRetry && (
           <div className="flex items-center justify-end gap-1 px-1 text-[11px] text-danger">
             <span>Failed to deliver.</span>
@@ -638,6 +720,7 @@ function BusyDots() {
 export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?: () => void }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [artifact, setArtifact] = useState<ArtifactOpen | null>(null);
 
   const streaming = state.streaming[bot.threadId];
   const streamingReasoning = state.streamingReasoning[bot.threadId];
@@ -645,6 +728,15 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
   const previousBotId = useRef<string | null>(null);
   const initializedThreads = useRef(new Set<string>());
   const errorMessage = state.error ?? state.botErrors[bot.id];
+
+  useEffect(() => {
+    const onArtifact = (event: Event) => {
+      const detail = (event as CustomEvent<ArtifactOpen>).detail;
+      if (detail?.reference) setArtifact(detail);
+    };
+    window.addEventListener(ARTIFACT_EVENT, onArtifact);
+    return () => window.removeEventListener(ARTIFACT_EVENT, onArtifact);
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -765,6 +857,7 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
 
       {state.expertMode && <TodoChecklist items={bot.todos ?? []} />}
       <Composer bot={bot} />
+      {artifact && <ArtifactDialog artifact={artifact} onClose={() => setArtifact(null)} />}
     </main>
   );
 }

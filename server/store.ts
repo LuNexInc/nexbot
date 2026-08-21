@@ -79,6 +79,8 @@ export interface Message {
   clientNonce?: string;
   /** delivery status for optimistic UI */
   status?: "pending" | "confirmed" | "failed";
+  /** Local artifacts attached to an assistant reply. Paths are served through /api/artifacts. */
+  files?: Array<{ name: string; path: string; mime?: string }>;
 }
 
 export interface TurnEffort {

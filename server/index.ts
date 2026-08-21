@@ -82,6 +82,7 @@ import { semanticRoute, type SemanticRouteDecision } from "./semantic-router.ts"
 import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./agent-inbox.ts";
 import { createTaskContext, delegateTask, isTaskDelegation, parseTaskContext, type TaskContext } from "./task-context.ts";
 import { wipeLocalData } from "./wipe.ts";
+import { renderArtifactsForReply, serveArtifact } from "./artifacts.ts";
 import { enqueueConversationArchive, ensureConversationArchive, freshSessionContextPrompt } from "./conversation-context.ts";
 import {
   isWireGuardEndpoint,
@@ -397,10 +398,12 @@ bus.subscribe((event: RuntimeEvent) => {
         const text = stripWorkingNarration(event.text);
         const currentTurn = turnMeta.get(bot.id);
         if (text.trim() && !(currentTurn?.kind === "proactive" && !isMeaningfulUpdate(text))) {
+          const files = renderArtifactsForReply(bot.id, text);
           pushMessage({
             role: "bot",
             kind: "text",
             text,
+            ...(files.length ? { files } : {}),
             source: currentTurn?.kind === "proactive" ? "proactive" : undefined,
           });
           const gid = turnGroup.get(bot.id);
@@ -1837,6 +1840,10 @@ const server = createServer(async (req, res) => {
       if (queuedTurns(bot.id).length > 0) setTimeout(() => drainUserQueue(bot.id), 50);
       else setTimeout(() => drainAgentInbox(bot.id), 50);
       return json(res, 200, { ok: true });
+    }
+
+    if (method === "GET" && path === "/api/artifacts") {
+      return serveArtifact(res, url.searchParams.get("path"));
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/takeover$/);
     if (m && (method === "POST" || method === "DELETE")) {
