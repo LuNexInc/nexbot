@@ -775,7 +775,7 @@ async function autoRouteChiefTurn(
     role: "bot",
     kind: "text",
     source: "agent",
-    text: `I sent this to ${target.name}. The result will appear here when it finishes.`,
+    text: `I've asked ${target.name} to handle that. I'll show you the answer when it's ready.`,
   });
   broadcast({ kind: "message", threadId: bot.threadId, message: status });
   return decision;
@@ -876,9 +876,9 @@ async function flushCompletionReports() {
   }
   const reports = completionReports.splice(0, completionReports.length);
   const lines = reports.slice(-12).map((r) => `- @${r.name}: ${r.text.slice(0, 700)}`);
-  const prompt = `[Completion report]
+  const prompt = `[Teammate update]
 
-The following teammate task(s) finished. Send Charles a short status update. Mention concrete results, blockers, and decisions. Do not delegate the report back to the reporting agents.
+A teammate finished work. Reply to Charles as a natural chat message, not a status template. Lead with the concrete result. Mention a blocker only if one exists. Mention a decision only if Charles must make it. Do not use headings such as Answer, Status, Owner, Need from you, Results, Blockers, or Decision. Do not repeat the handoff, routing mechanics, or tool narration. Do not ask what to do next unless Charles must choose something. Keep it to one to three short paragraphs. Do not delegate the report back to the reporting agents.
 
 ${lines.join("\n")}`;
   try {

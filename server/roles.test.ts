@@ -73,6 +73,16 @@ describe("COS_PROMPT", () => {
     expect(COS_PROMPT).toMatch(/contractions/);
     expect(COS_PROMPT).toMatch(/Don.t dump the roster unprompted/);
   });
+
+  it("sets natural conversation boundaries", () => {
+    expect(COS_PROMPT).toMatch(/real colleague/i);
+    expect(COS_PROMPT).toMatch(/How are you\?/i);
+    expect(COS_PROMPT).toMatch(/Answer, Status, Owner, Need from you/i);
+    expect(COS_PROMPT).toMatch(/dated memory notes/i);
+    expect(COS_PROMPT).toMatch(/one or two natural sentences/i);
+    expect(COS_PROMPT).toMatch(/brief social answer/i);
+    expect(COS_PROMPT).toMatch(/behind the scenes/i);
+  });
 });
 
 describe("GOAP_PROMPT", () => {
