@@ -22,11 +22,13 @@ function snippet(text: string, q: string): string {
   return (start > 0 ? "…" : "") + clean.slice(start, start + 150);
 }
 
+/**
+ * Mounted only while open (`{commandOpen && <CommandPalette/>}` in App):
+ * closing unmounts the subtree, so the DOM can never desync from state.
+ */
 export function CommandPalette({
-  open,
   onClose,
 }: {
-  open: boolean;
   onClose: () => void;
 }) {
   const { state, dispatch } = useStore();
@@ -35,32 +37,25 @@ export function CommandPalette({
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref so the mount-only Escape listener never needs to re-subscribe.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
-    if (!open) {
-      setQuery("");
-      setHighlight(0);
-      setHits([]);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    // Global Escape close — must not depend on focus living in the input.
+    // Capture phase: fires before any target handler can swallow the key.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // Debounced transcript + memory-fact search over the harness FTS index.
   useEffect(() => {
-    if (!open) return;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     const q = query.trim();
     if (q.length < 2) {
@@ -79,7 +74,7 @@ export function CommandPalette({
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [query, open]);
+  }, [query]);
 
   // Agents first, then message hits — one flat list so arrows stay simple.
   const q = query.trim().toLowerCase();

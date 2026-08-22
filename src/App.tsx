@@ -38,7 +38,7 @@ function ReconnectBanner() {
   );
 }
 
-function Shell() {
+function Shell({ inputGated }: { inputGated?: boolean }) {
   const { state, dispatch } = useStore();
   const [commandOpen, setCommandOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -51,6 +51,7 @@ function Shell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (inputGated) return; // first-run wizard owns the keyboard
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -79,7 +80,7 @@ function Shell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dispatch, state.bots]);
+  }, [dispatch, state.bots, inputGated]);
 
   useEffect(() => {
     const onResize = () => {
@@ -157,7 +158,7 @@ function Shell() {
       {state.appSettingsOpen && <AppSettingsPanel />}
       {state.pluginsOpen && <PluginsPanel />}
       {state.skillsOpen && <SkillsPanel />}
-      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
+      {commandOpen && <CommandPalette onClose={() => setCommandOpen(false)} />}
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
@@ -170,7 +171,7 @@ export default function App() {
   return (
     <CrashBoundary>
       <StoreProvider>
-        <Shell />
+        <Shell inputGated={gated} />
         {gated && <Onboarding onDone={() => setGated(false)} />}
       </StoreProvider>
     </CrashBoundary>

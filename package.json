@@ -1,7 +1,7 @@
 {
   "name": "nexbot",
   "private": true,
-  "version": "0.5.3",
+  "version": "0.5.5",
   "description": "NexBot — team of AI agents in a chat app (LuNex Inc)",
   "author": "LuNex Inc",
   "type": "module",

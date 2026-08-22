@@ -101,13 +101,34 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setStep(1);
   };
 
+  const skipAll = () => {
+    track("onboarding_skipped");
+    setEmailGateDone("skipped");
+    onDone();
+  };
+
+  // Escape always exits the wizard — a first-run modal must never trap the
+  // user, no matter what a background request is doing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        skipAll();
+      }
+    };
+    // Capture phase: setup is the topmost concern — one Esc exits everything.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onDone]);
+
   const refreshProviders = async () => {
     setCheckingProviders(true);
     setProviderError(null);
     try {
       const [instancesResponse, configResponse] = await Promise.all([
-        fetch("/api/instances"),
-        fetch("/api/config"),
+        fetch("/api/instances", { signal: AbortSignal.timeout(15_000) }),
+        fetch("/api/config", { signal: AbortSignal.timeout(15_000) }),
       ]);
       if (!instancesResponse.ok) throw new Error("Could not check local providers.");
       const instanceBody = (await instancesResponse.json()) as { instances?: InstanceRow[] };
@@ -125,7 +146,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     track("onboarding_step", { step });
     if (step === 1 && !cosLoaded) {
-      fetch("/api/bots")
+      fetch("/api/bots", { signal: AbortSignal.timeout(15_000) })
         .then((r) => r.json())
         .then((d) => {
           const bots = (Array.isArray(d.bots) ? d.bots : []) as BotRow[];
@@ -143,7 +164,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       void refreshProviders();
     }
     if (step === 3 && !cosBotId) {
-      fetch("/api/bots")
+      fetch("/api/bots", { signal: AbortSignal.timeout(15_000) })
         .then((r) => r.json())
         .then((d) => {
           const bots = (Array.isArray(d.bots) ? d.bots : []) as BotRow[];
@@ -170,6 +191,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: cosName.trim(), job: chosenCosJob }),
+        // A hung harness must strand nobody — the Skip button stays live.
+        signal: AbortSignal.timeout(20_000),
       });
       const body = (await response.json().catch(() => ({}))) as { error?: string; bot?: { id?: string } };
       if (!response.ok) throw new Error(body.error || "Could not set up the Chief of Staff.");
@@ -249,7 +272,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const antigravity = byKind("antigravity");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-app/80 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-app/80 backdrop-blur-xl">
       <div className="glass-heavy flex w-[460px] flex-col rounded-2xl p-8">
         {step === 0 && (
           <div className="flex flex-col items-center">
@@ -359,7 +382,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 track("onboarding_cos_skipped");
                 setStep(2);
               }}
-              disabled={cosBusy}
               className="mt-3 text-[12px] text-ink-secondary hover:text-ink disabled:opacity-50"
             >
               Skip for now
@@ -587,6 +609,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           </div>
         )}
 
+        {step > 0 && (
+          <button
+            type="button"
+            onClick={skipAll}
+            className="mt-5 self-center text-[12px] text-ink-secondary hover:text-ink"
+          >
+            Skip setup — finish later in Settings
+          </button>
+        )}
       </div>
     </div>
   );
