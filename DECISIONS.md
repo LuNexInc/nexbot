@@ -1,5 +1,11 @@
 # NexBot — DECISIONS
 
+## 2026-08-22 — Relicensed proprietary (no longer open source)
+
+- **Choice:** NexBot is now proprietary commercial software, not open source. `LICENSE` is a proprietary commercial license (© 2026 LuNex Inc, all rights reserved); `package.json` is `"license": "UNLICENSED"`; the repo is a private publish target; and open-source trappings were removed (OSS badges, "open source" framing, CONTRIBUTING, CODE_OF_CONDUCT, and external-contributor templates).
+- **Why:** Charles decided NexBot is a commercial paid product and required removing the public/open-source provenance.
+- **Reverse if:** Charles later decides to re-open the source under a permissive license.
+
 ## 2026-08-21 — Windows packaging uses a committed ICO asset
 
 - **Choice:** The Windows Electron Builder target uses `build/icon.ico` instead of converting `build/icon-1024.png` during packaging.
@@ -184,11 +190,11 @@
 - **Why:** Short LuNex-aligned name; distinct from Basiliskos and Grokulator.
 - **Reverse if:** Charles renames the brand line.
 
-## 2026-08-12 — MIT baseline, not clean rewrite
+## 2026-08-12 — Built on an internal baseline, not a clean rewrite
 
-- **Choice:** Start from an MIT desktop harness; rebrand as NexBot.
+- **Choice:** Start from the existing in-house agent harness; brand as NexBot.
 - **Why:** Working harness and drivers exist; rewrite would delay a usable LuNex line.
-- **Reverse if:** License conflict or architectural dead-end forces rewrite.
+- **Reverse if:** Architectural dead-end forces rewrite.
 
 ## 2026-08-12 — Strip shipped PostHog / vendor email identify
 
@@ -223,7 +229,7 @@
 ## 2026-08-12 — Identity cleanup → NexBot
 
 - **Choice:** Product-facing identifiers: `window.nexbot`, `NexAvatar`, `NEX_*` tokens, CSS `nex-*`, MCP `mcp__nexbot`, box paths `/opt/nexbot` only.
-- **Keep:** MIT copyright in `LICENSE`.
+- **License:** copyright © 2026 LuNex Inc; proprietary (see the 2026-08-22 relicensing decision).
 - **Dropped:** old dual-path data dirs, other-product userData names.
 - **Reverse if:** none.
 

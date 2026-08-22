@@ -66,17 +66,19 @@ describe("boundToolOutput", () => {
 describe("task-scoped team jobs", () => {
   it("starts team jobs with a bounded context so every bot can coordinate", () => {
     const src = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
-    const start = src.indexOf('path === "/api/jobs"');
+    const routes = readFileSync(join(SERVER_DIR, "web", "platform-routes.ts"), "utf8");
+    const internal = readFileSync(join(SERVER_DIR, "web", "internal-routes.ts"), "utf8");
+    const start = routes.indexOf('path === "/api/jobs"');
     expect(start).toBeGreaterThan(-1);
-    const block = src.slice(start, start + 900);
+    const block = routes.slice(start, start + 900);
     expect(block).toContain("[Team job]");
     expect(block).toMatch(/startTurn\(id,/);
     expect(block).not.toMatch(/taskContext:\s*createTaskContext/);
     expect(src).toContain("delegateTask");
-    expect(src).toContain("taskContext: delegation.child");
+    expect(internal).toContain("taskContext: delegation.child");
     expect(src).toContain("NEXBOT_TASK_CONTEXT");
-    expect(src).toContain('/api/internal/send-bot');
-    expect(src).toContain('queueAgentMessage');
+    expect(internal).toContain('/api/internal/send-bot');
+    expect(internal).toContain('queueAgentMessage');
   });
 });
 

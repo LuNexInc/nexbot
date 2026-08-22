@@ -1,6 +1,6 @@
 # NexBot — project rules
 
-LuNex Inc agent messaging desktop + harness. Public publish target: **LuNexInc/nexbot**.
+LuNex Inc agent messaging desktop + harness. Private publish target: **LuNexInc/nexbot**.
 
 ## What this is
 

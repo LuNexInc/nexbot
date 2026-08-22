@@ -1,9 +1,8 @@
-// Canonical harness contracts — ported from upstream
-// (apps/server/src/provider/ProviderDriver.ts, Services/ProviderAdapter.ts,
-// packages/contracts/src/{provider,providerInstance,providerRuntime}.ts),
-// de-Effect-ed: Promises instead of Effect, listener callbacks instead of
-// Stream. The shapes and names are kept so the two codebases stay mutually
-// readable.
+// Canonical harness contracts — the typed contract layer shared by drivers,
+// the registry, and the runtime. The shapes are provider-agnostic and
+// promise+listener based (promises instead of Effect, listener callbacks
+// instead of Stream). Each driver exposes a ProviderAdapter, and the registry
+// + bus normalize every provider into one RuntimeEvent stream.
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -15,7 +14,7 @@ export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";
 
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
-// binding (upstream ModelSelectionWire). instanceId is the routing key.
+// binding (the model-selection wire shape). instanceId is the routing key.
 export interface ModelSelection {
   instanceId: InstanceId;
   model: string;
@@ -38,7 +37,7 @@ export interface InstanceConfig {
 export type InstanceConfigMap = Record<InstanceId, InstanceConfig>;
 
 // ── canonical runtime events ───────────────────────────────────────────
-// Subset of upstream's 49-member ProviderRuntimeEvent union — the ~12 types
+// Subset of the 49-member provider-runtime-event union — the ~12 types
 // the recipe says to start with, sharing one base. `raw` carries the
 // native protocol message when a consumer needs to see behind the
 // normalization.
@@ -85,7 +84,7 @@ export type RuntimeEvent = RuntimeEventBase &
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
 
-// ── adapter contract (upstream ProviderAdapterShape, promise-flavored) ──
+// ── adapter contract (the provider-adapter shape, promise-flavored) ──
 // The conversation runtime every provider is flattened into. streamEvents
 // becomes onEvent(listener) → unsubscribe; sessions start implicitly on
 // carrying the provider-native continuation (e.g. a claude session id).
@@ -148,7 +147,7 @@ export interface ProviderAdapter {
   onEvent(listener: RuntimeEventListener): () => void;
 }
 
-// ── provider snapshot (upstream ServerProviderShape, reduced) ────────────
+// ── provider snapshot (the provider-snapshot shape, reduced) ────────────
 export interface ProviderSnapshot {
   state: "available" | "unavailable";
   reason?: string;
@@ -156,7 +155,7 @@ export interface ProviderSnapshot {
   version?: string | null;
 }
 
-// ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
+// ── driver SPI (a plain record, not a service) ─
 // `create` owns ALL per-instance state; two create calls share nothing.
 // Failures must reject, never throw synchronously — the registry downgrades
 // a rejection to an unavailable shadow snapshot.
@@ -181,7 +180,7 @@ export interface ProviderInstance {
   readonly models: ModelCatalog;
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
-  /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
+  /** Cheap one-shot text call (the text-generation slot) — titles, summaries. */
   generateText?(prompt: string): Promise<string>;
   dispose(): Promise<void>;
 }

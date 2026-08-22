@@ -33,4 +33,11 @@ contextBridge.exposeInMainWorld("nexbot", {
   openPath: (dir) => ipcRenderer.invoke("open-path", dir),
   autostartStatus: () => ipcRenderer.invoke("autostart:status"),
   autostartSet: (on) => ipcRenderer.invoke("autostart:set", on),
+  /** Auto-update status events from the main process (packaged builds). */
+  onUpdateStatus: (cb) => {
+    const handler = (_event, info) => cb(info);
+    ipcRenderer.on("update:status", handler);
+    return () => ipcRenderer.removeListener("update:status", handler);
+  },
+  updateInstall: () => ipcRenderer.invoke("update:install"),
 });

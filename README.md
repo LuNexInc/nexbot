@@ -2,21 +2,20 @@
 
 **Your own team of AI bots, in a chat app.**
 
-LuNex Inc's open-source agent messaging shell. Each sidebar contact is a real local agent
+LuNex Inc's commercial agent messaging shell. Each sidebar contact is a real local agent
 (`claude`, `codex`, or `grok` CLI) with its own personality, model, optional local computer (this PC),
 and connected apps.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-Windows%20·%20macOS-2B2E3A?logo=electron&logoColor=9FEAF9)
-![License](https://img.shields.io/badge/license-MIT-38d591)
 
 ## Why NexBot
 
 - **Bring your own agents.** Uses CLIs already installed and logged in — no proxy account in the middle.
 - **Local first.** Harness server on `127.0.0.1`. Transcripts and keys in `~/.nexbot`.
 - **No shipped analytics.** Optional local profile only. No PostHog token in the client.
-- **LuNex product.** Public source: [LuNexInc/nexbot](https://github.com/LuNexInc/nexbot).
+- **LuNex product.** Proprietary commercial software. © 2026 LuNex Inc.
 
 ## Quick start (from source)
 
@@ -53,6 +52,12 @@ Busy bots accept durable `queue`, next-turn `steer`, and interrupting `replace`
 messages. Execution receipts distinguish a tool attempt from a verified state
 change. App Settings also provides operator takeover, an encrypted per-bot
 credential vault, custom ACP providers, and the same doctor report.
+
+Desktop polish: Ctrl+K searches agents **and** message history (FTS),
+Ctrl+1…9 jumps between teammates, `?` shows shortcuts, every reply has Copy /
+Listen (read-aloud), threads export to Markdown, team identities backup to a
+portable JSON file, packaged builds auto-update in the background, and a
+reconnecting banner plus crash recovery keep failures calm.
 
 The live benchmark sends real turns and writes its report under `outputs/`.
 Run it against a disposable profile or an intended test bot because it uses
@@ -94,4 +99,4 @@ owns agent processes and normalizes each provider protocol into one event stream
 
 ## License
 
-[MIT](LICENSE) © 2026 LuNex Inc.
+Proprietary commercial software. © 2026 LuNex Inc. All rights reserved. Not open source. See `LICENSE` for the commercial license terms.

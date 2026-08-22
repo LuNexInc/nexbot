@@ -2,7 +2,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 
 export const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -15,10 +15,13 @@ export const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-export function json(res: ServerResponse, status: number, body: unknown) {
+/** Write a JSON response. Returns true so route handlers can
+ * `return json(...)` to signal that the request was handled. */
+export function json(res: ServerResponse, status: number, body: unknown): boolean {
   const data = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json" });
   res.end(data);
+  return true;
 }
 
 export function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -26,7 +29,12 @@ export function readBody(req: IncomingMessage): Promise<Record<string, unknown>>
     let data = "";
     req.on("data", (c) => {
       data += c;
-      if (data.length > 1_000_000) reject(new Error("body too large"));
+      if (data.length > 1_000_000) {
+        // Stop buffering and close the socket — a rejected promise alone
+        // would leave the client streaming into a dead request.
+        req.destroy(new Error("body too large"));
+        reject(new Error("body too large"));
+      }
     });
     req.on("end", () => {
       try {
@@ -46,6 +54,11 @@ export function readBody(req: IncomingMessage): Promise<Record<string, unknown>>
 
 export function headerSecret(req: IncomingMessage): string {
   const h = req.headers["x-nexbot-secret"];
+  return Array.isArray(h) ? (h[0] ?? "") : (h ?? "");
+}
+
+export function wipeHeader(req: IncomingMessage): string {
+  const h = req.headers["x-nexbot-wipe-password"];
   return Array.isArray(h) ? (h[0] ?? "") : (h ?? "");
 }
 
@@ -69,8 +82,12 @@ export function serveStatic(
   staticDir: string,
   urlPath: string,
 ): boolean {
-  const safe = urlPath === "/" ? "/index.html" : urlPath.replace(/\.\./g, "");
-  const file = join(staticDir, safe);
+  const root = resolve(staticDir);
+  const file = resolve(root, urlPath === "/" ? "index.html" : "." + (urlPath.startsWith("/") ? urlPath : `/${urlPath}`));
+  // Containment check: the resolved path must stay inside the static root.
+  if (!file.startsWith(root + sep) && file !== root) {
+    return false;
+  }
   try {
     if (!existsSync(file)) throw new Error("missing");
     const data = readFileSync(file);
@@ -79,7 +96,7 @@ export function serveStatic(
     return true;
   } catch {
     try {
-      const data = readFileSync(join(staticDir, "index.html"));
+      const data = readFileSync(join(root, "index.html"));
       res.writeHead(200, { "content-type": "text/html" });
       res.end(data);
       return true;

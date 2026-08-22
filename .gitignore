@@ -13,3 +13,8 @@ _upstream_cmp/
 
 
 dist-server
+electron/updater.bundle.cjs
+
+# generated bundling / debug dumps
+electron/updater.bundle.cjs
+outputs/sub8-*.txt

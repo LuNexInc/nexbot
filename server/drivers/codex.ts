@@ -25,7 +25,7 @@ import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "codex";
 
-// catalog ported from upstream packages/contracts/src/model.ts
+// model catalog (default + options for the model picker)
 const MODELS = {
   default: "gpt-5.6-sol",
   options: [

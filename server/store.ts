@@ -1,7 +1,6 @@
 // Bot + thread persistence. bots.json holds bot records (including the
-// thread→instance binding and per-instance resume cursors — upstream's
-// ProviderSessionDirectory, recipe step 6: persist the binding from day
-// one). messages-<threadId>.json holds the folded transcript.
+// thread→instance binding and per-instance resume cursors). Persist the
+// binding from day one. messages-<threadId>.json holds the folded transcript.
 import { mkdirSync } from "node:fs";
 import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadThreadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
 

@@ -1,8 +1,6 @@
-// Fan-in event bus — port of upstream's ProviderService fan-in +
-// EventNdjsonLogger tee, minus Effect. Every adapter's event stream merges
-// into one bus; each event is stamped with its providerInstanceId, teed to
-// a per-thread canonical NDJSON log (the debugging trick both upstream and
-// the server-side message folder).
+// Fan-in event bus — every adapter's event stream merges into one bus; each
+// event is stamped with its providerInstanceId and teed to a per-thread
+// canonical NDJSON log (the debugging record the transcript projection reads).
 import { EVENTS_DIR } from "../config.ts";
 import { appendNdjson } from "../event-log.ts";
 import type { ProviderInstance, RuntimeEvent, RuntimeEventListener } from "../contracts.ts";

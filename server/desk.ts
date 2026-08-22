@@ -161,13 +161,15 @@ export function buildPersona(
   bot: { name: string; title?: string; description?: string; personality?: string },
   parts: { desk: string; memory: string; skills: string },
 ): string {
+  const memoryRecallStyle =
+    "When these notes shape your answer, weave the recall naturally into your own voice (\"I remember you said…\", \"that connects to last week's decision\") so it reads like a colleague who remembers — never mention profile.md, day-log files, note headings, or note formats.";
   return [
     `You are ${bot.name}, a personal bot in NexBot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     bot.personality && `Talking style:\n${bot.personality}`,
     parts.desk,
-    parts.memory,
+    parts.memory && `${parts.memory} ${memoryRecallStyle}`,
     parts.skills,
   ]
     .filter(Boolean)

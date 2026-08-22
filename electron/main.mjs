@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, ipcMain, screen as electron_screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc, cuaConnectionStatus, resolveDriverBinary } from "./cua.mjs";
@@ -40,6 +41,8 @@ async function startServerOn(port) {
       ...serverEnv,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
+      // The packaged harness has no package.json to read — tell it directly.
+      NEXBOT_VERSION: app.getVersion(),
       NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
     },
     stdio: "inherit",
@@ -115,6 +118,36 @@ function showMainWindow() {
   mainWin.show();
   if (mainWin.isMinimized()) mainWin.restore();
   mainWin.focus();
+  // A window stranded on the error page from a slow boot gets a second chance
+  // every time the user asks for the app.
+  if (!DEV_PREVIEW && !serverReady) recoverWindowWhenServerUp(mainWin);
+}
+
+// ── window state persistence ─────────────────────────────────────────────
+function windowStateFile() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+function workAreaWidth() {
+  try { return electron_screen.getPrimaryDisplay().workArea.width; } catch { return 1920; }
+}
+function workAreaHeight() {
+  try { return electron_screen.getPrimaryDisplay().workArea.height; } catch { return 1080; }
+}
+function loadWindowState() {
+  if (DEV_PREVIEW) return null; // preview never fights the installed app for state
+  try {
+    return JSON.parse(readFileSync(windowStateFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function saveWindowState(win) {
+  if (DEV_PREVIEW || !win || win.isDestroyed() || win.isMinimized()) return;
+  try {
+    writeFileSync(windowStateFile(), JSON.stringify(win.getBounds()));
+  } catch {
+    /* best-effort */
+  }
 }
 
 function createTray() {
@@ -142,9 +175,17 @@ function createTray() {
 }
 
 function createWindow() {
+  // Restore last session's size/position when it looks sane — a desktop
+  // product should reopen exactly where the user left it.
+  const saved = loadWindowState();
+  const useSaved = saved &&
+    Number.isFinite(saved.x) && Number.isFinite(saved.y) &&
+    saved.width >= 900 && saved.height >= 600 &&
+    saved.width <= workAreaWidth() + 40 && saved.height <= workAreaHeight() + 40;
   const win = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    width: useSaved ? saved.width : 1440,
+    height: useSaved ? saved.height : 920,
+    ...(useSaved ? { x: saved.x, y: saved.y } : {}),
     minWidth: 900,
     minHeight: 600,
     icon: APP_ICON,
@@ -178,9 +219,32 @@ function createWindow() {
   mainWin = win;
   win.once("ready-to-show", () => win.show());
   win.on("close", (e) => {
-    if (quitting) return;
+    if (quitting) {
+      saveWindowState(win);
+      return;
+    }
     e.preventDefault();
+    saveWindowState(win);
     win.hide();
+  });
+
+  // A crashed renderer must never strand the user on a white window.
+  // Transcripts live durably in ~/.nexbot, so reloading is always safe.
+  let crashReloads = 0;
+  win.webContents.on("render-process-gone", (_event, details) => {
+    if (quitting || details.reason === "clean-exit") return;
+    console.error("[renderer gone]", details.reason);
+    if (crashReloads >= 3 || win.isDestroyed()) return;
+    crashReloads += 1;
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.reload();
+      } catch {}
+    }, 800);
+  });
+  win.webContents.on("did-finish-load", () => {
+    crashReloads = 0;
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -190,9 +254,49 @@ function createWindow() {
 
   if (DEV_PREVIEW) {
     win.loadURL(DEV_URL);
+  } else if (serverReady) {
+    win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
   } else {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    // Boot still in flight (or failed): show the calm error page, then watch
+    // for the harness to come up and swap to the real UI automatically. The
+    // old behavior stranded users on the error page forever.
+    win.loadURL(ERROR_PAGE);
+    recoverWindowWhenServerUp(win);
   }
+
+  setupAutoUpdater(win);
+}
+
+// Poll candidate ports until a NexBot harness answers, then point the window
+// at it. Resolves once; safe against the window closing underneath us.
+function recoverWindowWhenServerUp(win) {
+  const ports = [...new Set([SERVER_PORT, 8799, 18799, 28799])];
+  const deadline = Date.now() + 120_000;
+  const timer = setInterval(async () => {
+    if (win.isDestroyed()) {
+      clearInterval(timer);
+      return;
+    }
+    if (Date.now() > deadline) {
+      clearInterval(timer); // give up quietly; Quit + reopen stays the fallback
+      return;
+    }
+    for (const port of ports) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1200) });
+        const body = await res.json().catch(() => null);
+        if (res.ok && body?.app === "nexbot") {
+          clearInterval(timer);
+          SERVER_PORT = port;
+          serverReady = true;
+          if (!win.isDestroyed()) win.loadURL(`http://127.0.0.1:${port}`);
+          return;
+        }
+      } catch {
+        /* not up yet */
+      }
+    }
+  }, 1500);
 }
 
 // Screen preview — desktopCapturer works on Windows, macOS, and Linux.
@@ -261,6 +365,49 @@ ipcMain.handle("notify", (_e, title, body) => {
 });
 ipcMain.handle("open-path", (_e, dir) => {
   if (dir) return shell.openPath(String(dir));
+});
+
+// ── auto-update (packaged builds only) ───────────────────────────────────
+// electron-updater is esbuild-bundled into electron/updater.bundle.cjs at
+// package time (scripts/build-updater.mjs) because the shipped app carries
+// zero node_modules. Absent bundle → the UI shows the GitHub-releases path.
+let updater = null;
+let updateReadyVersion = null;
+async function setupAutoUpdater(win) {
+  const send = (state, version) => {
+    if (!win.isDestroyed()) win.webContents.send("update:status", { state, version });
+  };
+  const bundlePath = path.join(__dirname, "updater.bundle.cjs");
+  if (!app.isPackaged || DEV_PREVIEW || !existsSync(bundlePath)) {
+    send("unsupported");
+    return;
+  }
+  try {
+    updater = (await import("./updater.bundle.cjs")).autoUpdater;
+  } catch (e) {
+    console.error("[updater] bundle unavailable:", e);
+    send("unsupported");
+    return;
+  }
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.on("checking-for-update", () => send("checking"));
+  updater.on("update-not-available", () => send("up-to-date"));
+  updater.on("update-available", (info) => send("downloading", info?.version));
+  updater.on("update-downloaded", (info) => {
+    updateReadyVersion = info?.version ?? null;
+    send("ready", info?.version);
+  });
+  updater.on("error", () => send("error"));
+  // Boot matters more than updates — give the harness a quiet quarter minute,
+  // then re-check a few times a day.
+  setTimeout(() => updater.checkForUpdates().catch(() => {}), 15_000);
+  setInterval(() => updater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+}
+ipcMain.handle("update:install", () => {
+  if (!updateReadyVersion || !updater) return;
+  quitting = true; // the close handler hides to tray unless this is set
+  updater.quitAndInstall();
 });
 
 function runAutostart(mode) {
@@ -344,7 +491,28 @@ app.whenReady().then(async () => {
   startCua().catch((e) => console.error("[cua] start failed:", e));
 
   // Packaged 0.3.8 already owns :8799. Preview never forks a second harness.
-  if (app.isPackaged && !DEV_PREVIEW) serverReady = await startServerPackaged();
+  // createWindow() reads `serverReady`; windows made mid-boot land on the
+  // error page and self-recover via recoverWindowWhenServerUp().
+  if (app.isPackaged && !DEV_PREVIEW) {
+    serverReady = await startServerPackaged();
+    // If every port attempt failed (contention, slow disk, AV scan), keep
+    // trying in the background instead of leaving the app dead until relaunch.
+    if (!serverReady) {
+      const retry = setInterval(async () => {
+        if (serverReady || quitting) {
+          clearInterval(retry);
+          return;
+        }
+        serverReady = await startServerPackaged();
+        if (serverReady) {
+          clearInterval(retry);
+          if (mainWin && !mainWin.isDestroyed()) {
+            mainWin.loadURL(`http://127.0.0.1:${SERVER_PORT}`).catch(() => {});
+          }
+        }
+      }, 20_000);
+    }
+  }
   createTray();
   if (!START_HIDDEN) createWindow();
 

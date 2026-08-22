@@ -173,6 +173,18 @@ export function loadMessagesFromDb(): Map<string, Message[]> {
   return map;
 }
 
+/** One thread's transcript, oldest first. Backs the store's lazy per-thread cache. */
+export function loadThreadMessagesFromDb(threadId: string): Message[] {
+  const rows = openStoreDb()
+    .prepare("SELECT json FROM messages WHERE thread_id = ? ORDER BY at ASC")
+    .all(threadId) as Array<{ json: string }>;
+  const out: Message[] = [];
+  for (const row of rows) {
+    try { out.push(JSON.parse(row.json) as Message); } catch { /* skip */ }
+  }
+  return out;
+}
+
 export type SearchHit = { messageId: string; threadId: string; botId: string | null; text: string; at: number };
 
 export function ftsMatchQuery(q: string): string | null {

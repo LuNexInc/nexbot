@@ -7,7 +7,7 @@ import { DATA_DIR, wipePassword } from "./config.ts";
 import { EVENT_LOG_MAX_BYTES, EVENT_LOG_RETAIN_MS, nativeLogEnabled } from "./event-log.ts";
 import { remoteAccessStatus } from "./remote-access.ts";
 
-const FALLBACK_VERSION = "0.3.9";
+const FALLBACK_VERSION = "0.0.0-dev";
 
 export function appVersion(): string {
   try {
@@ -17,6 +17,8 @@ export function appVersion(): string {
   } catch {
     /* packaged layout falls through */
   }
+  // Packaged builds get the version injected by Electron's main process.
+  if (process.env.NEXBOT_VERSION) return process.env.NEXBOT_VERSION;
   if (process.env.npm_package_version) return process.env.npm_package_version;
   return FALLBACK_VERSION;
 }

@@ -1,4 +1,4 @@
-import { BookMarked, Loader2, Monitor, PanelLeft, Square } from "lucide-react";
+import { BookMarked, Download, Loader2, Monitor, PanelLeft, Square } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { NexAvatar } from "./Avatar";
 import { ModelPicker } from "./ModelPicker";
@@ -15,6 +15,29 @@ function TtfrChip({ ms }: { ms: number }) {
       {ms}ms TTFR
     </span>
   );
+}
+
+/** Serialize the visible thread to Markdown and download it client-side. */
+function exportThreadMarkdown(bot: Bot): void {
+  const lines: string[] = [
+    `# ${bot.name} — conversation export`,
+    ``,
+    `Exported ${new Date().toLocaleString()} · NexBot v${__APP_VERSION__}`,
+    ``,
+  ];
+  for (const m of bot.messages) {
+    if (m.kind !== "text" || !m.text?.trim()) continue;
+    const who = m.role === "user" ? "You" : (m.fromBot?.name ?? bot.name);
+    const at = new Date(m.at).toLocaleString();
+    lines.push(`**${who}** · ${at}`, ``, m.text.trim(), ``, `---`, ``);
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${bot.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.md`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function ThreadHeader({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?: () => void }) {
@@ -59,6 +82,16 @@ export function ThreadHeader({ bot, onToggleSidebar }: { bot: Bot; onToggleSideb
           <span className="rounded-full bg-black/6 px-2 py-0.5 text-[11px] text-ink-secondary" title="Tokens this turn">
             {bot.usage.input + bot.usage.output} tok
           </span>
+        )}
+        {bot.messages.length > 0 && (
+          <button
+            onClick={() => exportThreadMarkdown(bot)}
+            className="pressable rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+            title="Export conversation as Markdown"
+            aria-label="Export conversation as Markdown"
+          >
+            <Download size={16} />
+          </button>
         )}
         {bot.messages.some((m) => m.role === "user") && (
           <button

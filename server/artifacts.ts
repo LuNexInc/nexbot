@@ -142,6 +142,9 @@ export function serveArtifact(res: ServerResponse, reference: string | null): bo
       "content-type": artifactMime(file),
       "content-disposition": `inline; filename="${name}"`,
       "cache-control": "no-store",
+      // Loopback requests are trusted by the harness gate, so artifact
+      // documents must never run scripts or touch this origin.
+      "content-security-policy": "sandbox",
       "x-content-type-options": "nosniff",
     });
     res.end(data);

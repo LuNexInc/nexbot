@@ -36,7 +36,7 @@ export interface ClaudeConfig {
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
 }
 
-// model catalog ported from upstream packages/contracts/src/model.ts
+// model catalog (default + options for the model picker)
 const MODELS = {
   default: "claude-sonnet-5",
   options: [

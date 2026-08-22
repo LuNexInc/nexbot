@@ -1,5 +1,5 @@
 // NexBot server — the harness host. Clients hold no transports
-// (upstream rule): the React app dispatches typed commands over HTTP and
+// (a harness invariant): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { randomBytes } from "node:crypto";
 import { existsSync, watch, type FSWatcher } from "node:fs";
@@ -19,6 +19,7 @@ import { json, readBody, serveStatic, portBusyHint, wipeHeader, secretsMatch } f
 import { completeReceipt, interruptReceipts, listReceipts, startReceipt, type ExecutionReceipt } from "./execution-evidence.ts";
 import { assessClaimEvidence, shortCaveat } from "./claim-evidence.ts";
 import { claimFeedbackPrompt, setClaimFeedback, takeClaimFeedback } from "./claim-feedback.ts";
+import { armVerify, takeVerify, verifyPrompt } from "./verify-request.ts";
 import { recordHandoffPromise, takeNextHandoffPromiseForTarget } from "./handoff-promise.ts";
 import { classifyPermission } from "./risk-policy.ts";
 import { queuedTurns, takeNextTurn } from "./turn-queue.ts";
@@ -186,6 +187,8 @@ type StartTurnOpts = {
   existingMessageId?: string;
   /** The caller waits for this turn and relays its result, so do not emit a second completion ping. */
   relayResult?: boolean;
+  /** Verification-only pass — the bot re-checks a claim it overstated, and the harness suppresses the CoS completion report. */
+  verify?: boolean;
 };
 
 const nonceCache = createNonceCache(60_000);
@@ -309,6 +312,7 @@ const turnMeta = new Map<string, {
   sourceBotId?: string;
   jobId?: string;
   relayResult?: boolean;
+  verify?: boolean;
   reasoningText?: string;
   reasoningTokens?: number;
   inputTokens?: number;
@@ -359,7 +363,7 @@ const screens = createScreenPoller({
   onFrame: (botId, frame) => broadcast({ kind: "screen", botId, ...frame }),
 });
 
-// ── server-side event folding (upstream's ingestion worker, miniature) ──
+// ── server-side event folding (the ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
 const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
@@ -644,6 +648,12 @@ bus.subscribe((event: RuntimeEvent) => {
             // on its next turn so it stops asserting unverified outcomes.
             if (claimEvidence.verdict === "unverified") {
               setClaimFeedback(bot.id, claimEvidence.note);
+              // One-shot verify pass: the bot re-checks the state it overstated.
+              // Only for a user-initiated turn, never for a verify turn itself,
+              // and never while the operator owns the computer.
+              if (currentTurn?.kind === "user" && !currentTurn.verify && !bot.operatorControl) {
+                armVerify(bot.id, claimEvidence.note);
+              }
             }
           }
           const patched = store.patchMessage(bot.threadId, lastAssistant.id, patch);
@@ -705,7 +715,10 @@ bus.subscribe((event: RuntimeEvent) => {
       if (bot.notifications !== false && !(currentTurn?.kind === "proactive" && !isMeaningfulUpdate(turnText))) {
         broadcast({ kind: "notify", botId: bot.id, title: bot.name, body: `${bot.name} finished.` });
       }
-      if (currentTurn?.kind !== "proactive" && currentTurn?.kind !== "completion") {
+      if (currentTurn?.verify) {
+        // Verification-only self-correction — do not ping CoS as a "teammate
+        // finished" update; the corrected result is already in this thread.
+      } else if (currentTurn?.kind !== "proactive" && currentTurn?.kind !== "completion") {
         const pingedDelegatorId = resolveHandoffPromise(bot.id, turnText);
         const cos = chiefOfStaffBot();
         if (cos && pingedDelegatorId === cos.id) {
@@ -724,6 +737,14 @@ bus.subscribe((event: RuntimeEvent) => {
         }
       }
       if (completionReports.length > 0) scheduleCompletionReport();
+
+      // Fire a bounded verify-only pass when this turn overstated its work. It
+      // runs after the turn fully completes (busy is already false) and does
+      // not re-verify itself (the verify turn is marked `verify: true`).
+      const verifyCaveat = takeVerify(bot.id);
+      if (verifyCaveat && !bot.operatorControl && !currentTurn?.verify) {
+        void startTurn(bot.id, verifyPrompt(verifyCaveat), { source: "agent", verify: true }).catch(() => {});
+      }
 
       // Dequeue any group messages that arrived while this bot was busy
       const queued = groupQueuedTurns.get(bot.id);
@@ -992,7 +1013,7 @@ function enqueueCompletionReport(bot: ReturnType<typeof store.bot>, text: string
   scheduleCompletionReport();
 }
 
-// ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
+// ── turn dispatch (a turn dispatcher, miniature) ─────────────────────────
 async function stopActiveTurn(botId: string, reason: string): Promise<void> {
   const bot = store.bot(botId);
   if (!bot) return;
@@ -1191,6 +1212,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     sourceBotId: opts?.fromBot?.id,
     jobId: job.id,
     relayResult: opts?.relayResult,
+    verify: opts?.verify,
   });
 
   // The active replay window stays small; the full transcript is durable.
@@ -1308,7 +1330,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         persona,
         ...(claimFeedback ? [claimFeedbackPrompt(claimFeedback)] : []),
         integrations.localComputer
-          ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+          ? "You can act on the user's computer through the computer tools. Before acting, screenshot or read the desktop/accessibility state to ground yourself. Prefer accessible element targets (for example clicking a UI control by its accessibility index) over raw pixel coordinates whenever the tools expose them, and only fall back to coordinates when an element target is unavailable. Act within the focused app, avoid closing or repositioning windows, and capture a post-action frame to confirm the change actually happened."
           : "",
         integrations.agents
           ? "You can work with the user's other bots through the agents tools. Every bot with peer-agent tools can coordinate from its active task. list_bots shows who's available, ask_bot waits for a peer reply, send_bot queues work, search_history searches past receipts, and save_memory/get_memory records durable facts and notes. The Chief of Staff coordinates the global queue, but specialists can delegate within their task scope. There is only one Chief of Staff — never create a second. Fight X / challenge X means use or spawn a specialist that critiques X's existing output; never ask_bot X to write the critique of itself."

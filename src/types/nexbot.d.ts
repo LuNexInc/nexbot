@@ -1,12 +1,22 @@
 // The narrow bridge the Electron preload exposes. Absent in the browser.
 export {};
 
+/** Injected by Vite `define` from package.json at build time. */
+declare const __APP_VERSION__: string;
+
+/** Injected by Vite `define` from package.json at build time. */
+declare global {
+  const __APP_VERSION__: string;
+}
+
 declare global {
   interface Window {
     nexbot?: {
       platform?: string;
       /** True on macOS when the native speech helper is used. */
       speechNative?: boolean;
+      onUpdateStatus(cb: (info: { state: string; version?: string }) => void): () => void;
+      updateInstall(): Promise<void>;
       screenFrame(): Promise<string | null>;
       speechStart(): Promise<void>;
       speechStop(): Promise<void>;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, WifiOff } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
@@ -13,10 +13,35 @@ import { SkillsPanel } from "@/components/SkillsPanel";
 
 import { CommandPalette } from "@/components/CommandPalette";
 import { ComputerHUD } from "@/components/ComputerHUD";
+import { CrashBoundary } from "@/components/CrashBoundary";
+import { ShortcutsOverlay } from "@/components/ShortcutsOverlay";
 
-function Shell() {
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  );
+}
+
+function ReconnectBanner() {
+  const connected = useStore().state.connected;
+  if (connected) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none absolute left-1/2 top-2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3.5 py-1.5 text-[12px] font-medium text-ink shadow-sm backdrop-blur"
+    >
+      <WifiOff size={13} className="text-warning" />
+      Reconnecting to the local harness… your data is safe on disk.
+    </div>
+  );
+}
+
+function Shell({ inputGated }: { inputGated?: boolean }) {
   const { state, dispatch } = useStore();
   const [commandOpen, setCommandOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [narrow, setNarrow] = useState(() => window.innerWidth <= 900);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900);
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
@@ -26,14 +51,36 @@ function Shell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      if (inputGated) return; // first-run wizard owns the keyboard
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setCommandOpen((o) => !o);
+        return;
+      }
+      if (mod && e.key === ",") {
+        // App settings, mirroring every mainstream desktop app.
+        e.preventDefault();
+        dispatch({ type: "toggleAppSettings" });
+        return;
+      }
+      if (mod && e.key >= "1" && e.key <= "9") {
+        const visible = state.bots.filter((b) => !b.hidden);
+        const pick = visible[Number(e.key) - 1];
+        if (pick) {
+          e.preventDefault();
+          dispatch({ type: "select", id: pick.id });
+        }
+        return;
+      }
+      if (e.key === "?" && !mod && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        setShortcutsOpen((s) => !s);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [dispatch, state.bots, inputGated]);
 
   useEffect(() => {
     const onResize = () => {
@@ -48,6 +95,7 @@ function Shell() {
 
   return (
     <div className={`relative flex h-full bg-transparent ${winPad ? "pt-9" : ""}`}>
+      {!state.connected && state.bots.length > 0 && <ReconnectBanner />}
       {narrow && sidebarOpen && (
         <button
           type="button"
@@ -86,10 +134,19 @@ function Shell() {
             </>
           ) : (
             <>
-              <Loader2 size={20} className="animate-spin" />
-              <div className="text-[14px]">Connecting to the bot server…</div>
-              <div className="text-[12px]">
-                Start it with <code className="rounded bg-raised px-1.5 py-0.5">pnpm dev:server</code>
+              {/* Skeleton loading: shape of the UI first, spinners never read as progress */}
+              <div className="flex w-full max-w-[420px] flex-col gap-2.5 px-6">
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="h-12 animate-pulse rounded-xl bg-black/5 dark:bg-white/8"
+                    style={{ animationDelay: `${i * 120}ms`, width: `${100 - i * 9}%` }}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2 text-[13px]">
+                <Loader2 size={14} className="animate-spin" />
+                Starting your workspace…
               </div>
             </>
           )}
@@ -101,7 +158,8 @@ function Shell() {
       {state.appSettingsOpen && <AppSettingsPanel />}
       {state.pluginsOpen && <PluginsPanel />}
       {state.skillsOpen && <SkillsPanel />}
-      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
+      {commandOpen && <CommandPalette onClose={() => setCommandOpen(false)} />}
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }
@@ -111,9 +169,11 @@ export default function App() {
     initAnalytics();
   }, []);
   return (
-    <StoreProvider>
-      <Shell />
-      {gated && <Onboarding onDone={() => setGated(false)} />}
-    </StoreProvider>
+    <CrashBoundary>
+      <StoreProvider>
+        <Shell inputGated={gated} />
+        {gated && <Onboarding onDone={() => setGated(false)} />}
+      </StoreProvider>
+    </CrashBoundary>
   );
 }

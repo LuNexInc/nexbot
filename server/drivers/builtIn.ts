@@ -1,5 +1,5 @@
-// Built-in driver registration — upstream builtInDrivers.ts: a static
-// array, nothing more. Adding a driver = write drivers/<x>.ts, append.
+// Built-in driver registration — a static table, nothing more. Adding a driver
+// = write drivers/<x>.ts, append.
 import type { AnyProviderDriver } from "../contracts.ts";
 export {
   mergeConsecutiveAssistant,

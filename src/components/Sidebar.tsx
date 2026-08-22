@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { NexAvatar, InitialsAvatar } from "./Avatar";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { NexMark } from "./NexMark";
 import { cn } from "@/lib/cn";
 import { pickerInstances } from "@/lib/provider-visibility";
@@ -82,6 +83,7 @@ interface MenuState {
 function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const bot = state.bots.find((b) => b.id === menu.botId);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -160,14 +162,23 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
             ? { disabled: true, hint: "Chief of Staff stays on the desk" }
             : undefined,
         ),
-        item(<Trash2 size={16} />, "Delete", () => {
-          if (window.confirm(`Delete ${bot.name}? This removes the agent and its chat.`)) {
-            dispatch({ type: "deleteBot", botId: bot.id });
-          }
-        }, {
+        item(<Trash2 size={16} />, "Delete…", () => setConfirmDelete(true), {
           danger: true,
         }),
       ]}
+      {bot && (
+        <ConfirmDialog
+          open={confirmDelete}
+          title={`Delete ${bot.name}?`}
+          body="This permanently removes the agent, its chat history, memory notes, and desk files. This cannot be undone."
+          confirmLabel="Delete agent"
+          onConfirm={() => {
+            dispatch({ type: "deleteBot", botId: bot.id });
+            onClose();
+          }}
+          onCancel={onClose}
+        />
+      )}
     </div>
   );
 }
@@ -467,7 +478,18 @@ export function Sidebar({ open = true }: { open?: boolean }) {
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {visibleBots.map((b) => (
+          {state.bots.length === 0 && !state.connected
+            ? // Skeleton roster while the harness boots — shape first, spinners never.
+              [0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl px-2 py-2" style={{ opacity: 1 - i * 0.13 }}>
+                  <div className="size-9 shrink-0 animate-pulse rounded-full bg-black/6 dark:bg-white/8" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3 w-2/3 animate-pulse rounded bg-black/6 dark:bg-white/8" />
+                    <div className="h-2.5 w-5/6 animate-pulse rounded bg-black/4 dark:bg-white/6" />
+                  </div>
+                </div>
+              ))
+            : visibleBots.map((b) => (
             <BotListItem
               key={b.id}
               bot={b}
