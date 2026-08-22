@@ -116,6 +116,9 @@ function showMainWindow() {
   mainWin.show();
   if (mainWin.isMinimized()) mainWin.restore();
   mainWin.focus();
+  // A window stranded on the error page from a slow boot gets a second chance
+  // every time the user asks for the app.
+  if (!DEV_PREVIEW && !serverReady) recoverWindowWhenServerUp(mainWin);
 }
 
 // ── window state persistence ─────────────────────────────────────────────
@@ -249,11 +252,49 @@ function createWindow() {
 
   if (DEV_PREVIEW) {
     win.loadURL(DEV_URL);
+  } else if (serverReady) {
+    win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
   } else {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    // Boot still in flight (or failed): show the calm error page, then watch
+    // for the harness to come up and swap to the real UI automatically. The
+    // old behavior stranded users on the error page forever.
+    win.loadURL(ERROR_PAGE);
+    recoverWindowWhenServerUp(win);
   }
 
   setupAutoUpdater(win);
+}
+
+// Poll candidate ports until a NexBot harness answers, then point the window
+// at it. Resolves once; safe against the window closing underneath us.
+function recoverWindowWhenServerUp(win) {
+  const ports = [...new Set([SERVER_PORT, 8799, 18799, 28799])];
+  const deadline = Date.now() + 120_000;
+  const timer = setInterval(async () => {
+    if (win.isDestroyed()) {
+      clearInterval(timer);
+      return;
+    }
+    if (Date.now() > deadline) {
+      clearInterval(timer); // give up quietly; Quit + reopen stays the fallback
+      return;
+    }
+    for (const port of ports) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1200) });
+        const body = await res.json().catch(() => null);
+        if (res.ok && body?.app === "nexbot") {
+          clearInterval(timer);
+          SERVER_PORT = port;
+          serverReady = true;
+          if (!win.isDestroyed()) win.loadURL(`http://127.0.0.1:${port}`);
+          return;
+        }
+      } catch {
+        /* not up yet */
+      }
+    }
+  }, 1500);
 }
 
 // Screen preview — desktopCapturer works on Windows, macOS, and Linux.
@@ -448,7 +489,11 @@ app.whenReady().then(async () => {
   startCua().catch((e) => console.error("[cua] start failed:", e));
 
   // Packaged 0.3.8 already owns :8799. Preview never forks a second harness.
-  if (app.isPackaged && !DEV_PREVIEW) serverReady = await startServerPackaged();
+  // createWindow() reads `serverReady`; windows made mid-boot land on the
+  // error page and self-recover via recoverWindowWhenServerUp().
+  if (app.isPackaged && !DEV_PREVIEW) {
+    serverReady = await startServerPackaged();
+  }
   createTray();
   if (!START_HIDDEN) createWindow();
 
