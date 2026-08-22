@@ -51,6 +51,13 @@ export interface Message {
   status?: "pending" | "confirmed" | "failed";
   /** attached files kept for retry, or local artifacts attached by a bot */
   files?: Array<{ name: string; data?: string; path?: string; mime?: string }>;
+  /** Claim-vs-evidence honesty signal for an assistant reply. Present only when
+   * the turn's receipts contradict or cannot confirm the reply's claim. */
+  claimEvidence?: {
+    verdict: "verified" | "partially_verified" | "unverified";
+    note: string;
+    flagged: number;
+  };
 }
 
 export interface TurnEffort {

@@ -1,5 +1,5 @@
-import { Component, useEffect, useRef, useState, type ReactNode, type ErrorInfo } from "react";
-import { Loader2, ChevronDown, MessageCircle, Sparkles } from "lucide-react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
+import { Check, Copy, Loader2, ChevronDown, MessageCircle, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useStore, formatTime, type Bot, type Message, type TurnEffort } from "@/state/store";
 import { NexAvatar } from "./Avatar";
 import { OptionCard } from "./OptionCard";
@@ -8,6 +8,7 @@ import { TodoChecklist } from "./TodoChecklist";
 import { ThreadHeader } from "./ThreadHeader";
 import { cn } from "@/lib/cn";
 import { isLowValueSystemMessage, stripWorkingNarration, extractThinking } from "@/lib/activity";
+import { onSpeakingChange, speakingMessageId, textForSpeech, toggleSpeak, stopSpeaking } from "@/lib/voice";
 import type { NexColor } from "@/lib/mascot";
 
 // Minimal markdown for bot bubbles: **bold**, `code`, headings, lists.
@@ -60,7 +61,7 @@ function ArtifactDialog({ artifact, onClose }: { artifact: ArtifactOpen; onClose
         {artifactIsImage(artifact) ? (
           <img src={artifactSrc(artifact.reference)} alt={artifact.name ?? "Artifact"} className="max-h-[calc(92vh-58px)] max-w-[min(1100px,96vw)] object-contain" />
         ) : (
-          <iframe title={artifact.name ?? "Artifact preview"} src={artifactSrc(artifact.reference)} className="h-[calc(92vh-58px)] min-h-[420px] w-[min(1000px,92vw)] bg-white" />
+          <iframe title={artifact.name ?? "Artifact preview"} src={artifactSrc(artifact.reference)} sandbox="" className="h-[calc(92vh-58px)] min-h-[420px] w-[min(1000px,92vw)] bg-white" />
         )}
       </div>
     </div>
@@ -429,6 +430,103 @@ function renderPlainMarkdown(text: string, keyBase: string) {
   );
 }
 
+/** One-click copy for a bubble. Falls back silently when clipboard is blocked. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+      className={cn(
+        "pressable flex h-7 items-center gap-1 rounded-full border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 text-[11px] font-medium transition-colors",
+        copied
+          ? "border-success/40 bg-success/10 text-success"
+          : "text-ink-secondary hover:border-black/12 hover:bg-black/6 hover:text-ink",
+      )}
+      title={copied ? "Copied" : "Copy message"}
+      aria-label={copied ? "Copied" : "Copy message"}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      <span>{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
+/** Read-aloud toggle for one bot bubble. Hidden when there is nothing to say. */
+function SpeakButton({ messageId, text }: { messageId: string; text: string }) {
+  const [speaking, setSpeaking] = useState(false);
+  const speech = useMemo(() => textForSpeech(text), [text]);
+  useEffect(() => {
+    if (!speech) return;
+    const sync = (id: string | null) => setSpeaking(id === messageId);
+    sync(speakingMessageId());
+    return onSpeakingChange(sync);
+  }, [messageId, speech]);
+  if (!speech) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => toggleSpeak(messageId, text)}
+      className={cn(
+        "pressable flex h-7 items-center gap-1 rounded-full border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 text-[11px] font-medium transition-colors",
+        speaking
+          ? "border-accent/40 bg-accent/10 text-accent"
+          : "text-ink-secondary hover:border-black/12 hover:bg-black/6 hover:text-ink",
+      )}
+      title={speaking ? "Stop reading aloud" : "Read aloud"}
+      aria-label={speaking ? "Stop reading aloud" : "Read aloud"}
+    >
+      {speaking ? <VolumeX size={12} /> : <Volume2 size={12} />}
+      <span>{speaking ? "Stop" : "Listen"}</span>
+    </button>
+  );
+}
+
+const THINKING_TIERS: Array<{ afterS: number; phrase: string }> = [
+  { afterS: 0, phrase: "is thinking" },
+  { afterS: 8, phrase: "is working through it" },
+  { afterS: 25, phrase: "is still on it" },
+  { afterS: 60, phrase: "is on a longer one — still here" },
+];
+
+function thinkingPhrase(elapsedS: number): string {
+  let phrase = THINKING_TIERS[0].phrase;
+  for (const tier of THINKING_TIERS) if (elapsedS >= tier.afterS) phrase = tier.phrase;
+  return phrase;
+}
+
+/** Human presence line while a turn runs: who, and a phrase that ages well.
+ * Replaces bare dots — the wait should feel like a person pausing to think. */
+function ThinkingLine({ name, color }: { name: string; color?: NexColor }) {
+  const [elapsedS, setElapsedS] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    setElapsedS(0);
+    const timer = setInterval(() => setElapsedS(Math.floor((Date.now() - start) / 1000)), 3000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="flex justify-start">
+      <div className="flex min-h-11 items-center gap-2 rounded-full border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-3 py-1">
+        <NexAvatar color={(color as NexColor) ?? "blue"} name={name} size={20} motion="working" motionKey={name.length} />
+        <span className="text-[13px] text-ink-secondary">
+          {name} {thinkingPhrase(elapsedS)}
+          <span className="ml-0.5 inline-flex gap-0.5 align-middle">
+            <span className="size-1 animate-bounce rounded-full bg-ink-secondary/70 [animation-delay:0ms]" />
+            <span className="size-1 animate-bounce rounded-full bg-ink-secondary/70 [animation-delay:150ms]" />
+            <span className="size-1 animate-bounce rounded-full bg-ink-secondary/70 [animation-delay:300ms]" />
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Bubble({
   message,
   botId,
@@ -488,6 +586,29 @@ function Bubble({
             )}
           >
             {user ? message.text : <Markdownish text={cleanText} botId={botId} />}
+          </div>
+        )}
+        {!user && message.claimEvidence?.note && (
+          <div
+            className={cn(
+              "flex items-start gap-1.5 px-1 text-[11px] leading-snug",
+              message.claimEvidence.verdict === "unverified" ? "text-danger" : "text-amber-600",
+            )}
+            role="note"
+          >
+            <span className="mt-px shrink-0" aria-hidden="true">⚠</span>
+            <span>
+              <span className="font-semibold">
+                {message.claimEvidence.verdict === "unverified" ? "Unverified" : "Not fully verified"}:
+              </span>{" "}
+              {message.claimEvidence.note}
+            </span>
+          </div>
+        )}
+{message.kind === "text" && (user ? message.text?.trim() : cleanText.trim()) && !isPending && (
+          <div className="flex gap-1.5 px-1">
+            <CopyButton text={user ? (message.text ?? "") : cleanText} />
+            {!user && <SpeakButton messageId={message.id} text={cleanText} />}
           </div>
         )}
         {!user && <ArtifactGallery files={message.files} />}
@@ -676,14 +797,30 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
   );
 }
 
-function StreamingBubble({ text, reasoning, botId, expertMode }: { text: string; reasoning?: string; botId?: string; expertMode: boolean }) {
+/** Ambient presence: tiny avatars of teammates currently working. Glanceable,
+ * wordless — the CoS narrates progress in chat; the UI never does. */
+function WorkingPresence({ bots, currentBotId }: { bots: Bot[]; currentBotId: string }) {
+  const working = bots.filter((b) => b.busy && !b.hidden && b.kind !== "group" && b.id !== currentBotId);
+  if (!working.length) return null;
+  return (
+    <div className="pointer-events-auto flex items-center justify-end gap-1 px-4 pb-1">
+      {working.map((b) => (
+        <span key={b.id} title={`@${b.name} is working`} aria-label={`@${b.name} is working`}>
+          <NexAvatar color={b.color} name={b.name} size={20} motion="working" motionKey={b.id.length} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function StreamingBubble({ text, reasoning, botId, expertMode, name, color }: { text: string; reasoning?: string; botId?: string; expertMode: boolean; name?: string; color?: NexColor }) {
   const extracted = extractThinking(text);
   const thinking = [reasoning, extracted.thinking].filter(Boolean).join("\n\n");
   const visibleThinking = expertMode ? thinking : "";
   const cleanText = stripWorkingNarration(extracted.cleanText);
   const isOnlyThinking = Boolean(visibleThinking && !cleanText);
 
-  if (!visibleThinking && !cleanText) return <BusyDots />;
+  if (!visibleThinking && !cleanText) return name ? <ThinkingLine name={name} color={color} /> : null;
 
   return (
     <div className="flex w-full justify-start">
@@ -700,18 +837,6 @@ function StreamingBubble({ text, reasoning, botId, expertMode }: { text: string;
             <span className="ml-0.5 inline-block h-[14px] w-[2px] animate-pulse bg-ink-secondary align-middle" />
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function BusyDots() {
-  return (
-    <div className="flex justify-start">
-      <div className="flex items-center gap-1.5 rounded-2xl bg-raised px-4 py-3">
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms]" />
       </div>
     </div>
   );
@@ -735,8 +860,15 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
       if (detail?.reference) setArtifact(detail);
     };
     window.addEventListener(ARTIFACT_EVENT, onArtifact);
-    return () => window.removeEventListener(ARTIFACT_EVENT, onArtifact);
+    // Leaving the thread (or the app) should never leave a voice talking.
+    return () => {
+      window.removeEventListener(ARTIFACT_EVENT, onArtifact);
+      stopSpeaking();
+    };
   }, []);
+  useEffect(() => {
+    stopSpeaking();
+  }, [bot.id]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -847,15 +979,16 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
             {state.expertMode && <ExecutionRail messages={bot.messages} botId={bot.id} />}
 
             {streaming || streamingReasoning ? (
-              <StreamingBubble text={streaming ?? ""} reasoning={streamingReasoning} botId={bot.id} expertMode={state.expertMode} />
+              <StreamingBubble text={streaming ?? ""} reasoning={streamingReasoning} botId={bot.id} expertMode={state.expertMode} name={bot.name} color={bot.color} />
             ) : (
-              bot.busy && <BusyDots />
+              bot.busy && <ThinkingLine name={bot.name} color={bot.color} />
             )}
           </div>
         </div>
       </ChatErrorBoundary>
 
       {state.expertMode && <TodoChecklist items={bot.todos ?? []} />}
+      <WorkingPresence bots={state.bots} currentBotId={bot.id} />
       <Composer bot={bot} />
       {artifact && <ArtifactDialog artifact={artifact} onClose={() => setArtifact(null)} />}
     </main>

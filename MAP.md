@@ -1,6 +1,6 @@
 # NexBot — MAP
 
-Last verified: 2026-08-21
+Last verified: 2026-08-22
 
 ## Stay-local workflow
 
@@ -29,11 +29,12 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 | Product rules | `AGENTS.md` |
 | Settled choices | `DECISIONS.md` |
 | License | `LICENSE` |
-| Harness HTTP + SSE | `server/index.ts` |
+| Harness HTTP + SSE | `server/index.ts` (bootstrap, auth gate, events/wipe/artifacts) + `server/web/` route modules: `internal-routes.ts` (peer-agent comms), `bot-routes.ts` (roster/chat/takeover/memory/computer), `routine-routes.ts` (cron/webhooks/skills), `access-routes.ts` (steer/harness/Connect/WireGuard), `platform-routes.ts` (jobs/config/credentials/connectors/feed). Shared state: `server/web/context.ts`. |
 | Turn recovery | `server/jobs.ts` + `server/recovery.ts` — SQLite job rows, provider checkpoints, Resume/Retry cards |
-| Agent coordination | `server/task-context.ts` — equal bot delegation with bounded task scope |
+| Agent coordination | `server/task-context.ts` — equal bot delegation with bounded task scope; `server/handoff-promise.ts` — guaranteed ping-back on a queued handoff (`send_bot` and the autoRoute busy path) resolving the delegator in its thread with the result + ⚠ caveat; `ask_bot`/`send_bot` relays carry the peer's ⚠ caveat; group-thread copies get the member's ⚠ caveat propagated |
 | Busy message control | `server/turn-queue.ts` + `src/components/Composer.tsx` — durable FIFO queue, next-turn steer, or interrupt-and-replace |
 | Execution evidence | `server/execution-evidence.ts` + `src/components/ExecutionRail.tsx` — durable receipts and CUA frame-change evidence |
+| Claim-vs-evidence truthfulness | `server/claim-evidence.ts` + `server/claim-feedback.ts` + `src/components/ChatView.tsx` honesty badge — reconcile a reply's claims against its receipts; `unverified`/`partially-verified` caveat, verify-next-time feedback, ⚠ caveat threaded into `ask_bot` relays and CoS completion reports; token-ceiling guard in `server/index.ts` interrupt path |
 | Risk permissions | `server/risk-policy.ts` — low-risk reads and reversible local work can proceed; destructive, external, financial, credential, and unknown actions ask |
 | Operator takeover | `server/cua-gate-proxy.ts` + `POST/DELETE /api/bots/:id/takeover` — blocks new bot computer actions until control is released |
 | Credential grants | `server/credentials.ts` + `server/credential-proxy.ts` — encrypted vault and per-bot grants; focused-field fill does not return the secret to chat |
@@ -66,7 +67,7 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 
 ```
 nexbot/
-  server/          harness (Node, 127.0.0.1:8799)
+  server/          harness (Node, 127.0.0.1:8799); routes in server/web/
   src/             React UI (Vite :5199)
   electron/        desktop shell (Windows + macOS)
   dist-server/     compiled harness (rebuild with pnpm build:server)

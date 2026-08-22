@@ -3,7 +3,7 @@
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
 import { mkdirSync } from "node:fs";
-import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
+import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadThreadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
@@ -81,6 +81,13 @@ export interface Message {
   status?: "pending" | "confirmed" | "failed";
   /** Local artifacts attached to an assistant reply. Paths are served through /api/artifacts. */
   files?: Array<{ name: string; path: string; mime?: string }>;
+  /** Claim-vs-evidence honesty signal for an assistant reply. Present only when
+   * the turn's receipts contradict or cannot confirm the reply's claim. */
+  claimEvidence?: {
+    verdict: "verified" | "partially_verified" | "unverified";
+    note: string;
+    flagged: number;
+  };
 }
 
 export interface TurnEffort {
@@ -276,6 +283,9 @@ export function handoffThreadIds(opts: {
 
 export class Store {
   bots: BotRecord[] = [];
+  /** Per-thread transcript cache. SQLite is the source of truth; threads
+   * load on first access and the least-recently-used ones are evicted so a
+   * long-lived workspace cannot grow memory without bound. */
   private messages = new Map<string, Message[]>();
   private defaultSelection: () => ModelSelection;
 
@@ -322,7 +332,6 @@ export class Store {
       }
     }
     if (defaultsChanged) this.saveBots();
-    this.messages = loadMessagesFromDb();
   }
 
   private saveBots() {
@@ -334,13 +343,30 @@ export class Store {
     this.messages.clear();
   }
 
+  /** Threads kept in memory before the least-recently-used one is evicted.
+   * Eviction is safe: every mutation writes through to SQLite immediately. */
+  private static readonly MAX_LOADED_THREADS = 64;
+
   messagesFor(threadId: string): Message[] {
     let list = this.messages.get(threadId);
     if (!list) {
-      list = [];
+      list = loadThreadMessagesFromDb(threadId);
       this.messages.set(threadId, list);
+      this.evictStaleThreads();
+      return list;
     }
+    // Refresh recency (Map iteration order is insertion order).
+    this.messages.delete(threadId);
+    this.messages.set(threadId, list);
     return list;
+  }
+
+  private evictStaleThreads(): void {
+    while (this.messages.size > Store.MAX_LOADED_THREADS) {
+      const oldest = this.messages.keys().next().value;
+      if (oldest === undefined) break;
+      this.messages.delete(oldest);
+    }
   }
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
