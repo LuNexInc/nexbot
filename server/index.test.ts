@@ -322,7 +322,7 @@ describe("harness HTTP API", () => {
     // real message must fail loudly, not 202-and-hang
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
     expect(send.status).toBe(409);
-    expect(send.body.error).toContain("unavailable");
+    expect(send.body.error).toContain("signed in");
   });
 
   it("saves config keys write-only and reports booleans", async () => {

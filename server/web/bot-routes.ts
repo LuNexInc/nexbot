@@ -301,7 +301,7 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
     if (!registry.get(bot.modelSelection.instanceId)) {
       const fallback = await defaultSelection();
       if (!registry.get(fallback.instanceId)) {
-        return json(res, 409, { error: "No AI provider is ready: the selected provider is unavailable." });
+        return json(res, 409, { error: "No AI engine is signed in yet. Sign in to one of the supported agent apps, then try again." });
       }
     }
     nonceCache.record(m[1], clientNonce);

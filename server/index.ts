@@ -66,6 +66,7 @@ import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./ag
 import { createTaskContext, delegateTask, isTaskDelegation, type TaskContext } from "./task-context.ts";
 import { wipeLocalData } from "./wipe.ts";
 import { renderArtifactsForReply, serveArtifact } from "./artifacts.ts";
+import { userFacingError } from "./user-errors.ts";
 import { runDataHygiene } from "./data-hygiene.ts";
 import { pruneEventLogs } from "./event-log.ts";
 import { enqueueConversationArchive, ensureConversationArchive, freshSessionContextPrompt } from "./conversation-context.ts";
@@ -623,7 +624,10 @@ bus.subscribe((event: RuntimeEvent) => {
     }
     case "runtime.error":
       onToolError({ name: "runtime.error", title: event.message });
-      pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+      // Raw internals live in the events/ log for the operator; the chat
+      // transcript only ever sees calm, human text.
+      console.error(`[harness] runtime error on ${event.threadId}:`, event.message);
+      pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${userFacingError(event.message)}`, ok: false } });
       break;
     case "turn.completed": {
       const currentTurn = turnMeta.get(bot.id);
@@ -965,7 +969,7 @@ ${item.message}`;
         role: "bot",
         kind: "activity",
         source: "agent",
-        tool: { name: `@${target.name} could not start: ${String(err).slice(0, 120)}`, ok: false },
+        tool: { name: `@${target.name} could not start: ${userFacingError(err instanceof Error ? err.message : String(err))}`, ok: false },
       });
       broadcast({ kind: "message", threadId: from.threadId, message: note });
     }
@@ -1138,7 +1142,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     } else {
       turnReservations.delete(botId);
       throw Object.assign(
-        new Error("No AI provider is ready: the selected provider is unavailable. Install and sign in to a supported CLI, or configure an API provider in Settings."),
+        new Error("No AI engine is signed in yet. Sign in to one of the supported agent apps, then try again."),
         { status: 409 },
       );
     }
@@ -1414,11 +1418,14 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       /* no cloud-box screen poller — local frames come from Electron */
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      // The job row keeps the detail for recovery/Reflexion (model-facing);
+      // the transcript gets the sanitized, human-facing sentence.
+      console.error(`[harness] dispatch failed for ${bot.name}:`, message);
       updateJob(job.id, { status: "failed", error: message.slice(0, 500) });
       const failure = store.appendMessage(bot.threadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
+        tool: { name: `error: ${userFacingError(message)}`, ok: false },
       });
       broadcast({ kind: "message", threadId: bot.threadId, message: failure });
       store.patchBot(bot.id, { busy: false });
