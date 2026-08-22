@@ -57,7 +57,7 @@ import {
 } from "./remote-access.ts";
 import { stripWorkingNarration } from "../src/lib/activity.ts";
 import { createNonceCache } from "./nonce.ts";
-import { createWatchdog, DEFAULT_MAX_TOKENS_PER_TURN, isComputerToolName } from "./watchdog.ts";
+import { createWatchdog, DEFAULT_MAX_TOKENS_PER_TURN, DEFAULT_STUCK_MS, DEFAULT_STALL_MS, isComputerToolName } from "./watchdog.ts";
 import { chooseAntigravityCosSelection, pickDefaultSelection } from "./selection.ts";
 import { isMeaningfulUpdate, proactivePrompt, shouldTriggerProactive, type ProactiveReason } from "./proactivity.ts";
 import { routingDirective, suggestSpecialistRoutes } from "./routing.ts";
@@ -307,7 +307,10 @@ bootSelection = await defaultSelection();
 store.seedIfEmpty();
 store.ensureTeamSeeds();
 sessionDeathSettlement(store);
-const watchdog = createWatchdog({ stuckMs: 90_000 });
+const watchdog = createWatchdog({
+  stuckMs: cfg.watchdog?.stuckMs ?? DEFAULT_STUCK_MS,
+  stallMs: cfg.watchdog?.stallMs ?? DEFAULT_STALL_MS,
+});
 /** botId → group thread that started this turn (shared transcript). */
 const turnGroup = new Map<string, string>();
 type TurnKind = "user" | "agent" | "routine" | "proactive" | "completion";

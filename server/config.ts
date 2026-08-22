@@ -22,6 +22,11 @@ export interface AppConfig {
   profile?: { name?: string; email?: string; companyName?: string };
   /** Optional private LAN mode for NexBot Connect. */
   remoteAccess?: { mode?: "off" | "lan" };
+  /** Turn-progress watchdog tuning. A bot with no events for `stuckMs` (ms)
+   * is declared stuck and its job interrupted, so this MUST be generous
+   * enough for long reasoning/tool-heavy runs (for example research sweeps)
+   * to not be killed mid-turn. Defaults to 5 minutes when unset. */
+  watchdog?: { stuckMs?: number; stallMs?: number };
   instances?: InstanceConfigMap;
 }
 
@@ -137,6 +142,7 @@ export function loadConfig(): AppConfig {
     box: decryptSection("box", disk.box as Record<string, unknown> | undefined),
     profile: (disk.profile as AppConfig["profile"]) ?? undefined,
     remoteAccess: (disk.remoteAccess as AppConfig["remoteAccess"]) ?? undefined,
+    watchdog: (disk.watchdog as AppConfig["watchdog"]) ?? undefined,
     instances: (disk.instances as InstanceConfigMap) ?? undefined,
   };
   cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
@@ -150,7 +156,7 @@ export function loadConfig(): AppConfig {
  * Empty string or null on a secret field deletes it. */
 export function saveConfig(patch: Partial<AppConfig>): void {
   const disk = readDisk();
-  for (const key of ["xai", "composio", "box", "profile", "remoteAccess"] as const) {
+  for (const key of ["xai", "composio", "box", "profile", "remoteAccess", "watchdog"] as const) {
     const incoming = patch[key];
     if (!incoming || typeof incoming !== "object") continue;
     const current = { ...((disk[key] as object) || {}) } as Record<string, unknown>;

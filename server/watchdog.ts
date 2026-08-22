@@ -36,7 +36,7 @@ export type Watchdog = {
   stalledBots(stallThresholdMs?: number, now?: number): TurnWatch[];
 };
 
-export const DEFAULT_STUCK_MS = 90_000;
+export const DEFAULT_STUCK_MS = 300_000;
 export const DEFAULT_STALL_MS = 45_000;
 export const DEFAULT_MAX_TOKENS_PER_TURN = 120_000;
 
