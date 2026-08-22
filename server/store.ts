@@ -116,6 +116,15 @@ export interface BotRecord {
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "local" | "off";
+  /** Per-bot access mode, like a modern CLI permission flag.
+   * readonly: only read-only actions auto-allowed.
+   * workspace (default): reads + reversible local actions auto-allowed.
+   * full: reads + local + durable/destructive auto-allowed; critical still
+   * gates unless allowCriticalActions is true. */
+  permissionMode?: "readonly" | "workspace" | "full";
+  /** Only meaningful for full: when true, critical actions (credentials,
+   * money, publish, send external) are also auto-allowed (true bypass). */
+  allowCriticalActions?: boolean;
   pinned?: boolean;
   hidden?: boolean;
   busy?: boolean;
@@ -205,7 +214,7 @@ const onboardingCard = (): OptionCardData => ({
 });
 
 export type CreateBotSpec = Partial<
-  Pick<BotRecord, "name" | "title" | "description" | "personality" | "color" | "kind" | "memberIds" | "modelSelection" | "enabledSkillSlugs">
+  Pick<BotRecord, "name" | "title" | "description" | "personality" | "color" | "kind" | "memberIds" | "modelSelection" | "enabledSkillSlugs" | "permissionMode" | "allowCriticalActions">
 >;
 
 
@@ -457,6 +466,8 @@ export class Store {
       notifications: true,
       color: spec?.color ?? COLORS[this.bots.length % COLORS.length],
       computer: isGroup ? "off" : "local",
+      permissionMode: spec?.permissionMode ?? "workspace",
+      allowCriticalActions: spec?.allowCriticalActions ?? false,
       // The Chief of Staff is the continuity layer. Keep its durable memory
       // on by default so a short active context never becomes lost history.
       memoryEnabled: isChiefOfStaffName(name, title),

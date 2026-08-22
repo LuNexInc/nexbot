@@ -45,6 +45,7 @@ export async function handleInternalRoutes(args: RouteArgs): Promise<boolean> {
         description: b.description,
         enabledSkillSlugs: b.enabledSkillSlugs ?? [],
         model: b.modelSelection.model,
+        permissionMode: b.permissionMode ?? "workspace",
         busy: !!b.busy,
         queued: queuedTurns(b.id).length,
       }));

@@ -208,7 +208,7 @@ export function SettingsPanel({
   const { dispatch } = useStore();
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "personality" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings">
+      Pick<Bot, "name" | "title" | "description" | "personality" | "notifications" | "computer" | "color" | "mascotExpression" | "memoryEnabled" | "enabledSkillSlugs" | "memberIds" | "proactiveEnabled" | "completionPings" | "permissionMode" | "allowCriticalActions">
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const [profile, setProfile] = useState("");
@@ -482,6 +482,62 @@ export function SettingsPanel({
               </button>
             )}
           </div>
+
+          {bot.kind !== "group" && (
+            <div className="rounded-xl bg-card p-4">
+              <div className="text-[15px] font-medium text-ink">Access</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                Like a CLI permission flag — what this NexBot may do without asking.
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-1.5">
+                {([
+                  ["readonly", "Read only"],
+                  ["workspace", "Workspace write"],
+                  ["full", "Full access"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => patch({ permissionMode: value })}
+                    className={cn(
+                      "pressable rounded-md border px-2 py-1.5 text-[12px] font-medium",
+                      (bot.permissionMode ?? "workspace") === value
+                        ? "border-accent/40 bg-accent/10 text-ink"
+                        : "border-hairline/30 text-ink-secondary hover:text-ink",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {(bot.permissionMode ?? "workspace") === "full" && (
+                <div className="mt-3 flex items-center justify-between gap-4 border-t border-hairline/30 pt-3">
+                  <div>
+                    <div className="text-[13px] font-medium text-ink">Also allow critical actions</div>
+                    <div className="mt-0.5 text-[12px] text-ink-secondary">
+                      True bypass — money, credentials, publishing, external sends too. Off keeps those behind an approval.
+                    </div>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={bot.allowCriticalActions === true}
+                    onClick={() => patch({ allowCriticalActions: bot.allowCriticalActions !== true })}
+                    className={cn(
+                      "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                      bot.allowCriticalActions === true ? "bg-accent" : "bg-raised",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-[3px] size-5 rounded-full bg-white transition-[left] duration-200",
+                        bot.allowCriticalActions === true ? "left-[21px]" : "left-[3px]",
+                      )}
+                    />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <AgentSkills bot={bot} patch={patch} />
 

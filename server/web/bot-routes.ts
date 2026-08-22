@@ -177,7 +177,7 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
       return json(res, 400, { error: "kind cannot be changed" });
     }
     const patch: Record<string, unknown> = {};
-    for (const key of ["name", "title", "description", "personality", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "memoryEnabled", "enabledSkillSlugs", "memberIds", "proactiveEnabled", "completionPings", "sortOrder", "operatorControl"] as const) {
+    for (const key of ["name", "title", "description", "personality", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "memoryEnabled", "enabledSkillSlugs", "memberIds", "proactiveEnabled", "completionPings", "sortOrder", "operatorControl", "permissionMode", "allowCriticalActions"] as const) {
       if (body[key] !== undefined) patch[key] = body[key];
     }
     if (patch.memberIds !== undefined) {
@@ -196,6 +196,9 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
     // seat as last-CoS DELETE 409. Specialists can hide; user chat still works.
     if (patch.hidden && store.isLastChiefOfStaff(existing.id)) {
       return json(res, 400, { error: "cannot hide the Chief of Staff" });
+    }
+    if (patch.permissionMode !== undefined && !["readonly", "workspace", "full"].includes(String(patch.permissionMode))) {
+      return json(res, 400, { error: "permissionMode must be readonly, workspace, or full" });
     }
     const bot = store.patchBot(m[1], patch);
     if (!bot) return json(res, 404, { error: "no such bot" });

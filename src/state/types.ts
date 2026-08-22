@@ -106,6 +106,12 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "local" | "off";
+  /** Per-bot access mode, like a modern CLI permission flag.
+   * readonly | workspace (default) | full. */
+  permissionMode?: "readonly" | "workspace" | "full";
+  /** Only meaningful for full: when true, critical actions (credentials,
+   * money, publish, external send) are also auto-allowed (true bypass). */
+  allowCriticalActions?: boolean;
   pinned?: boolean;
   hidden?: boolean;
   memoryEnabled?: boolean;

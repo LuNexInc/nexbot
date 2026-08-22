@@ -172,7 +172,8 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const skills = Array.isArray(b.enabledSkillSlugs) && b.enabledSkillSlugs.length ? ` [skills: ${b.enabledSkillSlugs.join(", ")}]` : "";
       const queued = Number(b.queued ?? 0);
       const status = b.busy ? "busy" : queued > 0 ? `idle, ${queued} queued` : "idle";
-      return `- ${b.name}${role}${description} (id: ${b.id}, model: ${b.model}, status: ${status})${skills}`;
+      const mode = b.permissionMode ?? "workspace";
+      return `- ${b.name}${role}${description} (id: ${b.id}, model: ${b.model}, status: ${status}, permission: ${mode})${skills}`;
     });
     return { text: `${scope}\nOther bots you can message with ask_bot or send_bot:\n${lines.join("\n")}` };
   }

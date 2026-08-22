@@ -21,7 +21,7 @@ import { assessClaimEvidence, shortCaveat } from "./claim-evidence.ts";
 import { claimFeedbackPrompt, setClaimFeedback, takeClaimFeedback } from "./claim-feedback.ts";
 import { armVerify, takeVerify, verifyPrompt } from "./verify-request.ts";
 import { recordHandoffPromise, takeNextHandoffPromiseForTarget } from "./handoff-promise.ts";
-import { classifyPermission } from "./risk-policy.ts";
+import { classifyPermission, applyPermissionMode } from "./risk-policy.ts";
 import { queuedTurns, takeNextTurn } from "./turn-queue.ts";
 import { memoryFactsPrompt } from "./memory-facts.ts";
 import { forgetTurn, rememberTurn } from "./pending.ts";
@@ -577,7 +577,11 @@ bus.subscribe((event: RuntimeEvent) => {
     }
     case "request.opened": {
       if (event.requestType === "permission" && event.requestId) {
-        const decision = classifyPermission(event.tool, event.summary);
+        const decision = applyPermissionMode(
+          classifyPermission(event.tool, event.summary),
+          bot.permissionMode,
+          bot.allowCriticalActions,
+        );
         if (decision.action === "allow") {
           const instance = registry.get(bot.modelSelection.instanceId);
           void instance?.adapter.respondToRequest(bot.threadId, event.requestId, { behavior: "allow" }).catch(() => {});

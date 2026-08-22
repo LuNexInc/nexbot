@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyPermission, type RiskLevel } from "./risk-policy.ts";
+import { classifyPermission, applyPermissionMode, type RiskLevel } from "./risk-policy.ts";
 
 // The full classification table. This gate stands between an agent and
 // destructive actions, so every branch is pinned: an auto-allow regression
@@ -49,5 +49,38 @@ describe("risk policy", () => {
     expect(classifyPermission("shell", "git push origin main").action).toBe("ask");
     expect(classifyPermission("browser", "send email to the customer").level).toBe("critical");
     expect(classifyPermission("tool", "unknown action").action).toBe("ask");
+  });
+});
+
+describe("applyPermissionMode", () => {
+  const read = classifyPermission("read_file", "read README.md");
+  const write = classifyPermission("edit", "write notes.md");
+  const destructive = classifyPermission("shell", "delete the build folder");
+  const critical = classifyPermission("shell", "transfer money to the vendor");
+  const unknown = classifyPermission("tool", "unknown action");
+
+  it("readonly auto-allows only read-only actions", () => {
+    expect(applyPermissionMode(read, "readonly").action).toBe("allow");
+    expect(applyPermissionMode(write, "readonly").action).toBe("ask");
+    expect(applyPermissionMode(destructive, "readonly").action).toBe("ask");
+    expect(applyPermissionMode(critical, "readonly").action).toBe("ask");
+    expect(applyPermissionMode(unknown, "readonly").action).toBe("ask");
+  });
+
+  it("workspace leaves the base classification untouched", () => {
+    expect(applyPermissionMode(read, "workspace").action).toBe("allow");
+    expect(applyPermissionMode(write, "workspace").action).toBe("allow");
+    expect(applyPermissionMode(destructive, "workspace").action).toBe("ask");
+    expect(applyPermissionMode(critical, "workspace").action).toBe("ask");
+    expect(applyPermissionMode(unknown, "workspace").action).toBe("ask");
+  });
+
+  it("full auto-allows destructive but still gates critical unless allowed", () => {
+    expect(applyPermissionMode(read, "full").action).toBe("allow");
+    expect(applyPermissionMode(write, "full").action).toBe("allow");
+    expect(applyPermissionMode(destructive, "full").action).toBe("allow");
+    expect(applyPermissionMode(critical, "full").action).toBe("ask");
+    expect(applyPermissionMode(critical, "full", true).action).toBe("allow");
+    expect(applyPermissionMode(unknown, "full").action).toBe("ask");
   });
 });
