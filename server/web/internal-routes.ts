@@ -14,6 +14,7 @@ import { credentialsForBot, revealGrantedCredential } from "../credentials.ts";
 import { isForbiddenFightAsk } from "../roles.ts";
 import { appendLog, MEMORY_FILE_MAX, readLog, readProfile, writeLog, writeProfile } from "../desk.ts";
 import { parseTaskContext, isTaskDelegation } from "../task-context.ts";
+import { queuedTurns } from "../turn-queue.ts";
 import { ASK_BOT_STILL_WORKING } from "../comms-policy.ts";
 import { recordHandoffPromise } from "../handoff-promise.ts";
 import type { RouteArgs } from "./context.ts";
@@ -45,6 +46,7 @@ export async function handleInternalRoutes(args: RouteArgs): Promise<boolean> {
         enabledSkillSlugs: b.enabledSkillSlugs ?? [],
         model: b.modelSelection.model,
         busy: !!b.busy,
+        queued: queuedTurns(b.id).length,
       }));
     return json(res, 200, { bots });
   }

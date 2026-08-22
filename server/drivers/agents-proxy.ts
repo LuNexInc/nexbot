@@ -27,7 +27,7 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in this NexBot workspace you can message, with their role, description, built-in skills, model, and whether they're busy. Every bot can coordinate within its active task scope. Call this before ask_bot to discover who's available and match work to the right teammate. There is only one Chief of Staff; never create a second.",
+      "List the other bots (agents) in this NexBot workspace you can message, with their role, description, built-in skills, model, and live status (busy vs idle plus how many turns are queued for them). This is the ONLY reliable way to know whether a teammate is actually working right now. Call this before ask_bot to discover who's available, and ALWAYS call this before telling Charles a teammate is working on something — if the teammate is idle with nothing queued, they are NOT working. There is only one Chief of Staff; never create a second.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -170,7 +170,9 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const role = b.title ? ` — ${b.title}` : "";
       const description = b.description ? `: ${b.description}` : "";
       const skills = Array.isArray(b.enabledSkillSlugs) && b.enabledSkillSlugs.length ? ` [skills: ${b.enabledSkillSlugs.join(", ")}]` : "";
-      return `- ${b.name}${role}${description} (id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""})${skills}`;
+      const queued = Number(b.queued ?? 0);
+      const status = b.busy ? "busy" : queued > 0 ? `idle, ${queued} queued` : "idle";
+      return `- ${b.name}${role}${description} (id: ${b.id}, model: ${b.model}, status: ${status})${skills}`;
     });
     return { text: `${scope}\nOther bots you can message with ask_bot or send_bot:\n${lines.join("\n")}` };
   }
