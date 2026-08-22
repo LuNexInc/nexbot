@@ -44,6 +44,20 @@ export function CommandPalette({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    // Global Escape close — must not depend on focus living in the input.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   // Debounced transcript + memory-fact search over the harness FTS index.
   useEffect(() => {
     if (!open) return;
@@ -96,7 +110,12 @@ export function CommandPalette({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 backdrop-blur-md bg-black/30 animate-fade-in">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-24 backdrop-blur-md bg-black/30 animate-fade-in"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
         className="glass-floating w-full max-w-[540px] overflow-hidden rounded-2xl shadow-2xl animate-spring-pop"
         onClick={(e) => e.stopPropagation()}
@@ -111,6 +130,10 @@ export function CommandPalette({
               setQuery(e.target.value);
             }}
             onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onClose();
+              }
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 setHighlight((h) => (h + 1) % Math.max(1, flatCount));

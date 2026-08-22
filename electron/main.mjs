@@ -41,6 +41,8 @@ async function startServerOn(port) {
       ...serverEnv,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
+      // The packaged harness has no package.json to read — tell it directly.
+      NEXBOT_VERSION: app.getVersion(),
       NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
     },
     stdio: "inherit",
