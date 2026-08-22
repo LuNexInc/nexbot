@@ -1,140 +1,43 @@
-// The bot's computer, in the right-side slot. Where it runs decides the
-// whole flow: cloud → provision the box on open (idempotent) and preview
-// via SSE frames or a ~4s screenshot poll; local ("This PC/Mac") → frames
-// come from the Electron main process (desktopCapturer over the preload
-// bridge — box endpoints are never touched); off → parked. Auto (unset)
-// prefers the cloud box when one exists, else local inside the app.
-import { useEffect, useRef, useState } from "react";
-import {
-  CalendarClock,
-  ExternalLink,
-  Loader2,
-  Monitor,
-  Moon,
-  Power,
-  Settings,
-  X,
-} from "lucide-react";
-import { useStore, type Bot } from "@/state/store";
-import { ApiKeyRow } from "./ApiKeys";
+// Local computer only (this PC). Cloud Box is not part of NexBot.
+// Frames come from Electron main (desktopCapturer over the preload bridge).
+import { useEffect, useState } from "react";
+import { CalendarClock, ExternalLink, Hand, Loader2, Monitor, Power, Settings, X } from "lucide-react";
+import { api, useStore, type Bot, type Routine } from "@/state/store";
 import { cn } from "@/lib/cn";
 
-async function api(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
+type Phase = "checking" | "local" | "local-unavailable" | "off";
+
+function modeOf(bot: Bot): "local" | "off" {
+  return bot.computer === "off" ? "off" : "local";
 }
 
-type Phase =
-  | "checking"
-  | "unconfigured"
-  | "starting"
-  | "ready"
-  | "local"
-  | "local-unavailable"
-  | "off"
-  | "error";
+function kindLabel(r: Routine): string {
+  const kind = r.kind ?? "cron";
+  if (kind === "webhook") return "webhook";
+  if (kind === "file") return `watching ${r.watchPath ?? ""}`;
+  if (r.everyMinutes) return `cron every ${r.everyMinutes}m`;
+  return `cron ${r.dailyAt ?? ""}`.trim();
+}
 
-export function ComputerPanel({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
-  const [phase, setPhase] = useState<Phase>("checking");
-  const [boxState, setBoxState] = useState<string | null>(null);
-  const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
+/** Live this-PC frame: Electron capturer, else last screen message, else honest empty. */
+export function useLiveScreenFrame(bot: Bot, opts?: { enabled?: boolean }) {
+  const isElectron = Boolean(window.nexbot);
+  const enabled = opts?.enabled ?? true;
   const [localFrame, setLocalFrame] = useState<string | null>(null);
-  const [pending, setPending] = useState<"join" | "sleep" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // bumped when a Box token is saved inline, to re-run the spin-up flow
-  const [retry, setRetry] = useState(0);
-
-  // resolve the mode on open; box endpoints are only ever hit on the
-  // cloud path, so local/off can never render a JSON error as an image
-  useEffect(() => {
-    let alive = true;
-    setPhase("checking");
-    setPolledFrame(null);
-    setLocalFrame(null);
-    setError(null);
-    const isElectron = Boolean(window.);
-    if (bot.computer === "off") {
-      setPhase("off");
-      return;
-    }
-    if (bot.computer === "local") {
-      setPhase(isElectron ? "local" : "local-unavailable");
-      return;
-    }
-    // cloud, or auto (cloud box wins when one exists, else local in-app)
-    api(`/api/bots/${bot.id}/computer`)
-      .then((status) => {
-        if (!alive) return;
-        const autoLocal = bot.computer !== "cloud" && isElectron;
-        if (!status.configured) {
-          setPhase(autoLocal ? "local" : "unconfigured");
-          return;
-        }
-        if (!status.box && autoLocal) {
-          setPhase("local");
-          return;
-        }
-        setPhase("starting");
-        return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((r) => {
-          if (!alive) return;
-          setBoxState(r.state ?? null);
-          setPhase("ready");
-        });
-      })
-      .catch((e) => {
-        if (!alive) return;
-        setError(e.message);
-        setPhase("error");
-      });
-    return () => {
-      alive = false;
-    };
-  }, [bot.id, bot.computer, retry]);
-
-  // cloud preview: SSE frames win while the bot works; otherwise poll
-  const live = state.screens[bot.id];
-  const sseFlowing = Boolean(bot.busy && live);
-  const inFlight = useRef(false);
-  useEffect(() => {
-    if (phase !== "ready" || sseFlowing) return;
-    let alive = true;
-    const shoot = async () => {
-      if (inFlight.current) return;
-      inFlight.current = true;
-      try {
-        const { png, format } = await api(`/api/bots/${bot.id}/computer/screenshot`, { method: "POST" });
-        if (alive) setPolledFrame({ png, mime: format === "jpeg" ? "image/jpeg" : "image/png" });
-      } catch {
-        /* box mid-command or asleep — next tick */
-      } finally {
-        inFlight.current = false;
-      }
-    };
-    void shoot();
-    const timer = setInterval(shoot, 4000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [phase, sseFlowing, bot.id]);
-
-  // local preview: frames from the Electron main process. The FIRST capture
-  // attempt is what makes macOS show the Screen Recording prompt (there is
-  // no reliable pre-grant flow on macOS 15+), so repeated empty frames mean
-  // the user denied — surface the Settings repair path instead of spinning.
   const [localMisses, setLocalMisses] = useState(0);
+
   useEffect(() => {
-    if (phase !== "local" || !window.) return;
-    let alive = true;
+    setLocalFrame(null);
     setLocalMisses(0);
+    if (!isElectron || !enabled) return;
+    let alive = true;
     const shoot = async () => {
       try {
-        const url = await window.!.screenFrame();
-        if (alive && url) setLocalFrame(url);
-        else if (alive) setLocalMisses((n) => n + 1);
+        const url = await window.nexbot!.screenFrame();
+        if (alive && url) {
+          setLocalFrame(url);
+          setLocalMisses(0);
+        } else if (alive) setLocalMisses((n) => n + 1);
       } catch {
         if (alive) setLocalMisses((n) => n + 1);
       }
@@ -145,45 +48,241 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [phase]);
+  }, [bot.id, isElectron, enabled]);
 
-  const lastScreenMessage = [...bot.messages].reverse().find((m) => m.kind === "screen" && m.png);
-  const cloudFrame =
-    live ??
-    polledFrame ??
-    (lastScreenMessage ? { png: lastScreenMessage.png!, mime: lastScreenMessage.mime ?? "image/png" } : null);
+  const lastScreen = [...bot.messages].reverse().find((m) => m.kind === "screen" && m.png);
   const frameSrc =
-    phase === "local"
-      ? localFrame
-      : phase === "ready" || phase === "starting"
-        ? cloudFrame && `data:${cloudFrame.mime};base64,${cloudFrame.png}`
-        : null;
+    localFrame ??
+    (lastScreen ? `data:${lastScreen.mime ?? "image/png"};base64,${lastScreen.png}` : null);
+  return { frameSrc, isElectron, localMisses };
+}
 
-  const run = (kind: "join" | "sleep") => {
-    setPending(kind);
-    setError(null);
-    api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
-      .then((result) => {
-        // the join URL's stream token rotates — always freshly minted, never cached
-        if (kind === "join" && result.joinUrl) window.open(result.joinUrl);
-        if (kind === "sleep") setBoxState("archived");
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setPending(null));
-  };
+export function LiveScreenPreview({ bot, onOpen }: { bot: Bot; onOpen?: () => void }) {
+  const { frameSrc } = useLiveScreenFrame(bot);
+  const body = frameSrc ? (
+    <img src={frameSrc} alt={`${bot.name}'s screen`} className="h-full w-full object-contain" />
+  ) : (
+    <span className="px-4 text-center text-[12px] text-ink-secondary">
+      This PC — open Computer for a live view
+    </span>
+  );
+  const cls = "flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card";
+  if (onOpen) {
+    return (
+      <button type="button" onClick={onOpen} className={cls} title="Open computer">
+        {body}
+      </button>
+    );
+  }
+  return <div className={cls}>{body}</div>;
+}
 
-  const emptyState: Record<Exclude<Phase, "ready" | "local">, string> = {
-    checking: "Checking…",
-    starting: "Starting your bot's computer…",
-    unconfigured: "No cloud computer configured",
-    "local-unavailable": "Local preview needs the desktop app — run pnpm dev:desktop",
-    off: "This bot's computer is off",
-    error: "Couldn't reach the computer",
+export function RoutinesCard({ bot }: { bot: Bot }) {
+  const [rows, setRows] = useState<Routine[]>([]);
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [kind, setKind] = useState<"cron" | "webhook" | "file">("cron");
+  const [every, setEvery] = useState("60");
+  const [secret, setSecret] = useState("");
+  const [repo, setRepo] = useState("");
+  const [watchPath, setWatchPath] = useState("");
+
+  const load = () => {
+    fetch(`/api/routines?botId=${bot.id}`)
+      .then((r) => r.json())
+      .then((d) => setRows(d.routines ?? []))
+      .catch(() => {});
   };
+  useEffect(load, [bot.id]);
 
   return (
-    <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
-      {/* Header */}
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
+        <CalendarClock size={16} className="text-ink-secondary" />
+        Routines
+      </div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">
+        Runs while NexBot is in the tray. Close the window; do not Quit.
+      </div>
+      <div className="mt-3 flex flex-col gap-2">
+        {rows.map((r) => (
+          <div key={r.id} className="flex items-start justify-between gap-2 rounded-lg bg-inset px-2.5 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-[13px] text-ink">{r.name}</div>
+              <div className="text-[11px] text-ink-secondary">
+                {kindLabel(r)}
+                {r.enabled ? "" : " · paused"}
+              </div>
+              {(r.kind ?? "cron") === "webhook" && (
+                <code className="mt-1 block break-all text-[10px] text-ink-secondary">
+                  http://127.0.0.1:8799/api/routines/hooks/{r.id}
+                </code>
+              )}
+            </div>
+            <button
+              onClick={() => api(`/api/routines/${r.id}`, { method: "DELETE" }).then(load)}
+              className="text-[11px] text-ink-secondary hover:text-danger"
+            >
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+      <input
+        className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+        placeholder="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <textarea
+        className="mt-2 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+        placeholder="What should this bot do?"
+        value={prompt}
+        rows={2}
+        onChange={(e) => setPrompt(e.target.value)}
+      />
+      <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">
+        {([
+          ["cron", "Cron"],
+          ["webhook", "Webhook"],
+          ["file", "File watch"],
+        ] as const).map(([value, label], i) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setKind(value)}
+            className={cn(
+              "flex-1 py-1.5 text-[13px]",
+              i > 0 && "border-l border-hairline/40",
+              kind === value ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {kind === "cron" && (
+        <select
+          className="mt-2 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+          value={every}
+          onChange={(e) => setEvery(e.target.value)}
+        >
+          <option value="15">Every 15 minutes</option>
+          <option value="60">Every hour</option>
+          <option value="360">Every 6 hours</option>
+          <option value="daily">Every day at 08:00</option>
+        </select>
+      )}
+      {kind === "webhook" && (
+        <>
+          <input
+            type="password"
+            autoComplete="off"
+            className="mt-2 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+            placeholder="Secret (required, x-nexbot-secret)"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
+          <input
+            className="mt-2 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+            placeholder="Repo filter owner/name (optional)"
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+          />
+          <div className="mt-1.5 text-[11px] text-ink-secondary">
+            Required secret. POST the hook URL or /api/webhooks/github with x-nexbot-secret — unsigned hooks are ignored.
+          </div>
+        </>
+      )}
+      {kind === "file" && (
+        <>
+          <input
+            className="mt-2 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink"
+            placeholder="Path to file or directory"
+            value={watchPath}
+            onChange={(e) => setWatchPath(e.target.value)}
+          />
+          <div className="mt-1.5 text-[11px] text-ink-secondary">
+            Required. File watch needs a path on this PC before it can be created.
+          </div>
+        </>
+      )}
+      <button
+        onClick={() => {
+          if (!prompt.trim()) return;
+          if (kind === "file" && !watchPath.trim()) return;
+          if (kind === "webhook" && !secret.trim()) return;
+          api("/api/routines", {
+            method: "POST",
+            body: JSON.stringify({
+              botId: bot.id,
+              name: name.trim() || prompt.trim().slice(0, 40),
+              prompt: prompt.trim(),
+              kind,
+              everyMinutes: kind === "cron" && every !== "daily" ? Number(every) : undefined,
+              dailyAt: kind === "cron" && every === "daily" ? "08:00" : undefined,
+              webhookSecret: kind === "webhook" && secret.trim() ? secret.trim() : undefined,
+              githubRepo: kind === "webhook" && repo.trim() ? repo.trim() : undefined,
+              watchPath: kind === "file" ? watchPath.trim() : undefined,
+            }),
+          }).then(() => {
+            setName("");
+            setPrompt("");
+            setSecret("");
+            setRepo("");
+            setWatchPath("");
+            load();
+          });
+        }}
+        disabled={(kind === "file" && !watchPath.trim()) || (kind === "webhook" && !secret.trim())}
+        className="pressable mt-3 w-full rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+      >
+        Create routine
+      </button>
+    </div>
+  );
+}
+
+type Caps = {
+  screenPreview: { available: boolean };
+  localComputer: { available: boolean; reasonCode?: string };
+};
+
+export function ComputerPanel({ bot }: { bot: Bot }) {
+  const { dispatch } = useStore();
+  const mode = modeOf(bot);
+  const isElectron = Boolean(window.nexbot);
+  const [phase, setPhase] = useState<Phase>("checking");
+  const [caps, setCaps] = useState<Caps | null>(null);
+  const { frameSrc, localMisses } = useLiveScreenFrame(bot, { enabled: phase === "local" });
+
+  useEffect(() => {
+    const fromBridge = window.nexbot?.capabilities?.();
+    void Promise.resolve(fromBridge)
+      .then((c) => c ?? fetch("/api/capabilities").then((r) => r.json()))
+      .then((c) => setCaps(c))
+      .catch(() =>
+        fetch("/api/capabilities")
+          .then((r) => r.json())
+          .then(setCaps)
+          .catch(() => {}),
+      );
+  }, []);
+
+  useEffect(() => {
+    if (mode === "off") {
+      setPhase("off");
+      return;
+    }
+    if (!isElectron || (caps && !caps.screenPreview.available)) {
+      setPhase("local-unavailable");
+      return;
+    }
+    setPhase("local");
+  }, [bot.id, mode, isElectron, caps]);
+
+  return (
+    <aside className="glass-heavy animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-black/8">
       <div className="flex items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
@@ -195,28 +294,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         <span className="text-[15px] font-semibold text-ink">Computer</span>
         <button
           onClick={() => dispatch({ type: "toggleComputer", open: false })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="pressable flex min-h-11 min-w-11 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+          title="Close Computer panel"
+          aria-label="Close Computer panel"
         >
           <X size={18} />
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-5">
-        {/* Screen preview */}
         <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
           <span>{bot.name}'s screen</span>
-          {phase === "local" && (
-            <span className="text-[11px]">
-              {window.?.platform === "darwin" ? "this Mac" : "this PC"}
-            </span>
-          )}
+          {phase === "local" && <span className="text-[11px]">this PC</span>}
         </div>
         <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card">
-          {frameSrc ? (
+          {frameSrc && phase !== "off" ? (
             <img src={frameSrc} alt={`${bot.name}'s screen`} className="h-full w-full object-contain" />
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 text-center text-ink-secondary">
-              {phase === "checking" || phase === "starting" || phase === "local" ? (
+              {phase === "checking" || phase === "local" ? (
                 <Loader2 size={18} className="animate-spin" />
               ) : phase === "off" ? (
                 <Power size={22} />
@@ -224,17 +320,17 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 <Monitor size={22} />
               )}
               <span className="text-[12px]">
-                {phase === "ready"
-                  ? "Waiting for the first frame…"
-                  : phase === "local"
-                    ? localMisses >= 3
-                      ? "No frames yet — grant screen capture permission, then try again (macOS may need a relaunch)."
-                      : "Capturing this computer's screen…"
-                    : emptyState[phase]}
+                {phase === "off"
+                  ? "This bot's computer is off"
+                  : phase === "local-unavailable"
+                    ? "Local preview needs the desktop app"
+                    : localMisses >= 3
+                      ? "No frames yet — grant screen capture, then try again."
+                      : "Capturing this computer's screen…"}
               </span>
               {phase === "local" && localMisses >= 3 && (
                 <button
-                  onClick={() => window.?.permOpenSettings?.("screen")}
+                  onClick={() => window.nexbot?.permOpenSettings?.("screen")}
                   className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
                 >
                   Open Settings
@@ -244,74 +340,52 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           )}
         </div>
 
-        {error && (
-          <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
-            {error}
-          </div>
-        )}
-        {phase === "unconfigured" && (
-          <div className="mt-3 rounded-xl bg-card p-4">
-            <div className="mb-3 text-[13px] text-ink-secondary">
-              Paste a Box token from box.ascii.dev to give this bot a cloud computer — it spins up right here.
-            </div>
-            <ApiKeyRow
-              section="box"
-              label="Box token"
-              placeholder="Token from box.ascii.dev"
-              onSaved={(configured) => configured && setRetry((n) => n + 1)}
-            />
-          </div>
-        )}
-
-        {/* Cloud-only actions */}
-        {phase === "ready" && (
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => run("join")}
-              disabled={pending === "join"}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            >
-              {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-              Open desktop
-            </button>
-            {boxState !== "archived" && (
-              <button
-                onClick={() => run("sleep")}
-                disabled={pending === "sleep"}
-                className="flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                title="Put the computer to sleep"
-              >
-                {pending === "sleep" ? <Loader2 size={14} className="animate-spin" /> : <Moon size={14} />}
-                Sleep
-              </button>
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={() => {
+              if (window.nexbot?.openWatch) void window.nexbot.openWatch(bot.id);
+              else window.open(`/watch.html?bot=${encodeURIComponent(bot.id)}`, "nexbot-watch");
+            }}
+            className="pressable flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover"
+          >
+            <ExternalLink size={14} />
+            Open in window
+          </button>
+          <button
+            type="button"
+            onClick={() => void api(`/api/bots/${bot.id}/takeover`, {
+              method: "POST",
+              body: JSON.stringify({ active: !bot.operatorControl }),
+            })}
+            className={cn(
+              "pressable flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[13px]",
+              bot.operatorControl ? "bg-amber-500/15 text-amber-700" : "bg-raised text-ink hover:bg-raised-hover",
             )}
-          </div>
-        )}
+          >
+            <Hand size={14} />
+            {bot.operatorControl ? "Release control" : "Take over"}
+          </button>
+        </div>
 
-        {/* Computer source */}
         <div className="mt-4 rounded-xl bg-card p-4">
           <div className="text-[15px] font-medium text-ink">Runs on</div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            {bot.computer ? "" : "Auto: the cloud box when one exists, else this computer. "}Pick where this bot's
-            computer lives.
+            This PC through CUA. NexBot does not use a cloud desktop.
           </div>
           <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
             {(
               [
-                ["cloud", "Cloud box"],
-                ["local", window.?.platform === "darwin" ? "This Mac" : "This PC"],
+                ["local", caps?.localComputer.available === false ? "This PC (CUA down)" : "This PC"],
                 ["off", "Off"],
               ] as const
-            ).map(([mode, label], i) => (
+            ).map(([value, label], i) => (
               <button
-                key={mode}
-                onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } })}
+                key={value}
+                onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { computer: value } })}
                 className={cn(
                   "flex-1 py-1.5 text-[13px]",
                   i > 0 && "border-l border-hairline/40",
-                  bot.computer === mode
-                    ? "bg-raised text-ink"
-                    : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
+                  mode === value ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
                 )}
               >
                 {label}
@@ -320,23 +394,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           </div>
         </div>
 
-        {/* Routines */}
-        <div className="mt-4 rounded-xl bg-card p-4">
-          <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
-            <CalendarClock size={16} className="text-ink-secondary" />
-            Routines
-          </div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Routines are recurring tasks this agent runs on a schedule.
-          </div>
-          <button
-            disabled
-            className="mt-3 w-full cursor-not-allowed rounded-lg bg-raised py-2 text-[13px] text-ink-secondary opacity-60"
-            title="Coming soon"
-          >
-            Create Routine
-          </button>
-        </div>
+        <RoutinesCard bot={bot} />
       </div>
     </aside>
   );

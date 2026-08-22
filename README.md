@@ -3,10 +3,8 @@
 **Your own team of AI bots, in a chat app.**
 
 LuNex Inc's open-source agent messaging shell. Each sidebar contact is a real local agent
-(`claude`, `codex`, or `grok` CLI) with its own personality, model, optional cloud computer, and
-connected apps.
-
-Derived from [](https://github.com/-/) (MIT). See `NOTICE`.
+(`claude`, `codex`, or `grok` CLI) with its own personality, model, optional local computer (this PC),
+and connected apps.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
@@ -26,22 +24,42 @@ Derived from [](https://github.com/-/) (MIT). See `NOTICE`.
 git clone https://github.com/LuNexInc/nexbot && cd nexbot
 pnpm install
 
-pnpm dev:server    # harness → 127.0.0.1:8799
+pnpm dev:server    # harness → 127.0.0.1:8799 (quit installed tray first if you need source)
 pnpm dev           # app → http://127.0.0.1:5199
-pnpm dev:desktop   # Electron shell (Windows or macOS)
+pnpm dev:desktop   # optional: NexBot-dev profile, Vite UI
 ```
+
+To use the full app from a phone or tablet on the same Wi-Fi, follow
+[`docs/remote-access.md`](docs/remote-access.md). The PC remains the local
+agent host, so no cloud AI or hosted database is required.
+
+**How to preview:** Quit installed NexBot (tray → Quit) if you need the source harness — else Vite talks to 0.3.8's :8799. Then `pnpm dev:server` and `pnpm dev` → http://127.0.0.1:5199. Optional `pnpm dev:desktop` (NexBot-dev, Vite UI). If EADDRINUSE / port busy: quit the tray app first. Vite :5199 is UI only. Do not `pnpm package:win` to preview.
 
 Requirements: **Node 24+**, **pnpm**, and at least one of [`claude`](https://claude.com/claude-code),
 [`codex`](https://github.com/openai/codex), or [`grok`](https://x.ai/cli) on PATH.
 
-Optional keys (App Settings → gear): Composio Connect (`ck_…`), Composio API (`ak_…`),
-Box token ([box.ascii.dev](https://box.ascii.dev)).
+Optional keys (App Settings → gear): Composio Connect (`ck_…`), Composio API (`ak_…`).
+NexBot does not use a cloud desktop (no Box). Local CUA drives this PC.
 
 ```sh
 pnpm typecheck
 pnpm test
+pnpm run doctor     # local store, CUA, queue, jobs, and provider readiness
 pnpm package:win    # NSIS installer + portable .exe under release/
 pnpm package:mac    # macOS (on a Mac)
+```
+
+Busy bots accept durable `queue`, next-turn `steer`, and interrupting `replace`
+messages. Execution receipts distinguish a tool attempt from a verified state
+change. App Settings also provides operator takeover, an encrypted per-bot
+credential vault, custom ACP providers, and the same doctor report.
+
+The live benchmark sends real turns and writes its report under `outputs/`.
+Run it against a disposable profile or an intended test bot because it uses
+provider quota and adds benchmark messages to that bot's transcript.
+
+```sh
+pnpm run benchmark -- --bot Luna --runs 3
 ```
 
 ## Status
@@ -50,8 +68,8 @@ pnpm package:mac    # macOS (on a Mac)
 |------|--------|
 | Harness + Claude/Codex/Grok drivers | Windows + Unix (`.cmd` spawn fixed) |
 | Windows Electron shell | 0.3.0 — NSIS + portable |
-| macOS Electron shell | Upstream baseline, rebranded |
-| Local CUA (drive this PC) | macOS-first; Windows uses cloud Box or `CUA_DRIVER_PATH` |
+| macOS Electron shell | Present |
+| Local CUA (drive this PC) | Windows + macOS + Linux via trycua; no cloud Box |
 | Product analytics | Removed (no-op local stubs) |
 
 ## How it works
@@ -61,7 +79,7 @@ owns agent processes and normalizes each provider protocol into one event stream
 
 | Layer | Path | Role |
 |-------|------|------|
-| Drivers | `server/drivers/` | Claude, Codex, Grok, cloud computer |
+| Drivers | `server/drivers/` | Claude, Codex, Grok, and generic ACP |
 | Harness | `server/harness/` | Registry + event bus |
 | API | `server/index.ts` | Bots, turns, approvals, connectors, config |
 | App | `src/` | Chat UI |
@@ -69,13 +87,11 @@ owns agent processes and normalizes each provider protocol into one event stream
 
 ## Security notes
 
-- Local harness has **no auth** (trusts the machine user). Bind is `127.0.0.1` only.
-- Agents run with your user privileges. Approve shell and computer actions deliberately.
+- Loopback is trusted. Non-loopback API clients need the configured access token.
+- Agents run with your user privileges. High-risk actions require approval by default.
+- Credential values are encrypted and granted per bot. Focused-field fill does not return a value to the model.
 - Report issues per `SECURITY.md`.
 
 ## License
 
-[MIT](LICENSE) © 2026 LuNex Inc and contributors.
-
-Upstream:  © 2026   and contributors (MIT). NexBot is not affiliated with
-,  , or xAI.
+[MIT](LICENSE) © 2026 LuNex Inc.

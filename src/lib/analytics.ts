@@ -1,5 +1,4 @@
-// Local no-op analytics. Upstream  shipped PostHog + email identify.
-// NexBot does not send usage data unless Charles adds a future opt-in provider.
+// Local no-op analytics. NexBot does not ship product telemetry.
 
 let ready = false;
 

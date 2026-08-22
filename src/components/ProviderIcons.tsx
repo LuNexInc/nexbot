@@ -1,5 +1,5 @@
 // Provider brand marks, keyed by driver kind. Dark-theme fills.
-import { Monitor } from "lucide-react";
+import { Monitor, Orbit } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export interface IconProps {
@@ -36,6 +36,10 @@ export function ComputerMark({ size = 16, className }: IconProps) {
   return <Monitor size={size} className={cn("text-ink-secondary", className)} />;
 }
 
+export function AntigravityMark({ size = 16, className }: IconProps) {
+  return <Orbit size={size} className={cn("text-ink-secondary", className)} />;
+}
+
 export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
   switch (driverKind) {
     case "grok":
@@ -47,6 +51,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <CodexMark size={size} className={className} />;
     case "boxAgent":
       return <ComputerMark size={size} className={className} />;
+    case "antigravity":
+      return <AntigravityMark size={size} className={className} />;
     default:
       return <span className="text-[11px] font-semibold text-ink-secondary">{driverKind.slice(0, 2).toUpperCase()}</span>;
   }

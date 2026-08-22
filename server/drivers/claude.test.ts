@@ -21,9 +21,9 @@ import { ClaudeDriver } from "./claude.ts";
 const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
 describe("ClaudeDriver.decodeConfig", () => {
-  it("defaults to the claude binary with acceptEdits", () => {
-    expect(ClaudeDriver.decodeConfig({})).toEqual({ cli: "claude", permissionMode: "acceptEdits" });
-    expect(ClaudeDriver.decodeConfig(undefined)).toEqual({ cli: "claude", permissionMode: "acceptEdits" });
+  it("defaults to the claude binary with brokered permissions", () => {
+    expect(ClaudeDriver.decodeConfig({})).toEqual({ cli: "claude", permissionMode: "auto" });
+    expect(ClaudeDriver.decodeConfig(undefined)).toEqual({ cli: "claude", permissionMode: "auto" });
   });
 
   it("accepts the three known permission modes", () => {

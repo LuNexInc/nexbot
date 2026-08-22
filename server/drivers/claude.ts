@@ -1,7 +1,5 @@
-// Claude driver — upstream ClaudeDriver skeleton over agentcal's
 // drivers/claude.js runtime (stream-json both directions, prompt over
 // stdin, completion from a real `result` event — verified against
-// claude 2.1.211 by agentcal). Per-turn CLI process; the conversation
 // continues across turns via --resume <sessionId> (the resumeCursor).
 //
 // Integrations become MCP servers on the CLI:
@@ -17,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
 import { execFileCli, spawnCli, stopChild } from "../cli-spawn.ts";
+import { scrubAgentChildEnv } from "../environ-guard.ts";
 
 import type {
   DriverCreateInput,
@@ -60,7 +59,6 @@ const PERM_PROXY_PATH = proxyPath("permission-proxy");
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
-// ── permission broker (ported from agentcal drivers/claude.js) ─────────
 // A headless run that hits a permission acceptEdits doesn't cover should
 // neither stall silently NOR get blanket-denied — it should ask the user.
 // The broker is a net server on a per-turn socket; the proxy (spawned by
@@ -187,7 +185,7 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   }
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
-    permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
+    permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "auto",
   };
 }
 
@@ -243,6 +241,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (sessionId) args.push("--resume", sessionId);
       else args.push("--session-id", newSessionId!);
       if (turn.model) args.push("--model", turn.model);
+      if (turn.reasoningEffort && turn.reasoningEffort !== "auto") {
+        args.push("--effort", turn.reasoningEffort === "max" ? "high" : turn.reasoningEffort);
+      }
       if (turn.system) args.push("--append-system-prompt", turn.system);
 
       // integrations → MCP servers; pre-allow their tools (a headless
@@ -275,6 +276,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.computer = { ...turn.integrations.localComputer };
         allowed.push("mcp__computer");
       }
+      if (turn.integrations?.todos) {
+        mcpServers.todos = { ...turn.integrations.todos };
+        allowed.push("mcp__todos");
+      }
+      if (turn.integrations?.agents) {
+        mcpServers.agents = { ...turn.integrations.agents };
+        allowed.push("mcp__agents");
+      }
+      if (turn.integrations?.credentials) {
+        mcpServers.credentials = { ...turn.integrations.credentials };
+        allowed.push("mcp__credentials");
+      }
       // permission broker: anything acceptEdits would silently deny becomes
       // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
       // bypassPermissions (fullAuto) — nothing would ever ask.
@@ -302,9 +315,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               source: resolved.source,
             }),
         });
-        args.push("--permission-prompt-tool", "mcp__ogb__approve");
-        mcpServers. = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
-        allowed.push("mcp__ogb");
+        args.push("--permission-prompt-tool", "mcp__nexbot__approve");
+        mcpServers.nexbot = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
+        allowed.push("mcp__nexbot");
       }
       if (Object.keys(mcpServers).length) {
         args.push("--mcp-config", JSON.stringify({ mcpServers }));
@@ -313,10 +326,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
       // subscription users get billed pay-as-you-go if this leaks through;
-      // and a nested CLI must not inherit this session's identity (agentcal)
       delete env.ANTHROPIC_API_KEY;
       delete env.CLAUDECODE;
       delete env.CLAUDE_CODE_ENTRYPOINT;
+      scrubAgentChildEnv(env);
 
       const child = spawnCli(config.cli, args, {
         cwd: turn.cwd ?? homedir(),

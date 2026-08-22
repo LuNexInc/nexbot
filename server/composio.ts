@@ -1,6 +1,5 @@
 // Composio — two clients in one file:
 //  1) the Connect meta-MCP (connect.composio.dev) for connection state +
-//     auth links, ported from agentcal src/composio.js
 //  2) the v3 toolkits catalog (backend.composio.dev) for the plugin
 //     marketplace — names, descriptions, logos. Works when the key is a
 //     project API key; when it isn't, the caller falls back to the curated
@@ -99,7 +98,6 @@ export interface ToolkitCard {
   domain: string | null;
 }
 
-// Curated fallback — the services agentcal's connectors page ships plus the
 // long marketplace tail. Logos resolve client-side:
 // logo → favicon(domain) → monogram.
 const CURATED: ToolkitCard[] = [

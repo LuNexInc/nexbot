@@ -1,11 +1,9 @@
-// Codex driver — upstream CodexDriver skeleton over agentcal's
 // drivers/codex.js runtime: the official `codex` CLI headless over its
 // app-server JSON-RPC protocol (newline-delimited JSON on stdio).
 // Completion is a real `turn/completed` notification; approval requests
 // arrive as in-process server→client JSON-RPC requests and surface as
 // canonical request.opened events (answered via respondToRequest — no MCP
 // proxy or unix socket needed, unlike claude). Verified against
-// codex-cli 0.144.4 by agentcal.
 //
 // resumeCursor is the codex thread id; a later turn tries thread/resume
 // and falls back to a fresh thread/start.
@@ -89,10 +87,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
       // the CLI owns its own ChatGPT login; a leaked API key silently flips
-      // billing to pay-as-you-go (agentcal)
       delete env.OPENAI_API_KEY;
 
-      const child = spawnCli(config.cli, ["app-server"], {
+      const appServerArgs = ["app-server"];
+      if (turn.reasoningEffort && turn.reasoningEffort !== "auto") {
+        const effort = turn.reasoningEffort === "max" ? "high" : turn.reasoningEffort;
+        appServerArgs.push("-c", `model_reasoning_effort=${effort}`);
+      }
+      const child = spawnCli(config.cli, appServerArgs, {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -227,6 +229,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 ok: item.status !== "failed" && item.status !== "declined",
               });
             } else if (item.type === "reasoning") {
+              const think = String(item.text ?? item.summary ?? item.content ?? item.reasoning_content ?? "").trim();
+              if (think) {
+                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: think });
+              }
               emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
             }
             break;

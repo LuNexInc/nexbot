@@ -1,7 +1,7 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
+import { startCua, stopCua, registerCuaIpc, cuaConnectionStatus, resolveDriverBinary } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -9,9 +9,19 @@ const IS_MAC = process.platform === "darwin";
 const IS_WIN = process.platform === "win32";
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
-const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
+const DEV_URL =
+  process.env.ELECTRON_START_URL ??
+  process.env.ELECTRON_RENDERER_URL ??
+  "http://127.0.0.1:5199";
+// Unpackaged `electron .` / NEXBOT_DEV=1: load Vite, never the packaged asar UI
+// and never a second harness on :8799 (installed 0.3.8 owns that).
+const DEV_PREVIEW = !app.isPackaged || process.env.NEXBOT_DEV === "1";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
+const START_HIDDEN = process.argv.includes("--hidden");
+const AUTOSTART_PS1 = app.isPackaged
+  ? path.join(process.resourcesPath, "install-autostart.ps1")
+  : path.join(__dirname, "..", "scripts", "install-autostart.ps1");
 
 // Packaged: the harness server ships in resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
@@ -21,9 +31,13 @@ let serverReady = true;
 
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
+  // Connect mode is persisted in ~/.nexbot/config.json. Do not force a
+  // loopback bind here, or the packaged app would ignore the user's setting.
+  const serverEnv = { ...process.env };
+  delete serverEnv.NEXBOT_BIND;
   const proc = utilityProcess.fork(entry, [], {
     env: {
-      ...process.env,
+      ...serverEnv,
       NEXBOT_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       NEXBOT_PORT: String(port),
       NEXBOT_CUA_CONNECTION: path.join(app.getPath("userData"), "cua-connection.json"),
@@ -72,13 +86,59 @@ async function startServerPackaged() {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px system-ui,Segoe UI,sans-serif"><div style="text-align:center;max-width:360px"><div style="font-size:40px">⚡</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen NexBot — if it keeps happening, restart your computer.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#e8eaee;color:#1d1d1f;font:15px system-ui,Segoe UI,sans-serif"><div style="text-align:center;max-width:360px"><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#1d1d1f8c;line-height:1.5">Something else is using its ports. Quit and reopen NexBot — if it keeps happening, restart your computer.</p></div></body>`,
   );
+
+// Windows treats package.json name "nexbot" and productName "NexBot" as the
+// same AppData folder, so an unpackaged preview would share the installed
+// app's single-instance lock and only raise 0.3.8. Give preview its own
+// userData (and therefore its own lock) and never start a harness here.
+if (DEV_PREVIEW) {
+  app.setPath("userData", path.join(app.getPath("appData"), "NexBot-dev"));
+}
 
 // Single instance — second launch focuses the first window.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
+}
+
+let quitting = false;
+let tray = null;
+let mainWin = null;
+
+function showMainWindow() {
+  if (!mainWin || mainWin.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  mainWin.show();
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.focus();
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    tray = new Tray(APP_ICON);
+    tray.setToolTip(DEV_PREVIEW ? "NexBot (preview)" : "NexBot");
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "Open NexBot", click: () => showMainWindow() },
+        { type: "separator" },
+        {
+          label: "Quit",
+          click: () => {
+            quitting = true;
+            app.quit();
+          },
+        },
+      ]),
+    );
+    tray.on("click", () => showMainWindow());
+  } catch (e) {
+    console.error("[tray]", e);
+  }
 }
 
 function createWindow() {
@@ -88,7 +148,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     icon: APP_ICON,
-    backgroundColor: "#070707",
+    backgroundColor: "#e8eaee",
     show: false,
     ...(IS_MAC
       ? {
@@ -100,8 +160,8 @@ function createWindow() {
             // Frameless chrome with Windows caption buttons over dark UI
             titleBarStyle: "hidden",
             titleBarOverlay: {
-              color: "#070707",
-              symbolColor: "#fcfcfc",
+              color: "#e8eaee",
+              symbolColor: "#1d1d1f",
               height: 36,
             },
           }
@@ -115,17 +175,23 @@ function createWindow() {
     },
   });
 
+  mainWin = win;
   win.once("ready-to-show", () => win.show());
+  win.on("close", (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    win.hide();
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
 
-  if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
-  } else {
+  if (DEV_PREVIEW) {
     win.loadURL(DEV_URL);
+  } else {
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
   }
 }
 
@@ -188,6 +254,77 @@ ipcMain.handle("speech:start", (event) => {
 ipcMain.handle("speech:stop", () => stopSpeech());
 
 ipcMain.handle("app:platform", () => process.platform);
+ipcMain.handle("notify", (_e, title, body) => {
+  try {
+    new Notification({ title: String(title || "NexBot"), body: String(body || "") }).show();
+  } catch {}
+});
+ipcMain.handle("open-path", (_e, dir) => {
+  if (dir) return shell.openPath(String(dir));
+});
+
+function runAutostart(mode) {
+  const { spawnSync } = require("node:child_process");
+  const exe = app.isPackaged ? process.execPath : "";
+  const args = ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", AUTOSTART_PS1, "-Mode", mode];
+  if (exe) args.push("-Exe", exe);
+  const r = spawnSync("powershell.exe", args, { windowsHide: true, encoding: "utf8" });
+  try {
+    return JSON.parse(String(r.stdout || "").trim());
+  } catch {
+    return { installed: false, error: String(r.stderr || r.status) };
+  }
+}
+
+ipcMain.handle("desktop:capabilities", () => {
+  const conn = cuaConnectionStatus();
+  const binary = resolveDriverBinary();
+  const cuaReady = Boolean(binary && conn && conn.mode !== "unavailable");
+  const platform = process.platform === "darwin" || process.platform === "linux" || process.platform === "win32"
+    ? process.platform
+    : "browser";
+  const labels = { darwin: "macOS", linux: "Linux", win32: "Windows", browser: "Browser" };
+  return {
+    host: { platform, label: labels[platform], packaged: app.isPackaged },
+    screenPreview: { available: true },
+    dictation: {
+      available: true,
+      engine: platform === "darwin" ? "apple-speech" : "web-speech",
+    },
+    localComputer: cuaReady
+      ? { available: true, support: "supported" }
+      : { available: false, support: "unsupported", reasonCode: binary ? "cua-not-ready" : "cua-driver-missing" },
+  };
+});
+ipcMain.handle("autostart:status", () => runAutostart("status"));
+ipcMain.handle("autostart:set", (_e, on) => runAutostart(on ? "on" : "off"));
+
+let watchWin = null;
+ipcMain.handle("watch:open", (_event, botId) => {
+  const qs = botId ? `?bot=${encodeURIComponent(String(botId))}` : "";
+  const origin = DEV_PREVIEW ? DEV_URL.replace(/\/$/, "") : `http://127.0.0.1:${SERVER_PORT}`;
+  const url = `${origin}/watch.html${qs}`;
+  if (watchWin && !watchWin.isDestroyed()) {
+    watchWin.loadURL(url);
+    watchWin.focus();
+    return;
+  }
+  watchWin = new BrowserWindow({
+    width: 960,
+    height: 640,
+    minWidth: 480,
+    minHeight: 320,
+    icon: APP_ICON,
+    backgroundColor: "#e8eaee",
+    title: "NexBot · screen",
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true },
+  });
+  watchWin.on("closed", () => {
+    watchWin = null;
+  });
+  watchWin.loadURL(url);
+});
 
 app.whenReady().then(async () => {
   if (IS_MAC) app.dock.setIcon(APP_ICON);
@@ -206,27 +343,28 @@ app.whenReady().then(async () => {
   // CUA is macOS-primary today; Windows degrades to unavailable without a binary.
   startCua().catch((e) => console.error("[cua] start failed:", e));
 
-  if (app.isPackaged) serverReady = await startServerPackaged();
-  createWindow();
+  // Packaged 0.3.8 already owns :8799. Preview never forks a second harness.
+  if (app.isPackaged && !DEV_PREVIEW) serverReady = await startServerPackaged();
+  createTray();
+  if (!START_HIDDEN) createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on("second-instance", () => {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
+app.on("second-instance", (_e, argv) => {
+  if (argv.includes("--hidden")) return;
+  showMainWindow();
 });
 
 app.on("window-all-closed", () => {
-  if (!IS_MAC) app.quit();
+  /* stay in the tray so routines and in-flight turns keep running */
 });
 
 let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
+  quitting = true;
   if (cuaCleanedUp) return;
   e.preventDefault();
   try {

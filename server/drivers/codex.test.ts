@@ -18,7 +18,7 @@ import { CodexDriver } from "./codex.ts";
 const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
 describe("CodexDriver.decodeConfig", () => {
-  it("defaults to the codex binary with fullAuto off", () => {
+  it("defaults to the codex binary with approvals on", () => {
     expect(CodexDriver.decodeConfig({})).toEqual({ cli: "codex", fullAuto: false });
     expect(CodexDriver.decodeConfig(undefined)).toEqual({ cli: "codex", fullAuto: false });
     expect(CodexDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);

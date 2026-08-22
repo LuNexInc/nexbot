@@ -22,6 +22,11 @@ if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
+if (argv.includes("models")) {
+  console.log("* fake-acp-2.0 (default)");
+  console.log("- fake-acp-1.0");
+  process.exit(0);
+}
 if (process.env.FAKE_ACP_DUMP) {
   writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }
@@ -152,8 +157,8 @@ function handle(msg: any) {
         result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
-        // and reply with whatever it said (the peer's fake runs plain happy
-        // — its depth-1 turn gets no agents server, so no recursion)
+        // and reply with whatever it said. The peer receives a child task
+        // scope with the same bounded coordination capability.
         void driveMcp(agentsMcp, [
           { name: "list_bots", args: () => ({}) },
           {
@@ -181,7 +186,11 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
-            toolCall: { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
+            toolCall: {
+              kind: "execute",
+              rawInput: { command: process.env.FAKE_ACP_PERM_COMMAND || "echo hi" },
+              title: process.env.FAKE_ACP_PERM_COMMAND || "echo hi",
+            },
             options: [
               { optionId: "allow-once", kind: "allow_once" },
               { optionId: "reject", kind: "reject_once" },

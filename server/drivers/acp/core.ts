@@ -28,12 +28,19 @@ import { newEventId, newId } from "../../contracts.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { execFileCli, spawnCli, stopChild } from "../../cli-spawn.ts";
 import { appendNative } from "../native.ts";
+import { scrubAgentChildEnv } from "../../environ-guard.ts";
+import { preToolHook } from "../../tool-hooks.ts";
+import { discoverCliModels } from "../../model-catalog.ts";
 
 export interface AcpConfig {
   cli: string;
   fullAuto: boolean;
   /** Optional home for this instance's sessions. */
   workspace?: string;
+  /** Generic ACP argv template. {model} is replaced for each turn. */
+  args?: string[];
+  authMethod?: string;
+  model?: string;
 }
 
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
@@ -43,6 +50,8 @@ export interface AcpSupport {
   models: { default: string; options: Array<{ id: string; label: string }> };
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
+  /** Optional argv after the binary name for a human-readable model list. */
+  modelListArgs?: string[];
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
   /** Message shown when the CLI is present but not signed in. */
@@ -53,7 +62,7 @@ export interface AcpSupport {
   transformEnv?(env: Record<string, string | undefined>): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
    * authMethods; return null to skip the authenticate step. */
-  pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
+  pickAuthMethod(authMethods: Array<{ id?: string }>, config: AcpConfig): string | null;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
@@ -73,7 +82,10 @@ function decodeAcpConfig(defaultCli: string) {
     return {
       cli: typeof o.cli === "string" ? o.cli : defaultCli,
       fullAuto: o.fullAuto === true,
-      workspace: typeof o.workspace === "string" ? o.workspace : undefined,
+      ...(typeof o.workspace === "string" ? { workspace: o.workspace } : {}),
+      ...(Array.isArray(o.args) ? { args: o.args.filter((arg): arg is string => typeof arg === "string").slice(0, 40) } : {}),
+      ...(typeof o.authMethod === "string" ? { authMethod: o.authMethod } : {}),
+      ...(typeof o.model === "string" ? { model: o.model } : {}),
     };
   };
 }
@@ -121,6 +133,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           PATH: augmentedPath(),
         };
         support.transformEnv?.(env);
+        scrubAgentChildEnv(env);
         return env;
       };
 
@@ -130,15 +143,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // fine here. env is the ACP {name,value}[] shape.
       const acpMcpServers = (turn: SendTurnInput) => {
         const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
-        const agents = turn.integrations?.agents;
-        if (agents) {
+        const push = (name: string, spec: { command: string; args: string[]; env: Record<string, string> } | undefined) => {
+          if (!spec) return;
           servers.push({
-            name: "agents",
-            command: agents.command,
-            args: agents.args,
-            env: Object.entries(agents.env).map(([name, value]) => ({ name, value: String(value) })),
+            name,
+            command: spec.command,
+            args: spec.args,
+            env: Object.entries(spec.env).map(([n, value]) => ({ name: n, value: String(value) })),
           });
-        }
+        };
+        push("agents", turn.integrations?.agents);
+        push("todos", turn.integrations?.todos);
+        push("credentials", turn.integrations?.credentials);
+        push("computer", turn.integrations?.localComputer);
         return servers;
       };
 
@@ -227,6 +244,27 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          const raw = toolCall.rawInput ?? {};
+          const hook = preToolHook({
+            name: String(toolCall.title ?? toolCall.kind ?? "tool"),
+            path: raw.path ?? raw.file ?? raw.filePath ?? raw.target,
+            command: raw.command ?? raw.cmd,
+            title: toolCall.title,
+            raw,
+          });
+          if (!hook.allow) {
+            const reject = optionFor("reject");
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message: "NexBot: " + (hook.reason ?? "blocked a request to read process environment secrets"),
+            });
+            return send({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled,
+            });
+          }
           if (config.fullAuto) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
@@ -391,7 +429,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               INIT_TIMEOUT,
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
-            const methodId = support.pickAuthMethod(methods);
+            const methodId = support.pickAuthMethod(methods, config);
             if (methodId) {
               try {
                 await request("authenticate", { methodId }, INIT_TIMEOUT);
@@ -469,12 +507,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return { state: "available", version, authenticated: support.isAuthenticated(env) };
       };
 
+      const models = config.model
+        ? { default: config.model, options: [{ id: config.model, label: config.model }] }
+        : support.modelListArgs
+          ? await discoverCliModels(config.cli, support.modelListArgs, childEnv(), support.models)
+          : support.models;
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models: support.models,
+        models,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

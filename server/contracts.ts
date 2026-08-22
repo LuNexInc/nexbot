@@ -10,12 +10,16 @@ export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
 
+/** Shared reasoning budget values understood by the provider adapters. */
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";
+
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
 // binding (upstream ModelSelectionWire). instanceId is the routing key.
 export interface ModelSelection {
   instanceId: InstanceId;
   model: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 // ── instance configuration envelope ────────────────────────────────────
@@ -84,12 +88,15 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 // ── adapter contract (upstream ProviderAdapterShape, promise-flavored) ──
 // The conversation runtime every provider is flattened into. streamEvents
 // becomes onEvent(listener) → unsubscribe; sessions start implicitly on
-// the first turn (the agentcal per-turn-process model) with resumeCursor
 // carrying the provider-native continuation (e.g. a claude session id).
 export interface SendTurnInput {
   threadId: ThreadId;
+  /** Owning bot — used by in-process tools (todo). */
+  botId?: string;
   text: string;
   model?: string;
+  /** Optional provider reasoning budget. Auto/undefined leaves provider defaults intact. */
+  reasoningEffort?: ReasoningEffort;
   resumeCursor?: unknown;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string }>;
@@ -105,10 +112,15 @@ export interface SendTurnInput {
      * MUST be spawned by Electron main; the harness only points the agent
      * CLI at the already-running socket via this MCP proxy command). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
-    /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
-     * through the harness so this bot can message other bots. The harness
-     * owns turns, permissions, and recursion limits; the proxy only forwards. */
+    /** Peer-agent comms: an MCP proxy (list_bots / ask_bot / send_bot) that
+     * routes back through the harness. The harness owns turns, permissions,
+     * and the bounded task graph; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
+    /** Durable checklist MCP (todo tool). Always attached so specialists can plan. */
+    todos?: { command: string; args: string[]; env: Record<string, string> };
+    /** Per-bot encrypted vault. The proxy can list grants and type a secret
+     * into the focused local field without returning it to the model. */
+    credentials?: { command: string; args: string[]; env: Record<string, string> };
   };
   cwd?: string;
 }
@@ -121,9 +133,7 @@ export interface ProviderAdapter {
   readonly provider: DriverKind;
   readonly capabilities: {
     sessionModelSwitch: "in-session" | "unsupported";
-    /** True when the driver mounts turn.integrations.agents as MCP tools —
-     * the harness only offers agents tooling (and prompts about it) to
-     * drivers that can actually hand it to the agent. */
+    /** True when the driver mounts turn.integrations.agents as MCP tools. */
     agentsMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;

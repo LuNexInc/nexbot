@@ -1,45 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">NexBot</title>
-  <desc id="desc">A large silver gradient LuNex cursor entering from the left side of a dark app tile.</desc>
-
+  <desc id="desc">Four-node construction N on a dark glass tile.</desc>
   <defs>
     <clipPath id="mac-tile">
       <rect width="1024" height="1024" rx="224" />
     </clipPath>
-
-    <radialGradient id="tile" cx="68%" cy="36%" r="92%">
-      <stop offset="0" stop-color="#202227" />
-      <stop offset="0.56" stop-color="#131419" />
-      <stop offset="1" stop-color="#090A0D" />
+    <radialGradient id="tile" cx="32%" cy="22%" r="90%">
+      <stop offset="0" stop-color="#1A1C20" />
+      <stop offset="0.55" stop-color="#0C0D10" />
+      <stop offset="1" stop-color="#07080A" />
     </radialGradient>
-
-    <linearGradient id="mascot-grey" x1="18%" y1="10%" x2="84%" y2="94%">
-      <stop offset="0" stop-color="#FFFFFF" />
-      <stop offset="0.28" stop-color="#E6E8EB" />
-      <stop offset="0.58" stop-color="#B7BBC2" />
-      <stop offset="0.82" stop-color="#848A94" />
-      <stop offset="1" stop-color="#5B616B" />
+    <linearGradient id="silver" x1="30%" y1="8%" x2="78%" y2="92%">
+      <stop offset="0" stop-color="#F4F6F8" />
+      <stop offset="0.45" stop-color="#C8CED6" />
+      <stop offset="1" stop-color="#8E959E" />
     </linearGradient>
   </defs>
-
   <g clip-path="url(#mac-tile)">
     <rect width="1024" height="1024" fill="url(#tile)" />
-
-    <!-- Oversized, tilted, and deliberately clipped by the left/bottom edges. -->
-    <svg x="-260" y="-140" width="1300" height="1300" viewBox="10 10 180 180" overflow="visible">
-      <g transform="rotate(25 100 100)">
-        <path
-          d="M93.4 40.6 L43 151.1 Q38 162 48.4 156 L91.4 131 Q100 126 108.7 131 L151.6 156 Q162 162 157 151.1 L106.6 40.6 Q100 26 93.4 40.6 Z"
-          fill="url(#mascot-grey)"
-        />
-
-        <!-- Large reference-style pill eyes and a smile that survive Dock scale. -->
-        <rect x="84.5" y="75" width="9" height="24" rx="4.5" fill="#101114" transform="rotate(-15 89 87)" />
-        <rect x="108.5" y="75" width="9" height="24" rx="4.5" fill="#101114" transform="rotate(-7 113 87)" />
-        <path d="M86 106 Q101 124 117 105" stroke="#101114" stroke-width="7" stroke-linecap="round" fill="none" />
+    <rect x="10" y="10" width="1004" height="1004" rx="214" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="2" />
+    <g transform="translate(152 152) scale(3)">
+      <g stroke="url(#silver)" stroke-opacity="0.22" stroke-width="1.25" fill="none">
+        <circle cx="120" cy="120" r="86" />
+        <path d="M120 28 V212 M28 120 H212" />
       </g>
-    </svg>
-
-    <rect x="8" y="8" width="1008" height="1008" rx="216" fill="none" stroke="#FFFFFF" stroke-opacity="0.07" stroke-width="16" />
+      <g stroke="url(#silver)" stroke-width="10" stroke-linecap="round" fill="none">
+        <path d="M76 64 V176" />
+        <path d="M164 64 V176" />
+        <path d="M76 64 L164 176" />
+      </g>
+      <g fill="url(#silver)">
+        <circle cx="76" cy="64" r="16" />
+        <circle cx="164" cy="64" r="16" />
+        <circle cx="76" cy="176" r="16" />
+        <circle cx="164" cy="176" r="16" />
+      </g>
+      <g stroke="#0B0C10" stroke-width="1.6" stroke-linecap="round">
+        <path d="M76 58 V70 M70 64 H82" />
+        <path d="M164 58 V70 M158 64 H170" />
+        <path d="M76 170 V182 M70 176 H82" />
+        <path d="M164 170 V182 M158 176 H170" />
+      </g>
+    </g>
   </g>
 </svg>

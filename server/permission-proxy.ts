@@ -1,5 +1,4 @@
 // permission-proxy — the MCP stdio server the claude CLI spawns for
-// --permission-prompt-tool (ported from agentcal's runPermissionProxy;
 // dedicated entry file, so there is no argv-dispatch fork-bomb hazard).
 // Forwards each ask over a unix socket to the broker living in the
 // NexBot server and waits for the human's answer.
@@ -102,7 +101,6 @@ async function handle(msg: any) {
     const isQuestion = name === "ask_user";
     // the CLI may include its own suggested permission rules; on allow we
     // hand them straight back as updatedPermissions so claude stops asking
-    // at its own layer — no invented rule syntax (agentcal)
     const suggestions = Array.isArray(args.permission_suggestions)
       ? args.permission_suggestions
       : Array.isArray(args.suggestions)

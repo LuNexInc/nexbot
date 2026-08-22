@@ -1,4 +1,4 @@
-export const MAUS_COLOR_NAMES = [
+export const NEX_COLOR_NAMES = [
   "green",
   "blue",
   "red",
@@ -11,22 +11,37 @@ export const MAUS_COLOR_NAMES = [
   "coral",
 ] as const;
 
-export type MausColor = (typeof MAUS_COLOR_NAMES)[number];
+export type NexColor = (typeof NEX_COLOR_NAMES)[number];
 
-export const MAUS_COLORS: Record<MausColor, string> = {
-  green: "#009957",
-  blue: "#377FE6",
-  red: "#D94B52",
-  orange: "#E78531",
-  purple: "#8057C8",
-  cyan: "#0EA5C6",
-  pink: "#D84F8B",
-  yellow: "#D8A729",
-  teal: "#01A492",
-  coral: "#E5634E",
+export const NEX_COLORS: Record<NexColor, string> = {
+  green: "#8FB9A4",
+  blue: "#8FA3C4",
+  red: "#C9898E",
+  orange: "#C4A078",
+  purple: "#A394C2",
+  cyan: "#7EAEB8",
+  pink: "#C496A8",
+  yellow: "#C4B27A",
+  teal: "#7EB8AE",
+  coral: "#C49688",
 };
 
-export const MAUS_EXPRESSIONS = [
+/** Soft surfaces used for bot cards and role tiles. Keep the stronger marks above
+ * for icons, borders, and status feedback so text contrast stays readable. */
+export const NEX_PASTELS: Record<NexColor, string> = {
+  green: "#D9F1E3",
+  blue: "#DCE7F8",
+  red: "#F6DCDD",
+  orange: "#F5E6D2",
+  purple: "#E9E2F6",
+  cyan: "#D9F0F3",
+  pink: "#F4DEE7",
+  yellow: "#F5EED1",
+  teal: "#D8EEE8",
+  coral: "#F3DFD8",
+};
+
+export const NEX_EXPRESSIONS = [
   "deadpan",
   "friendly",
   "focused",
@@ -39,15 +54,17 @@ export const MAUS_EXPRESSIONS = [
   "mischievous",
 ] as const;
 
-export type MausExpression = (typeof MAUS_EXPRESSIONS)[number];
+export type NexExpression = (typeof NEX_EXPRESSIONS)[number];
 
-export const MAUS_MOTIONS = [
+export const NEX_MOTIONS = [
   "arrive",
   "switch",
   "customize",
   "alert",
   "thinking",
   "working",
+  "waiting",
+  "handover",
   "launch",
   "success",
   "celebrate",
@@ -56,7 +73,79 @@ export const MAUS_MOTIONS = [
   "failure",
 ] as const;
 
-export type MausMotion = "none" | (typeof MAUS_MOTIONS)[number];
+export type NexMotion = "none" | (typeof NEX_MOTIONS)[number];
+
+export type NexMotionPhase = {
+  /** Human-readable state for motion previews and accessibility copy. */
+  label: string;
+  /** The visual language used by NexAvatar for this state. */
+  motion: NexMotion;
+  /** One-shot animations use a finite duration; looping states use null. */
+  durationMs: number | null;
+  /** Short explanation used by the motion map and future tooltips. */
+  description: string;
+};
+
+/**
+ * The NexBot motion vocabulary. Keep idle still and reserve motion for a
+ * meaningful state change so the sidebar does not compete with the answer.
+ */
+export const NEX_MOTION_PHASES: Record<string, NexMotionPhase> = {
+  idle: {
+    label: "Ready",
+    motion: "none",
+    durationMs: null,
+    description: "Still mark with no ambient loop.",
+  },
+  thinking: {
+    label: "Thinking",
+    motion: "thinking",
+    durationMs: null,
+    description: "Slow orbital ring while the bot decides what to do.",
+  },
+  working: {
+    label: "Working",
+    motion: "working",
+    durationMs: null,
+    description: "Focused scan while a tool or task is running.",
+  },
+  waiting: {
+    label: "Waiting",
+    motion: "waiting",
+    durationMs: null,
+    description: "One small pulse while a dependency or approval is pending.",
+  },
+  handover: {
+    label: "Handing over",
+    motion: "handover",
+    durationMs: 420,
+    description: "A short outbound pass when work moves to a teammate.",
+  },
+  success: {
+    label: "Complete",
+    motion: "success",
+    durationMs: 420,
+    description: "One spring ring, then settle back to still.",
+  },
+  alert: {
+    label: "Needs attention",
+    motion: "alert",
+    durationMs: 420,
+    description: "One restrained warning pulse for a blocked or failed turn.",
+  },
+  arrive: {
+    label: "Added",
+    motion: "arrive",
+    durationMs: 260,
+    description: "Soft scale-in when a NexBot joins the workspace.",
+  },
+  switch: {
+    label: "Selected",
+    motion: "switch",
+    durationMs: 220,
+    description: "Short turn when the active teammate changes.",
+  },
+};
 
 type MascotMessage = {
   kind: string;
@@ -67,7 +156,7 @@ export type MascotBotProfile = {
   name: string;
   title?: string;
   description?: string;
-  mascotExpression?: MausExpression | null;
+  mascotExpression?: NexExpression | null;
   busy?: boolean;
   unread?: boolean;
   messages?: MascotMessage[];
@@ -78,7 +167,7 @@ export type MascotBotProfile = {
  * The keyword groups deliberately overlap as little as possible so a bot's
  * visual identity stays stable while its title and description are edited.
  */
-export function expressionForBot(bot: MascotBotProfile): MausExpression {
+export function expressionForBot(bot: MascotBotProfile): NexExpression {
   if (bot.mascotExpression) return bot.mascotExpression;
 
   const last = bot.messages?.[bot.messages.length - 1];

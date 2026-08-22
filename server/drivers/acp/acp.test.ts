@@ -17,19 +17,29 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fakeCliShim } from "../../testing/fake-cli-shim.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
+import { GenericAcpDriver } from "./generic.ts";
 
 const FAKE_CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
-    expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false, workspace: undefined });
+    expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false });
   });
   it("gemini defaults to the gemini binary", () => {
-    expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: false, workspace: undefined });
+    expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: false });
   });
-  it("fullAuto only when explicitly true", () => {
+  it("fullAuto is off by default; only explicit true turns it on", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
     expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
+    expect(GrokAgentDriver.decodeConfig({ fullAuto: false }).fullAuto).toBe(false);
+  });
+  it("decodes a configurable generic ACP command", () => {
+    expect(GenericAcpDriver.decodeConfig({ cli: "goose", args: ["acp", "--model", "{model}"], model: "m1" })).toMatchObject({
+      cli: "goose",
+      args: ["acp", "--model", "{model}"],
+      model: "m1",
+      fullAuto: false,
+    });
   });
 });
 
@@ -61,6 +71,8 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.XAI_API_KEY;
+    delete process.env.NEXBOT_COMMS_TOKEN;
+    delete process.env.FAKE_ACP_PERM_COMMAND;
     recorder?.stop();
     await instance?.dispose();
     rmSync(scratch, { recursive: true, force: true });
@@ -97,6 +109,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     process.env.XAI_API_KEY = "xai-should-not-leak";
+    process.env.NEXBOT_COMMS_TOKEN = "comms-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -105,7 +118,10 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.argv).toContain("agent");
     expect(seen.argv).toContain("stdio");
     expect(seen.argv).toContain("--permission-mode");
+    expect(seen.argv).toContain("default");
+    expect(seen.argv).not.toContain("bypassPermissions");
     expect(seen.env.XAI_API_KEY).toBeUndefined();
+    expect(seen.env.NEXBOT_COMMS_TOKEN).toBeUndefined();
   });
 
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
@@ -119,6 +135,26 @@ describe("ACP turns (fake CLI)", () => {
     expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
+  });
+
+  it("rejects a request to read process environ even in fullAuto", async () => {
+    process.env.FAKE_ACP_MODE = "permission";
+    process.env.FAKE_ACP_PERM_COMMAND = "cat /proc/self/environ";
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-test",
+      displayName: "ACP Test",
+      environment: {},
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-environ", text: "go" });
+    const err = await recorder.until((e) => e.type === "runtime.error");
+    expect(err).toMatchObject({ type: "runtime.error" });
+    if (err.type === "runtime.error") expect(err.message).toMatch(/process environment secrets/);
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
   });
 
   it("grok fails closed when the CLI advertises no cached_token (needs login)", async () => {

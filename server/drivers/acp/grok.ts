@@ -12,28 +12,31 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
-  // The CLI catalog is account-driven (`grok models` reports one today);
-  // eventually read from the initialize result's _meta.modelState.
   models: { default: "grok-4.5", options: [{ id: "grok-4.5", label: "Grok 4.5" }] },
   defaultCli: "grok",
+  modelListArgs: ["models"],
   nativeSource: "grok.acp",
   loginNote: "Grok CLI is not signed in — run `grok login` in a terminal",
 
   // --permission-mode must always be explicit: ~/.grok/config.toml may set
-  // permission_mode = "always-approve", which would silently make every
-  // session yolo and never fire session/request_permission.
-  spawnArgs: (config, turn) => [
+  // permission_mode = "always-approve" / bypassPermissions, which would skip
+  // session/request_permission and make the environ deny-list unreachable.
+  // fullAuto still auto-allows in acp/core except forbidden secret access.
+  spawnArgs: (_config, turn) => [
     "--permission-mode",
-    config.fullAuto ? "bypassPermissions" : "default",
+    "default",
     ...(turn.model ? ["-m", turn.model] : []),
     "agent",
     "stdio",
   ],
 
   // The CLI owns its own grok.com login; a leaked API key silently flips
-  // billing from the subscription to pay-as-you-go.
+  // billing from the subscription to pay-as-you-go. Comms tokens belong on
+  // the agents MCP proxy, never the model subprocess.
   transformEnv: (env) => {
     delete env.XAI_API_KEY;
+    delete env.NEXBOT_COMMS_TOKEN;
+    delete env.COMMS_TOKEN;
   },
 
   // Bind the grok.com subscription login. No API-key fallback by design —

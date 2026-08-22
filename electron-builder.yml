@@ -19,9 +19,15 @@ asar: true
 extraResources:
   - from: dist
     to: ui
-  - from: dist-server
+  - from: dist-server/server
     to: server
-  # macOS speech-helper is optional; package:mac copies it when built
+  - from: scripts/install-autostart.ps1
+    to: install-autostart.ps1
+  # Staged by scripts/stage-cua-driver.mjs when the host has cua-driver installed
+  - from: vendor/cua-driver
+    to: .
+    filter:
+      - "**/*"
 
 mac:
   target:
@@ -52,8 +58,8 @@ win:
     - target: portable
       arch:
         - x64
-  # electron-builder accepts PNG and generates multi-size ICO
-  icon: build/icon-1024.png
+  # Use a committed ICO so packaging does not depend on the host Node module mode.
+  icon: build/icon.ico
   artifactName: NexBot-Setup-${version}.${ext}
 
 nsis:

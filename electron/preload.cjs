@@ -1,8 +1,8 @@
 // Renderer bridge. contextIsolation stays on; the renderer only ever sees
-// this narrow surface (window.), never Node or ipcRenderer itself.
+// this narrow surface (window.nexbot), never Node or ipcRenderer itself.
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("", {
+contextBridge.exposeInMainWorld("nexbot", {
   platform: process.platform,
   /** True when the Swift SFSpeech helper is used (macOS). Else Web Speech. */
   speechNative: process.platform === "darwin",
@@ -23,4 +23,14 @@ contextBridge.exposeInMainWorld("", {
   permStatus: () => ipcRenderer.invoke("perm:status"),
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
+  /** Local CUA computer-use status (binary + connection mode). */
+  cuaConnection: () => ipcRenderer.invoke("cua:connection"),
+  cuaPermissions: () => ipcRenderer.invoke("cua:permissions"),
+  cuaBinary: () => ipcRenderer.invoke("cua:binary"),
+  capabilities: () => ipcRenderer.invoke("desktop:capabilities"),
+  openWatch: (botId) => ipcRenderer.invoke("watch:open", botId || ""),
+  notify: (title, body) => ipcRenderer.invoke("notify", title, body),
+  openPath: (dir) => ipcRenderer.invoke("open-path", dir),
+  autostartStatus: () => ipcRenderer.invoke("autostart:status"),
+  autostartSet: (on) => ipcRenderer.invoke("autostart:set", on),
 });

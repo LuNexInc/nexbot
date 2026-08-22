@@ -2,13 +2,17 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadThreadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
+import { ensureDesk, writeProfile } from "./desk.ts";
+import { defaultSkillSlugsForBot, ROLE_CARD_OPTIONS, TEAM_SEEDS, SLEEP_WARNING, teammateGreeting, isChiefOfStaffRole, DEFAULT_COS_ROUTINE } from "./roles.ts";
+import { removeJobsForBot } from "./jobs.ts";
+import { createRoutine, listRoutines } from "./routines.ts";
 
-export type MausColor =
+export type NexColor =
   | "green"
   | "blue"
   | "red"
@@ -20,7 +24,7 @@ export type MausColor =
   | "teal"
   | "coral";
 
-export type MausExpression =
+export type NexExpression =
   | "deadpan"
   | "friendly"
   | "focused"
@@ -40,6 +44,10 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  /** Mask the free-text answer (API keys, tokens). */
+  secret?: boolean;
+  risk?: "low" | "medium" | "high" | "critical";
+  riskReason?: string;
 }
 
 export interface Message {
@@ -47,13 +55,41 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
+  /** Provider reasoning summary, kept out of the main answer bubble. */
+  reasoning?: string;
+  /** Turn effort metrics shown in the collapsed reasoning disclosure. */
+  effort?: TurnEffort;
   card?: OptionCardData;
   /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  tool?: {
+    name: string;
+    ok?: boolean;
+    receiptId?: string;
+    evidence?: "not_requested" | "pending" | "changed" | "unchanged" | "unavailable";
+  };
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
+  /** teammate speaking in this thread (ask_bot / A2A) */
+  fromBot?: { id: string; name: string; color?: string };
+  /** why an internal message was added to the transcript */
+  source?: "user" | "agent" | "routine" | "proactive" | "completion";
   at: number;
+  /** client nonce for optimistic send and deduplication */
+  clientNonce?: string;
+  /** delivery status for optimistic UI */
+  status?: "pending" | "confirmed" | "failed";
+  /** Local artifacts attached to an assistant reply. Paths are served through /api/artifacts. */
+  files?: Array<{ name: string; path: string; mime?: string }>;
+}
+
+export interface TurnEffort {
+  durationMs?: number;
+  reasoningTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  toolCount?: number;
+  cost?: number | null;
 }
 
 export interface BotRecord {
@@ -62,9 +98,11 @@ export interface BotRecord {
   name: string;
   title: string;
   description: string;
+  /** Optional talking-style guidance layered into the bot persona. */
+  personality?: string;
   notifications: boolean;
-  color: MausColor;
-  mascotExpression?: MausExpression | null;
+  color: NexColor;
+  mascotExpression?: NexExpression | null;
   unread: boolean;
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
@@ -75,13 +113,28 @@ export interface BotRecord {
   pinned?: boolean;
   hidden?: boolean;
   busy?: boolean;
+  /** True while the user has paused the agent to control the computer. */
+  operatorControl?: boolean;
+  /** When true, startTurn injects ~/.nexbot/memory/<id>/profile.md + log/YYYY-MM.md into the system prompt. */
+  memoryEnabled?: boolean;
+  /** null/missing = all desk skills on; string[] = only those slugs for this bot. */
+  enabledSkillSlugs?: string[] | null;
+  /** group = shared transcript; memberIds are other bots (2–6). */
+  kind?: "bot" | "group";
+  memberIds?: string[];
+  usage?: { input: number; output: number };
+  /** Time to first token in milliseconds from last turn */
+  lastTtfrMs?: number;
+  /** Allow task events to wake this agent without a user prompt. */
+  proactiveEnabled?: boolean;
+  /** Send this bot's completed-task reports to the Chief of Staff. */
+  completionPings?: boolean;
+  /** Stable specialist order in the sidebar. Chief of Staff is always first. */
+  sortOrder?: number;
   createdAt: number;
 }
 
-const BOTS_FILE = join(DATA_DIR, "bots.json");
-const messagesFile = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
-
-const COLORS: MausColor[] = [
+const COLORS: NexColor[] = [
   "green",
   "blue",
   "red",
@@ -114,51 +167,206 @@ export function mentionedBots<T extends { name: string; hidden?: boolean }>(text
   return found;
 }
 
+// Keep provider replay small. Full history remains in SQLite and the local
+// conversation archive; this is only the active prompt window.
+export const TRANSCRIPT_WINDOW = 12;
+export const TRANSCRIPT_TEXT_CAP = 3_000;
+
+/** Last-12 text turns for sendTurn. Cap each body so a huge paste cannot blow context,
+ * without shrinking the window. */
+export function clipForTurn(
+  messages: Pick<Message, "kind" | "role" | "fromBot" | "text" | "status">[],
+  options: { window?: number; textCap?: number } = {},
+): { role: "user" | "assistant"; text: string }[] {
+  const window = Number.isFinite(options.window) ? Math.max(1, Math.floor(options.window!)) : TRANSCRIPT_WINDOW;
+  const textCap = Number.isFinite(options.textCap) ? Math.max(1, Math.floor(options.textCap!)) : TRANSCRIPT_TEXT_CAP;
+  return messages
+    .filter((m) => m.kind === "text" && m.status !== "pending" && (m.text ?? "").trim())
+    .slice(-window)
+    .map((m) => {
+      const raw = m.text ?? "";
+      return {
+        role: (m.role === "user" && !m.fromBot ? "user" : "assistant") as "user" | "assistant",
+        text: raw.length > textCap ? raw.slice(0, textCap) : raw,
+      };
+    });
+}
+
 const onboardingCard = (): OptionCardData => ({
-  title: "What do you mostly want help with?",
-  subtitle: "Pick whatever's closest; we can always expand from there.",
-  options: ["Work & projects", "Writing & research", "Life admin", "A bit of everything"],
+  title: "What is this NexBot's job?",
+  subtitle: "Pick a role, not a model. You can change the name later.",
+  options: [...ROLE_CARD_OPTIONS],
 });
+
+export type CreateBotSpec = Partial<
+  Pick<BotRecord, "name" | "title" | "description" | "personality" | "color" | "kind" | "memberIds" | "modelSelection" | "enabledSkillSlugs">
+>;
+
+
+/** Charles's live Chief of Staff is named Luna — treat it as CoS.
+ * Title containing "chief of staff" also counts so a renamed seat is still unique. */
+export function isChiefOfStaffName(name: string, title = ""): boolean {
+  return isChiefOfStaffRole(name, title);
+}
+
+
+/** One CoS only. If a seat already exists, a new/patched identity that would
+ * also be CoS (Luna, name, or title) is demoted to Specialist — same rule for
+ * create and PATCH so the roster cannot mint a second CoS by rename. */
+export function uniqueCosIdentity(
+  name: string,
+  title: string,
+  alreadyHasCos: boolean,
+): { name: string; title: string } {
+  if (!alreadyHasCos || !isChiefOfStaffName(name, title)) return { name, title };
+  return {
+    name: isChiefOfStaffName(name) ? "Specialist" : name,
+    title: title.toLowerCase().includes("chief of staff") ? "Specialist" : title,
+  };
+}
+
+
+/** Case-insensitive name match for TEAM_SEEDS. Groups are skipped by callers.
+ * "Luna" already fills the Chief of Staff seed so we never duplicate CoS. */
+export function teamSeedMatches(botName: string, seedName: string): boolean {
+  const a = botName.trim().toLowerCase();
+  const b = seedName.trim().toLowerCase();
+  if (a === b) return true;
+  return b === "chief of staff" && isChiefOfStaffName(botName);
+}
+
+export type HandoffPeer = {
+  id: string;
+  threadId: string;
+  name: string;
+  hidden?: boolean;
+  kind?: string;
+};
+
+/** Prefer Luna (the live CoS), else a bot named "Chief of Staff", else title match.
+ * Hidden/groups skipped. One CoS only — callers must not create a second. */
+export function findChiefOfStaffBot<T extends HandoffPeer & { title?: string }>(bots: T[]): T | null {
+  const visible = bots.filter((b) => !b.hidden && b.kind !== "group");
+  return (
+    visible.find((b) => b.name.trim().toLowerCase() === "luna") ??
+    visible.find((b) => b.name.trim().toLowerCase() === "chief of staff") ??
+    visible.find((b) => isChiefOfStaffRole(b.name, b.title ?? "")) ??
+    null
+  );
+}
+
+/** Threads that should show a handoff: sender (if from a bot), recipient,
+ * and CoS when CoS is neither party. Luna counts as CoS. */
+export function handoffThreadIds(opts: {
+  from?: { id: string } | null;
+  to: { id: string };
+  bots: HandoffPeer[];
+}): string[] {
+  const threads = new Set<string>();
+  if (opts.from) {
+    const sender = opts.bots.find((b) => b.id === opts.from!.id);
+    if (sender) threads.add(sender.threadId);
+  }
+  const recipient = opts.bots.find((b) => b.id === opts.to.id);
+  if (recipient) threads.add(recipient.threadId);
+  const cos = findChiefOfStaffBot(opts.bots);
+  if (cos && cos.id !== opts.from?.id && cos.id !== opts.to.id) threads.add(cos.threadId);
+  return [...threads];
+}
 
 export class Store {
   bots: BotRecord[] = [];
+  /** Per-thread transcript cache. SQLite is the source of truth; threads
+   * load on first access and the least-recently-used ones are evicted so a
+   * long-lived workspace cannot grow memory without bound. */
   private messages = new Map<string, Message[]>();
   private defaultSelection: () => ModelSelection;
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    try {
-      this.bots = JSON.parse(readFileSync(BOTS_FILE, "utf8"));
-    } catch {
-      this.bots = [];
+    openStoreDb();
+    importJsonIfNeeded();
+    this.bots = loadBotsFromDb();
+    // busy never survives a restart. Provider cursors do: recovery uses them
+    // to resume a job that was active when the process exited.
+    // unread DOES: persistBots writes the whole BotRecord; do not strip it here.
+    let defaultsChanged = false;
+    for (const b of this.bots) {
+      b.busy = false;
+      if (b.sortOrder === undefined) {
+        b.sortOrder = this.bots.indexOf(b);
+        defaultsChanged = true;
+      }
+      if (!b.resumeCursors || typeof b.resumeCursors !== "object") {
+        b.resumeCursors = {};
+        defaultsChanged = true;
+      }
+      const legacy = b as BotRecord & { proactiveIntervalMinutes?: unknown; proactiveLastAt?: unknown };
+      if ("proactiveIntervalMinutes" in legacy || "proactiveLastAt" in legacy) {
+        delete legacy.proactiveIntervalMinutes;
+        delete legacy.proactiveLastAt;
+        defaultsChanged = true;
+      }
+      if (b.proactiveEnabled === undefined) {
+        b.proactiveEnabled = b.kind !== "group";
+        defaultsChanged = true;
+      }
+      if (b.completionPings === undefined) {
+        b.completionPings = b.kind !== "group";
+        defaultsChanged = true;
+      }
+      if (b.enabledSkillSlugs === undefined) {
+        const defaults = defaultSkillSlugsForBot(b.name, b.title);
+        if (defaults) {
+          b.enabledSkillSlugs = defaults;
+          defaultsChanged = true;
+        }
+      }
     }
-    // busy never survives a restart — no turn does either
-    for (const b of this.bots) b.busy = false;
+    if (defaultsChanged) this.saveBots();
   }
 
   private saveBots() {
-    writeFileSync(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    persistBots(this.bots);
   }
+
+  clearAll(): void {
+    this.bots = [];
+    this.messages.clear();
+  }
+
+  /** Threads kept in memory before the least-recently-used one is evicted.
+   * Eviction is safe: every mutation writes through to SQLite immediately. */
+  private static readonly MAX_LOADED_THREADS = 64;
 
   messagesFor(threadId: string): Message[] {
     let list = this.messages.get(threadId);
     if (!list) {
-      try {
-        list = JSON.parse(readFileSync(messagesFile(threadId), "utf8"));
-      } catch {
-        list = [];
-      }
-      this.messages.set(threadId, list!);
+      list = loadThreadMessagesFromDb(threadId);
+      this.messages.set(threadId, list);
+      this.evictStaleThreads();
+      return list;
     }
-    return list!;
+    // Refresh recency (Map iteration order is insertion order).
+    this.messages.delete(threadId);
+    this.messages.set(threadId, list);
+    return list;
+  }
+
+  private evictStaleThreads(): void {
+    while (this.messages.size > Store.MAX_LOADED_THREADS) {
+      const oldest = this.messages.keys().next().value;
+      if (oldest === undefined) break;
+      this.messages.delete(oldest);
+    }
   }
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const full: Message = { id: newId(), at: Date.now(), ...message };
-    const list = this.messagesFor(threadId);
-    list.push(full);
-    writeFileSync(messagesFile(threadId), JSON.stringify(list, null, 2));
+    this.messagesFor(threadId).push(full);
+    const bot = this.botByThread(threadId);
+    appendMessageToDb(threadId, full, bot?.id);
     return full;
   }
 
@@ -167,7 +375,7 @@ export class Store {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
     list[idx] = { ...list[idx], ...patch, card: patch.card ?? list[idx].card };
-    writeFileSync(messagesFile(threadId), JSON.stringify(list, null, 2));
+    patchMessageInDb(threadId, list[idx]);
     return list[idx];
   }
 
@@ -179,47 +387,105 @@ export class Store {
     return this.bots.find((b) => b.threadId === threadId) ?? null;
   }
 
-  createBot(): BotRecord {
+  hasChiefOfStaff(): boolean {
+    return this.bots.some((b) => b.kind !== "group" && isChiefOfStaffName(b.name, b.title));
+  }
+
+  createBot(spec?: CreateBotSpec): BotRecord {
+    clearExplicitWipeMarker();
+    const isGroup = spec?.kind === "group";
+    let name = spec?.name?.trim() || (isGroup ? "Team" : "New Bot");
+    let title = spec?.title?.trim() || (isGroup ? "Group thread" : "");
+    // Groups never hold the CoS seat — demote CoS-shaped names so @Chief of Staff
+    // cannot fan out to a group instead of Luna.
+    ({ name, title } = uniqueCosIdentity(name, title, isGroup || this.hasChiefOfStaff()));
+    const members = (spec?.memberIds ?? []).filter(Boolean).slice(0, 6);
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
-      name: "New Bot",
-      title: "",
-      description: "",
+      name,
+      title,
+      description: spec?.description?.trim() || "",
+      personality: spec?.personality?.trim() || undefined,
       notifications: true,
-      color: COLORS[this.bots.length % COLORS.length],
+      color: spec?.color ?? COLORS[this.bots.length % COLORS.length],
+      computer: isGroup ? "off" : "local",
+      // The Chief of Staff is the continuity layer. Keep its durable memory
+      // on by default so a short active context never becomes lost history.
+      memoryEnabled: isChiefOfStaffName(name, title),
+      enabledSkillSlugs: spec?.enabledSkillSlugs ?? defaultSkillSlugsForBot(name, title),
       unread: false,
-      modelSelection: this.defaultSelection(),
+      modelSelection: spec?.modelSelection ?? this.defaultSelection(),
       resumeCursors: {},
+      proactiveEnabled: !isGroup,
+      completionPings: !isGroup,
+      sortOrder: this.bots.reduce((max, item) => Math.max(max, item.sortOrder ?? -1), -1) + 1,
+      kind: isGroup ? "group" : "bot",
+      memberIds: isGroup ? members : undefined,
       createdAt: Date.now(),
     };
     this.bots.unshift(bot);
     this.saveBots();
+    ensureDesk(bot.id);
+    if (isGroup) {
+      this.appendMessage(bot.threadId, {
+        role: "bot",
+        kind: "text",
+        text: `This is a group thread. ${members.length} teammates can take the job. ${SLEEP_WARNING}`,
+      });
+      return bot;
+    }
     this.appendMessage(bot.threadId, {
       role: "bot",
       kind: "text",
-      text: "Hey — I'm your new bot. Nice to meet you.",
+      text: teammateGreeting(bot.name, bot.title),
     });
     this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
     return bot;
   }
 
+  isLastChiefOfStaff(id: string): boolean {
+    const bot = this.bot(id);
+    if (!bot || bot.kind === "group" || !isChiefOfStaffName(bot.name, bot.title)) return false;
+    return !this.bots.some(
+      (b) => b.id !== id && b.kind !== "group" && isChiefOfStaffName(b.name, b.title),
+    );
+  }
+
   deleteBot(id: string): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
+    if (this.isLastChiefOfStaff(id)) return false;
     this.bots = this.bots.filter((b) => b.id !== id);
     this.messages.delete(bot.threadId);
     this.saveBots();
-    try {
-      unlinkSync(messagesFile(bot.threadId));
-    } catch {}
+    deleteThread(bot.threadId);
+    removeJobsForBot(id);
     return true;
   }
 
   patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
-    Object.assign(bot, patch);
+    const next: Partial<BotRecord> = { ...patch };
+    if (next.name !== undefined || next.title !== undefined) {
+      const name = next.name !== undefined ? String(next.name) : bot.name;
+      const title = next.title !== undefined ? String(next.title) : bot.title;
+      const otherCos =
+        bot.kind === "group" ||
+        this.bots.some(
+          (b) => b.id !== id && b.kind !== "group" && isChiefOfStaffName(b.name, b.title),
+        );
+      const unique = uniqueCosIdentity(name, title, otherCos);
+      if (next.name !== undefined) next.name = unique.name;
+      if (next.title !== undefined) next.title = unique.title;
+    }
+    if (next.personality !== undefined) next.personality = String(next.personality).trim().slice(0, 4000) || undefined;
+    if (next.sortOrder !== undefined) {
+      const order = Number(next.sortOrder);
+      next.sortOrder = Number.isFinite(order) ? Math.max(0, Math.floor(order)) : bot.sortOrder;
+    }
+    Object.assign(bot, next);
     this.saveBots();
     return bot;
   }
@@ -227,14 +493,60 @@ export class Store {
   setResumeCursor(botId: string, instanceId: string, cursor: unknown) {
     const bot = this.bot(botId);
     if (!bot) return;
-    bot.resumeCursors[instanceId] = cursor;
+    bot.resumeCursors = { ...(bot.resumeCursors ?? {}), [instanceId]: cursor };
     this.saveBots();
   }
 
-  /** First-run seed: one bot so the app never opens empty. */
+  /** First-run seed: Chief of Staff + Research. Never wipes an existing roster. */
   seedIfEmpty() {
-    if (this.bots.length) return;
-    const bot = this.createBot();
-    this.patchBot(bot.id, { name: "Nexus", color: "blue" });
+    if (this.bots.length || wasExplicitlyWiped()) return;
+    this.ensureTeamSeeds();
+  }
+
+  /** Add Chief of Staff + Research if missing. Never deletes or renames existing bots.
+   * Skip CoS when any bot already holds that seat (Luna, name, or title). */
+  ensureTeamSeeds() {
+    if (wasExplicitlyWiped()) return;
+    for (const spec of [...TEAM_SEEDS].reverse()) {
+      const exists = this.bots.some((b) => {
+        if (b.kind === "group") return false;
+        if (spec.name === "Chief of Staff") return isChiefOfStaffName(b.name, b.title);
+        return teamSeedMatches(b.name, spec.name);
+      });
+      if (exists) continue;
+      const isCos = spec.name === "Chief of Staff";
+      const bot = this.createBot({
+        name: spec.name,
+        title: spec.title,
+        description: spec.description,
+        color: spec.color,
+        ...(isCos ? { modelSelection: { instanceId: "antigravity", model: "gemini-3.7-flash-medium" } } : {}),
+      });
+      this.patchBot(bot.id, { memoryEnabled: true });
+      writeProfile(bot.id, spec.description);
+    }
+    // Existing workspaces may have been created before CoS memory or Antigravity
+    // became the default. Migrate that seat without changing specialists.
+    for (const bot of this.bots) {
+      if (bot.kind !== "group" && isChiefOfStaffName(bot.name, bot.title)) {
+        const patches: Partial<BotRecord> = {};
+        if (!bot.memoryEnabled) patches.memoryEnabled = true;
+        if (!bot.modelSelection || !bot.modelSelection.instanceId) {
+          patches.modelSelection = { instanceId: "antigravity", model: "gemini-3.7-flash-medium" };
+        }
+        if (Object.keys(patches).length) this.patchBot(bot.id, patches);
+        const routines = listRoutines(bot.id);
+        if (!routines.some((r) => r.name === DEFAULT_COS_ROUTINE.name)) {
+          createRoutine({
+            botId: bot.id,
+            name: DEFAULT_COS_ROUTINE.name,
+            prompt: DEFAULT_COS_ROUTINE.prompt,
+            dailyAt: DEFAULT_COS_ROUTINE.dailyAt,
+            weekdaysOnly: DEFAULT_COS_ROUTINE.weekdaysOnly,
+            enabled: true,
+          });
+        }
+      }
+    }
   }
 }

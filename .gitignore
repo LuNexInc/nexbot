@@ -6,3 +6,10 @@ dist-electron
 *.tsbuildinfo
 electron/resources/speech-helper
 release
+vendor/cua-driver/
+_upstream_cmp/
+
+_upstream_cmp/
+
+
+dist-server

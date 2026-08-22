@@ -1,17 +1,18 @@
 // Paste-a-key rows for PUT /api/config. The server persists to
-// ~/.nexbot/config.json and hot-reloads the provider fleet; secrets
+// ~/.nexbot/config.json (encrypted at rest) and hot-reloads the provider fleet; secrets
 // are write-only — GET /api/config returns configured flags, never values.
 import { useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
 
-export type ConfigSection = "composio" | "composioApi" | "box";
+export type ConfigSection = "xai" | "composio" | "composioApi" | "box";
 
 const SECTIONS: Record<
   ConfigSection,
   { body: (value: string) => unknown; flag: (config: ConfigStatus) => boolean }
 > = {
+  xai: { body: (v) => ({ xai: { key: v } }), flag: (c) => Boolean(c.xai?.configured) },
   composio: { body: (v) => ({ composio: { key: v } }), flag: (c) => c.composio.configured },
   composioApi: {
     body: (v) => ({ composio: { apiKey: v } }),

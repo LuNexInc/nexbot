@@ -3,11 +3,6 @@
 NexBot is a LuNex Inc product. Canonical development lives in Charles's workspace folder
 `AI Projects/nexbot`. The public repo is `LuNexInc/nexbot`.
 
-## Provenance
-
-This codebase started as a rebranded fork of [](https://github.com/-/)
-(MIT). Keep attribution in `LICENSE` and `NOTICE` when you touch license headers or large copies.
-
 ## Dev setup
 
 ```sh

@@ -5,11 +5,20 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll } from "vitest";
+import { afterAll, afterEach } from "vitest";
 
 const home = mkdtempSync(join(tmpdir(), "nexbot-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+
+afterEach(async () => {
+  try {
+    const { closeStoreDb } = await import("../db.ts");
+    closeStoreDb();
+  } catch {
+    /* db unused in this file */
+  }
+});
 
 afterAll(() => {
   try {

@@ -24,13 +24,14 @@ const support: AcpSupport = {
   driverKind: "geminiAgent",
   displayName: "Gemini",
   models: {
-    default: "gemini-2.5-pro",
+    default: "gemini-3.7-flash",
     options: [
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+      { id: "gemini-3.7-pro", label: "Gemini 3.7 Pro" },
     ],
   },
   defaultCli: "gemini",
+  modelListArgs: ["models"],
   nativeSource: "gemini.acp",
   loginNote: "Gemini CLI is not signed in — run `gemini` once to log in, or set GEMINI_API_KEY",
 

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none" role="img" aria-labelledby="title">
+  <title id="title">NexBot mark</title>
+  <g stroke="#D5DAE0" stroke-opacity="0.22" stroke-width="1.25">
+    <circle cx="120" cy="120" r="86" />
+    <path d="M120 24 V216 M24 120 H216" />
+  </g>
+  <g stroke="#D5DAE0" stroke-width="10" stroke-linecap="round">
+    <path d="M76 64 V176" />
+    <path d="M164 64 V176" />
+    <path d="M76 64 L164 176" />
+  </g>
+  <g fill="#D5DAE0">
+    <circle cx="76" cy="64" r="16" />
+    <circle cx="164" cy="64" r="16" />
+    <circle cx="76" cy="176" r="16" />
+    <circle cx="164" cy="176" r="16" />
+    <g fill-opacity="0.55">
+      <circle cx="76" cy="120" r="5" />
+      <circle cx="164" cy="120" r="5" />
+      <circle cx="120" cy="120" r="5" />
+    </g>
+  </g>
+</svg>

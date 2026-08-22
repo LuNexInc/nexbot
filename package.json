@@ -1,11 +1,14 @@
 {
   "name": "nexbot",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "NexBot — team of AI agents in a chat app (LuNex Inc)",
   "author": "LuNex Inc",
   "type": "module",
   "main": "electron/main.mjs",
+  "bin": {
+    "nexbot": "scripts/nexbot.mjs"
+  },
   "engines": {
     "node": ">=24"
   },
@@ -18,18 +21,23 @@
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "doctor": "node scripts/nexbot.mjs doctor",
+    "benchmark": "node scripts/nexbot.mjs benchmark",
     "preview": "vite preview",
     "build:server": "tsc -p tsconfig.server.build.json",
     "build:speech": "swiftc -O electron/resources/speech-helper.swift -o electron/resources/speech-helper",
     "package": "pnpm build && pnpm build:server && electron-builder --publish never",
-    "package:win": "pnpm build && pnpm build:server && electron-builder --win --publish never",
-    "package:mac": "pnpm build && pnpm build:server && pnpm build:speech && electron-builder --mac --publish never",
-    "package:linux": "pnpm build && pnpm build:server && electron-builder --linux --publish never"
+    "package:win": "pnpm build && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --win --publish never",
+    "package:mac": "pnpm build && pnpm build:server && pnpm build:speech && node scripts/stage-cua-driver.mjs && electron-builder --mac --publish never",
+    "package:linux": "pnpm build && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --linux --publish never",
+    "cua:install": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://cua.ai/driver/install.ps1 | iex\""
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@trycua/cua-driver": "^0.19.3",
     "clsx": "^2.1.1",
     "lucide-react": "^0.539.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.3.1"
@@ -46,5 +54,8 @@
     "typescript": "^5.8.3",
     "vite": "^7.1.0",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "@trycua/cua-driver-win32-x64-msvc": "0.19.3"
   }
 }

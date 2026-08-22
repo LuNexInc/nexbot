@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f2f2f7" />
+    <title>NexBot Messages</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f2f2f7;
+        --surface: rgba(255,255,255,.90);
+        --surface-solid: #fff;
+        --ink: #1c1c1e;
+        --muted: #8e8e93;
+        --hairline: rgba(60,60,67,.16);
+        --accent: #007aff;
+        --accent-soft: #e7f1ff;
+        --outgoing: #007aff;
+        --incoming: #e5e5ea;
+        --shadow: 0 14px 36px rgba(30,30,35,.10);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; --bg:#000; --surface:rgba(28,28,30,.92); --surface-solid:#1c1c1e; --ink:#f2f2f7; --muted:#98989f; --hairline:rgba(235,235,245,.18); --accent:#0a84ff; --accent-soft:#102c4d; --outgoing:#0a84ff; --incoming:#2c2c2e; --shadow:0 18px 42px rgba(0,0,0,.34); }
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+      body { min-height: 100vh; min-height: 100dvh; }
+      button, textarea { font: inherit; }
+      button { color: inherit; }
+      .app { width: 100%; max-width: 760px; height: 100vh; height: 100dvh; min-height: 0; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+      .topbar { flex: 0 0 auto; position: relative; z-index: 5; padding: calc(10px + env(safe-area-inset-top)) 16px 9px; display: flex; align-items: center; gap: 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(22px) saturate(150%); border-bottom: 1px solid var(--hairline); }
+      .brand-mark, .avatar { display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-weight: 750; }
+      .brand-mark { width: 38px; height: 38px; }
+      .brand-mark svg { width: 21px; height: 21px; }
+      .topcopy { min-width: 0; flex: 1; }
+      .eyebrow { margin: 0 0 1px; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+      .title { margin: 0; font-size: 19px; font-weight: 760; letter-spacing: -.02em; }
+      .sync { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+      .sync-dot.live { background: var(--accent); }
+      .icon-button { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+      .icon-button:active { background: var(--hairline); transform: scale(.96); }
+      .icon-button svg { width: 21px; height: 21px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .chat-head { flex: 0 0 auto; padding: 14px 16px 10px; display: flex; align-items: center; gap: 11px; background: var(--bg); }
+      .chat-head .avatar { width: 44px; height: 44px; font-size: 17px; }
+      .chat-head-copy { min-width: 0; flex: 1; }
+      .chat-name { font-size: 17px; font-weight: 730; }
+      .chat-role { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .chat-picker { display: flex; align-items: center; gap: 3px; padding: 7px 9px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--surface); font-size: 12px; font-weight: 650; cursor: pointer; }
+      .chat-picker svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+      .messages { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 6px 14px 18px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; scroll-behavior: smooth; }
+      .date-line { display: flex; align-items: center; gap: 10px; margin: 12px 4px 16px; color: var(--muted); font-size: 11px; font-weight: 650; justify-content: center; }
+      .date-line::before, .date-line::after { content: ""; height: 1px; flex: 1; background: var(--hairline); }
+      .bubble-row { display: flex; margin: 5px 0; }
+      .bubble-row.incoming { justify-content: flex-start; }
+      .bubble-row.outgoing { justify-content: flex-end; }
+      .bubble { max-width: min(82%, 620px); padding: 10px 14px; border-radius: 20px; box-shadow: 0 1px 1px rgba(23,37,43,.04); white-space: pre-wrap; overflow-wrap: anywhere; }
+      .incoming .bubble { color: var(--ink); background: var(--incoming); border-bottom-left-radius: 6px; }
+      .outgoing .bubble { color: #fff; background: var(--outgoing); border-bottom-right-radius: 6px; }
+      @media (prefers-color-scheme: dark) { .outgoing .bubble { color:#efffff; } }
+      .bubble-meta { margin: 3px 8px 12px; color: var(--muted); font-size: 10px; }
+      .outgoing .bubble-meta { text-align: right; }
+      .system-card { margin: 12px auto; max-width: 92%; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 16px; background: var(--surface); color: var(--muted); font-size: 12px; text-align: center; }
+      .typing { display: inline-flex; align-items: center; gap: 4px; padding: 10px 13px; border-radius: 18px; background: var(--incoming); }
+      .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: pulse 1.2s infinite ease-in-out; }
+      .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+      @keyframes pulse { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+      .composer-wrap { flex: 0 0 auto; z-index: 4; padding: 8px 14px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 18%); }
+      .composer { display: flex; align-items: flex-end; gap: 8px; padding: 7px 7px 7px 10px; border: 1px solid var(--hairline); border-radius: 24px; background: var(--surface-solid); box-shadow: var(--shadow); }
+      .composer textarea { flex: 1; max-height: 132px; min-height: 40px; padding: 9px 2px 8px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); line-height: 1.35; }
+      .composer textarea::placeholder { color: var(--muted); }
+      .send { width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; transition: transform 160ms ease, opacity 160ms ease; }
+      .send:disabled { opacity: .35; cursor: default; }
+      .send:not(:disabled):active { transform: scale(.92); }
+      .send svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .quick-actions { display: none; gap: 8px; padding: 8px 3px 0; }
+      .quick-actions.open { display: flex; }
+      .quick-action { padding: 8px 12px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; cursor: pointer; }
+      .drawer-scrim { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(13,22,25,.30); }
+      .drawer-scrim.open { display: block; }
+      .drawer { position: absolute; right: 10px; left: 10px; bottom: 10px; max-width: 740px; max-height: min(72vh, 620px); margin: auto; overflow: auto; padding: 10px 10px calc(12px + env(safe-area-inset-bottom)); border: 1px solid var(--hairline); border-radius: 24px; background: var(--surface-solid); box-shadow: 0 24px 70px rgba(0,0,0,.25); transform: translateY(20px); opacity: 0; transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease; }
+      .drawer-scrim.open .drawer { transform: translateY(0); opacity: 1; }
+      .drawer-grab { width: 38px; height: 4px; margin: 3px auto 13px; border-radius: 99px; background: var(--hairline); }
+      .drawer-title { padding: 0 8px 8px; font-size: 17px; font-weight: 730; }
+      .bot-choice { width: 100%; display: flex; align-items: center; gap: 11px; padding: 11px 9px; border: 0; border-radius: 16px; background: transparent; text-align: left; cursor: pointer; }
+      .bot-choice:active, .bot-choice.selected { background: var(--accent-soft); }
+      .bot-choice .avatar { width: 40px; height: 40px; font-size: 14px; }
+      .bot-choice-copy { min-width: 0; flex: 1; }
+      .bot-choice-name { font-weight: 670; }
+      .bot-choice-preview { display: block; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .bot-choice-state { color: var(--muted); font-size: 11px; }
+      .empty { display: grid; place-items: center; min-height: 42vh; padding: 30px; color: var(--muted); text-align: center; }
+      .empty strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 17px; }
+      .error { margin: 8px 16px; padding: 10px 12px; border: 1px solid rgba(180,35,24,.25); border-radius: 12px; background: rgba(253,236,236,.9); color: #a62318; font-size: 12px; }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+    </style>
+  </head>
+  <body>
+    <main class="app" aria-label="NexBot messages">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 17V7l12 10V7" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="topcopy"><p class="eyebrow">NexBot Connect</p><h1 class="title">Messages</h1></div>
+        <div class="sync"><span id="syncDot" class="sync-dot"></span><span id="syncText">Connecting</span></div>
+        <button id="botMenu" class="icon-button" aria-label="Choose conversation"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      </header>
+      <section class="chat-head">
+        <div id="currentAvatar" class="avatar">N</div>
+        <div class="chat-head-copy"><div id="currentName" class="chat-name">Loading…</div><div id="currentRole" class="chat-role">Syncing conversations from your PC</div></div>
+        <button id="chooseBot" class="chat-picker" aria-label="Switch conversation">Chats <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+      </section>
+      <div id="error" class="error" hidden></div>
+      <section id="messages" class="messages" aria-live="polite"></section>
+      <div class="composer-wrap">
+        <div id="quickActions" class="quick-actions"><button class="quick-action" data-action="status">Ask for a status</button><button class="quick-action" data-action="summary">Summarize this chat</button><button class="quick-action" data-action="handoff">Route to the right teammate</button></div>
+        <form id="composer" class="composer">
+          <button id="plus" class="icon-button" type="button" aria-label="More message actions"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+          <textarea id="text" rows="1" placeholder="Message NexBot" aria-label="Message"></textarea>
+          <button id="send" class="send" type="submit" aria-label="Send message" disabled><svg viewBox="0 0 24 24"><path d="m5 12 14-7-3 14-4-6-7-1Z"/><path d="m12 13 7-8"/></svg></button>
+        </form>
+      </div>
+    </main>
+    <div id="drawerScrim" class="drawer-scrim" role="dialog" aria-modal="true" aria-label="Choose a NexBot"><div class="drawer"><div class="drawer-grab"></div><div class="drawer-title">Your conversations</div><div id="botChoices"></div></div></div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const token = params.get("token") || hash.get("token") || "";
+      const state = { bots: [], selectedId: "", optimistic: [], streaming: new Map(), online: false, stickToBottom: true };
+      const $ = (id) => document.getElementById(id);
+      const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+      const initials = (name) => String(name || "N").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+      const api = (path, init = {}) => {
+        const url = new URL(path, location.href);
+        if (token) url.searchParams.set("token", token);
+        const headers = new Headers(init.headers || {});
+        if (token) headers.set("authorization", `Bearer ${token}`);
+        if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+        return fetch(url, { ...init, headers });
+      };
+      const current = () => state.bots.find((bot) => bot.id === state.selectedId) || state.bots[0];
+      const setError = (message = "") => { $("error").hidden = !message; $("error").textContent = message; };
+      const setOnline = (online) => { state.online = online; $("syncDot").classList.toggle("live", online); $("syncText").textContent = online ? "Synced" : "Reconnecting"; };
+      const refreshButton = () => { $("send").disabled = !$("text").value.trim() || !current(); };
+      const formatTime = (at) => at ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(at)) : "";
+      const messageText = (message) => String(message?.text || "").trim();
+      function drawHeader() {
+        const bot = current();
+        if (!bot) { $("currentName").textContent = "No conversations"; $("currentRole").textContent = "Add a NexBot on your PC to begin"; $("currentAvatar").textContent = "N"; return; }
+        $("currentName").textContent = bot.name || "NexBot";
+        $("currentRole").textContent = bot.busy ? "Working on your request…" : (bot.title || bot.description || "Ready when you are");
+        $("currentAvatar").textContent = initials(bot.name);
+      }
+      function drawChoices() {
+        const root = $("botChoices"); root.innerHTML = "";
+        state.bots.forEach((bot) => {
+          const last = [...(bot.messages || [])].reverse().find((message) => messageText(message));
+          const button = document.createElement("button"); button.className = "bot-choice" + (bot.id === state.selectedId ? " selected" : "");
+          button.innerHTML = `<span class="avatar">${esc(initials(bot.name))}</span><span class="bot-choice-copy"><span class="bot-choice-name">${esc(bot.name || "NexBot")}</span><span class="bot-choice-preview">${esc(last ? messageText(last) : bot.description || "Ready for a message")}</span></span><span class="bot-choice-state">${bot.busy ? "Working" : ""}</span>`;
+          button.onclick = () => { state.selectedId = bot.id; closeDrawer(); draw(); };
+          root.appendChild(button);
+        });
+      }
+      function drawMessages() {
+        const root = $("messages"); const bot = current(); const distanceFromBottom = root.scrollHeight - root.scrollTop - root.clientHeight; const shouldStick = state.stickToBottom || distanceFromBottom < 120; root.innerHTML = "";
+        if (!bot) { root.innerHTML = `<div class="empty"><div><strong>Your NexBot chats live here</strong>Pair with the desktop app to sync your conversations.</div></div>`; return; }
+        const messages = [...(bot.messages || [])].filter((message) => message.kind === "text" || message.kind === "options" || message.kind === "fromBot");
+        if (!messages.length && !state.optimistic.length) root.innerHTML = `<div class="empty"><div><strong>Start a conversation</strong>Ask ${esc(bot.name || "NexBot")} anything. Replies stay synced with your PC.</div></div>`;
+        let lastDay = "";
+        messages.forEach((message) => {
+          const day = message.at ? new Date(message.at).toLocaleDateString() : "";
+          if (day && day !== lastDay) { root.insertAdjacentHTML("beforeend", `<div class="date-line">${esc(day === new Date().toLocaleDateString() ? "Today" : day)}</div>`); lastDay = day; }
+          if (message.kind === "options") {
+            const cardTitle = String(message.card?.title || "");
+            if (/what is this (?:nexbot|teammate)'s job\?/i.test(cardTitle)) return;
+            root.insertAdjacentHTML("beforeend", `<div class="system-card">${esc(cardTitle || "Choose an option")}</div>`);
+            return;
+          }
+          const outgoing = message.role === "user"; const text = messageText(message); if (!text) return;
+          root.insertAdjacentHTML("beforeend", `<div class="bubble-row ${outgoing ? "outgoing" : "incoming"}"><div><div class="bubble">${esc(text)}</div><div class="bubble-meta">${esc(formatTime(message.at))}</div></div></div>`);
+        });
+        state.optimistic.forEach((message) => root.insertAdjacentHTML("beforeend", `<div class="bubble-row outgoing"><div><div class="bubble">${esc(message.text)}</div><div class="bubble-meta">Sending…</div></div></div>`));
+        const stream = state.streaming.get(bot.threadId);
+        if (stream || bot.busy) root.insertAdjacentHTML("beforeend", `<div class="bubble-row incoming"><div class="typing" aria-label="${esc(bot.name || "NexBot")} is thinking"><i></i><i></i><i></i></div></div>`);
+        if (shouldStick) root.scrollTop = root.scrollHeight;
+      }
+      function draw() { drawHeader(); drawChoices(); drawMessages(); refreshButton(); }
+      async function loadBots() {
+        if (!token) { setError("This app needs a pairing token. Scan a fresh QR from the NexBot desktop app."); return; }
+        try { const response = await api("/api/bots"); if (!response.ok) throw new Error("The NexBot host rejected this connection."); const body = await response.json(); state.bots = (body.bots || []).filter((bot) => !bot.hidden && bot.kind !== "group"); if (!state.selectedId || !state.bots.some((bot) => bot.id === state.selectedId)) state.selectedId = (state.bots.find((bot) => bot.title === "Chief of Staff") || state.bots[0])?.id || ""; setError(""); setOnline(true); draw(); } catch (error) { setOnline(false); setError(error.message || "Cannot reach the NexBot host."); }
+      }
+      function openDrawer() { $("drawerScrim").classList.add("open"); }
+      function closeDrawer() { $("drawerScrim").classList.remove("open"); }
+      $("botMenu").onclick = openDrawer; $("chooseBot").onclick = openDrawer; $("drawerScrim").onclick = (event) => { if (event.target === $("drawerScrim")) closeDrawer(); };
+      $("plus").onclick = () => $("quickActions").classList.toggle("open");
+      document.querySelectorAll(".quick-action").forEach((button) => button.onclick = () => { $("text").value = button.dataset.action === "status" ? "Give me a concise status update." : button.dataset.action === "summary" ? "Summarize our current conversation and next steps." : "Route this to the right teammate and keep me updated."; $("quickActions").classList.remove("open"); $("text").focus(); refreshButton(); });
+      $("text").addEventListener("input", () => { $("text").style.height = "auto"; $("text").style.height = Math.min($("text").scrollHeight, 132) + "px"; refreshButton(); });
+      $("text").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("composer").requestSubmit(); } });
+      $("messages").addEventListener("scroll", () => { const root = $("messages"); state.stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 120; }, { passive: true });
+      $("composer").onsubmit = async (event) => { event.preventDefault(); const bot = current(); const text = $("text").value.trim(); if (!bot || !text) return; const clientNonce = `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`; state.optimistic.push({ text, clientNonce }); $("text").value = ""; $("text").style.height = "auto"; drawMessages(); refreshButton(); try { const response = await api(`/api/bots/${encodeURIComponent(bot.id)}/messages`, { method: "POST", body: JSON.stringify({ text, clientNonce }) }); if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Message could not be sent."); const fresh = await api(`/api/bots/${encodeURIComponent(bot.id)}`).then((r) => r.json()); const index = state.bots.findIndex((item) => item.id === bot.id); if (fresh.bot && index >= 0) state.bots[index] = fresh.bot; state.optimistic = state.optimistic.filter((item) => item.clientNonce !== clientNonce); draw(); } catch (error) { state.optimistic = state.optimistic.filter((item) => item.clientNonce !== clientNonce); setError(error.message || "Message could not be sent."); drawMessages(); } };
+      function connectEvents() {
+        if (!token) return; const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`); events.onopen = () => { setOnline(true); loadBots(); }; events.onerror = () => setOnline(false); events.onmessage = (raw) => { let frame; try { frame = JSON.parse(raw.data); } catch { return; } if (frame.kind === "message" || frame.kind === "message.patch" || frame.kind === "bot") { const bot = frame.bot || state.bots.find((item) => item.threadId === frame.threadId); if (bot) { const index = state.bots.findIndex((item) => item.id === bot.id); if (frame.kind === "bot" && index >= 0) state.bots[index] = { ...state.bots[index], ...frame.bot }; if (frame.kind === "message" && index >= 0) state.bots[index].messages = [...(state.bots[index].messages || []), frame.message].filter((message, position, all) => all.findIndex((item) => item.id === message.id) === position); if (frame.kind === "message.patch" && index >= 0) state.bots[index].messages = (state.bots[index].messages || []).map((message) => message.id === frame.message.id ? frame.message : message); draw(); } } else if (frame.kind === "runtime" && frame.event?.type === "content.delta" && frame.event?.streamKind === "assistant_text") { const bot = state.bots.find((item) => item.threadId === frame.event.threadId); if (bot) { state.streaming.set(bot.threadId, (state.streaming.get(bot.threadId) || "") + frame.event.delta); drawMessages(); } } else if (frame.kind === "runtime" && frame.event?.type === "turn.completed") { state.streaming.delete(frame.event.threadId); loadBots(); } }; }
+      loadBots(); connectEvents(); setInterval(loadBots, 7000);
+    </script>
+  </body>
+</html>

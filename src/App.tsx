@@ -9,36 +9,102 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { PluginsPanel } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { AppSettingsPanel } from "@/components/AppSettingsPanel";
+import { SkillsPanel } from "@/components/SkillsPanel";
+
+import { CommandPalette } from "@/components/CommandPalette";
+import { ComputerHUD } from "@/components/ComputerHUD";
 
 function Shell() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.innerWidth <= 900);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900);
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
+  // Windows titleBarOverlay draws caption buttons over the top of the window;
+  // pad content so App Settings / chat header are not under the drag strip.
+  const winPad = window.nexbot?.platform === "win32";
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      const nextNarrow = window.innerWidth <= 900;
+      setNarrow(nextNarrow);
+      if (nextNarrow) setSidebarOpen(false);
+      else setSidebarOpen(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   return (
-    <div className="relative flex h-full">
-      <Sidebar />
+    <div className={`relative flex h-full bg-transparent ${winPad ? "pt-9" : ""}`}>
+      {narrow && sidebarOpen && (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-black/20 max-[900px]:block"
+          aria-label="Close sidebar"
+        />
+      )}
+      <Sidebar open={sidebarOpen} />
       {bot ? (
-        <ChatView bot={bot} />
+        <ChatView bot={bot} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
-          <Loader2 size={20} className="animate-spin" />
-          <div className="text-[14px]">
-            {state.connected ? "No bots yet" : "Connecting to the bot server…"}
-          </div>
-          {!state.connected && (
-            <div className="text-[12px]">
-              Start it with <code className="rounded bg-raised px-1.5 py-0.5">pnpm dev:server</code>
-            </div>
+          {state.connected ? (
+            <>
+              <div className="text-[15px] font-medium text-ink">No bots yet</div>
+              <p className="max-w-[380px] text-center text-[14px] leading-relaxed">
+                The desk is ready for NexBots. Use the sidebar plus (Add a NexBot)
+                to choose Chief of Staff, six specialist roles, or a custom role.
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  dispatch({
+                    type: "newBot",
+                    name: "Research",
+                    title: "Research & briefings",
+                    description: "Find sources and write concise briefings. Leave useful notes in your desk.",
+                    color: "blue",
+                  })
+                }
+                className="pressable rounded-lg bg-ink px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90"
+              >
+                Add Research NexBot
+              </button>
+            </>
+          ) : (
+            <>
+              <Loader2 size={20} className="animate-spin" />
+              <div className="text-[14px]">Connecting to the bot server…</div>
+              <div className="text-[12px]">
+                Start it with <code className="rounded bg-raised px-1.5 py-0.5">pnpm dev:server</code>
+              </div>
+            </>
           )}
         </main>
       )}
-      {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
+      {state.settingsOpen && bot && <SettingsPanel bot={bot} initialPage={state.settingsPage} />}
       {state.computerOpen && bot && <ComputerPanel bot={bot} />}
+      {bot && <ComputerHUD bot={bot} />}
       {state.appSettingsOpen && <AppSettingsPanel />}
       {state.pluginsOpen && <PluginsPanel />}
+      {state.skillsOpen && <SkillsPanel />}
+      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
     </div>
   );
 }
-
 export default function App() {
   const [gated, setGated] = useState(() => !emailGateDone());
   useEffect(() => {

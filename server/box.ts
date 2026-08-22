@@ -1,11 +1,9 @@
 // Box (box.ascii.dev) provider — the bot's cloud computer. Ported from
-// agentcal-api src/providers/box.js, reshaped per-bot instead of
 // per-customer: every bot gets one persistent box (deterministic name),
 // stop pauses billing while the disk survives, and Join always mints a
 // FRESH desktop URL (stream tokens rotate on every state change — never
 // persist one).
 //
-// Substrate facts (probed by agentcal 2026-07-24 on a live box):
 //   - REST only: POST /boxes/{id}/commands runs shell synchronously.
 //   - stop→archived ~5s, resume→idle ~8s; disk persists, tmux does not.
 //   - X11 desktop with Chrome + Ghostty; passwordless sudo; node 24.
@@ -39,7 +37,7 @@ async function boxNameFor(botId: string) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 6);
-  return `-${botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "")}-${hash}`;
+  return `nexbot-${botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "")}-${hash}`;
 }
 
 export async function runCommand(cfg: AppConfig, boxId: string, command: string, { timeoutMs = 120_000 } = {}) {
@@ -57,7 +55,6 @@ export async function runCommand(cfg: AppConfig, boxId: string, command: string,
   };
 }
 
-// Desktop access, in the order that actually works (agentcal probing):
 //   1) VNC (POST /desktop?vnc=1) — plain WebSocket, survives P2P-blocking
 //      networks; answers {provisioning:true} first, so poll for the URL.
 //   2) WebRTC stream (POST /desktop) as fallback — STUN-only, can hang.
@@ -139,9 +136,8 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
   // Idempotent bootstrap. Three layers:
   //   1. X11 action + capture tools (xdotool/scrot/imagemagick) — the
   //      always-works fallback for the computer tools.
-  //   2. CUA (cua-computer-server, trycua) installed into /opt//venv in
+  //   2. CUA (cua-computer-server, trycua) installed into /opt/nexbot/venv in
   //      the BACKGROUND (first install takes minutes; nohup'd children
-  //      survive the commands endpoint returning — probed by agentcal).
   //   3. computer-server started loopback-only on :8000 when installed —
   //      driven from outside via the box's run-command endpoint, so no
   //      inbound port and no tunnel is ever needed.
@@ -150,18 +146,16 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
     "sudo apt-get install -y -qq gnome-screenshot xclip wmctrl xdotool imagemagick scrot >/dev/null 2>&1 || true",
     'curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true',
     'export PATH="$HOME/.local/bin:$PATH"',
-    'sudo mkdir -p /opt/ && sudo chown "$(whoami)" /opt/',
-    "uv venv /opt//venv --python 3.13 >/dev/null 2>&1 || uv venv /opt//venv >/dev/null 2>&1 || true",
-    "[ -x /opt//venv/bin/python ] && uv pip install --python /opt//venv/bin/python cua-computer-server >/dev/null 2>&1 || true",
-    "[ -x /opt//venv/bin/python ] && /opt//venv/bin/python -c 'import computer_server' 2>/dev/null && touch /opt//cua-ready || true",
+    'sudo mkdir -p /opt/nexbot && sudo chown "$(whoami)" /opt/nexbot',
+    "uv venv /opt/nexbot/venv --python 3.13 >/dev/null 2>&1 || uv venv /opt/nexbot/venv >/dev/null 2>&1 || true",
+    "[ -x /opt/nexbot/venv/bin/python ] && uv pip install --python /opt/nexbot/venv/bin/python cua-computer-server >/dev/null 2>&1 || true",
+    "[ -x /opt/nexbot/venv/bin/python ] && /opt/nexbot/venv/bin/python -c 'import computer_server' 2>/dev/null && touch /opt/nexbot/cua-ready || true",
   ].join("; ");
   const bootstrap = [
     "command -v xdotool >/dev/null || sudo apt-get install -y -qq xdotool scrot imagemagick >/dev/null 2>&1 || true",
-    `[ -f /opt//cua-ready ] || [ -f /tmp/-cua-installing ] || { touch /tmp/-cua-installing; nohup bash -c '${cuaInstall.replace(/'/g, "'\\''")}; rm -f /tmp/-cua-installing' > /tmp/-cua-install.log 2>&1 & }`,
-    // start CUA computer-server (loopback only) once installed; pidfile-free
-    // guard on the module name is safe here — the pattern cannot match this
-    // bootstrap's own shell (agentcal's pgrep self-match trap)
-    'if [ -f /opt//cua-ready ] && ! pgrep -f "computer_server" >/dev/null 2>&1; then DISPLAY=${DISPLAY:-:0} nohup /opt//venv/bin/python -m computer_server --host 127.0.0.1 --port 8000 --width 1280 --height 800 > /tmp/-cua-server.log 2>&1 & fi',
+    `[ -f /opt/nexbot/cua-ready ] || [ -f /tmp/nexbot-cua-installing ] || { touch /tmp/nexbot-cua-installing; nohup bash -c '${cuaInstall.replace(/'/g, "'\\''")}; rm -f /tmp/nexbot-cua-installing' > /tmp/nexbot-cua-install.log 2>&1 & }`,
+    // start CUA computer-server (loopback only) once installed
+    'if [ -f /opt/nexbot/cua-ready ] && [ -x /opt/nexbot/venv/bin/python ] && ! pgrep -f "computer_server" >/dev/null 2>&1; then DISPLAY=${DISPLAY:-:0} nohup /opt/nexbot/venv/bin/python -m computer_server --host 127.0.0.1 --port 8000 --width 1280 --height 800 > /tmp/nexbot-cua-server.log 2>&1 & fi',
     `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${botName.replace(/["'\\\\]/g, "")}'"'"'s computer — NexBot"; echo; exec bash -i'`,
     "echo bootstrapped",
   ].join("\n");
@@ -211,7 +205,7 @@ export async function execOnBox(cfg: AppConfig, botId: string, command: string) 
 // ship binary through the commands endpoint.
 const SHOT_CMD = [
   "export DISPLAY=${DISPLAY:-:0}",
-  "f=/tmp/-panel.png",
+  "f=/tmp/nexbot-panel.png",
   'scrot -o "$f" 2>/dev/null || import -window root "$f" 2>/dev/null || ffmpeg -y -f x11grab -i "$DISPLAY" -frames:v 1 "$f" >/dev/null 2>&1',
   'command -v convert >/dev/null && convert "$f" -resize 1024x "$f" 2>/dev/null || true',
   'test -s "$f" && echo captured',
@@ -225,7 +219,7 @@ export async function screenshotBox(cfg: AppConfig, botId: string) {
   if (!/captured/.test(out.stdout)) {
     throw new Error(out.stderr.slice(0, 200) || "screen capture failed on the box");
   }
-  const { ok, body } = await boxJson(cfg, `/boxes/${box.id}/files?path=/tmp/-panel.png&encoding=base64`);
+  const { ok, body } = await boxJson(cfg, `/boxes/${box.id}/files?path=/tmp/nexbot-panel.png&encoding=base64`);
   const png = body?.content;
   if (!ok || typeof png !== "string" || !png) throw new Error("could not read the frame back from the box");
   return { png, format: "png" };

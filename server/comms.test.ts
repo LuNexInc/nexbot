@@ -1,7 +1,7 @@
 // Agent-to-agent comms, end to end: boots the real harness server with the
 // grokAgent driver pointed at the fake ACP CLI in ask-peer mode, then has
 // bot A's "agent" reach bot B through the injected agents proxy (list_bots →
-// ask_bot → B runs a real depth-1 turn → reply folds back into A's answer).
+// ask_bot → B runs a real child turn → reply folds back into A's answer).
 // This exercises the whole chain the packaged app uses: startTurn →
 // session/new mcpServers → agents-proxy → /api/internal/ask-bot →
 // askBotAndWait → bus fold. The internal endpoints' auth is pinned too.
@@ -9,7 +9,7 @@
 // The fake CLI is a shebang script, so the e2e half is POSIX-only (same
 // gating as acp.test.ts); the mention-resolution unit tests run everywhere.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,42 @@ describe("mentionedBots", () => {
   it("ignores emails, hidden bots, and mid-word @", () => {
     expect(mentionedBots("mail nexus@nexus.dev please", peers)).toEqual([]);
     expect(mentionedBots("@Ghost around?", peers)).toEqual([]);
+  });
+});
+
+import { boundToolOutput } from "./comms-policy.ts";
+
+describe("boundToolOutput", () => {
+  it("leaves small strings untouched", () => {
+    expect(boundToolOutput("short output", 100)).toBe("short output");
+  });
+
+  it("truncates oversized strings with head, tail, and byte count marker", () => {
+    const huge = "A".repeat(500) + "B".repeat(500);
+    const bounded = boundToolOutput(huge, 100);
+    expect(bounded.length).toBeLessThan(huge.length);
+    expect(bounded).toMatch(/\[\.\.\. truncated \d+ bytes \.\.\.\]/);
+    expect(bounded.startsWith("A".repeat(50))).toBe(true);
+    expect(bounded.endsWith("B".repeat(50))).toBe(true);
+  });
+});
+
+describe("task-scoped team jobs", () => {
+  it("starts team jobs with a bounded context so every bot can coordinate", () => {
+    const src = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const routes = readFileSync(join(SERVER_DIR, "web", "platform-routes.ts"), "utf8");
+    const internal = readFileSync(join(SERVER_DIR, "web", "internal-routes.ts"), "utf8");
+    const start = routes.indexOf('path === "/api/jobs"');
+    expect(start).toBeGreaterThan(-1);
+    const block = routes.slice(start, start + 900);
+    expect(block).toContain("[Team job]");
+    expect(block).toMatch(/startTurn\(id,/);
+    expect(block).not.toMatch(/taskContext:\s*createTaskContext/);
+    expect(src).toContain("delegateTask");
+    expect(internal).toContain("taskContext: delegation.child");
+    expect(src).toContain("NEXBOT_TASK_CONTEXT");
+    expect(internal).toContain('/api/internal/send-bot');
+    expect(internal).toContain('queueAgentMessage');
   });
 });
 
@@ -161,12 +197,58 @@ posixOnly("comms e2e (fake ACP fleet)", () => {
       const note = askerBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name?.startsWith("asked @Helper"));
       expect(note).toBeTruthy();
 
-      // B's thread received the attributed message and ran a real turn
+      // B's thread received a fromBot bubble (not a user bubble) and ran a real turn
       const helperBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === helper.id);
-      const inbound = helperBot.messages.find((m: any) => m.role === "user" && m.kind === "text");
-      expect(inbound.text).toContain("[Message from @Asker");
+      const inbound = helperBot.messages.find((m: any) => m.fromBot);
+      expect(inbound.fromBot.name).toBe("Asker");
       expect(inbound.text).toContain("ping from fake");
       expect(helperBot.busy).toBeFalsy();
+
+      // A's thread also shows Helper's reply as a fromBot bubble
+      const helperBubble = askerBot.messages.find((m: any) => m.fromBot?.name === "Helper");
+      expect(helperBubble?.text).toContain("hello from fake acp");
+    },
+    40_000,
+  );
+
+  it(
+    "POST /api/jobs gives the bot a task scope so it can ask a peer",
+    async () => {
+      const roster = (await api("GET", "/api/bots")).body.bots;
+      for (const b of roster) {
+        if (!b.hidden) await api("PATCH", `/api/bots/${b.id}`, { hidden: true });
+      }
+      const selection = { instanceId: "grok", model: "fake-model" };
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, { name: "JobHelper", modelSelection: selection });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, { name: "JobAsker", modelSelection: selection });
+
+      const send = await api("POST", "/api/jobs", { botIds: [asker.id], text: "please ping a teammate" });
+      expect(send.status).toBe(202);
+      expect(send.body.started).toContain(asker.id);
+
+      const deadline = Date.now() + 25_000;
+      let askerBot: any;
+      for (;;) {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        const settled = askerBot.messages.some(
+          (m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("peer says:"),
+        );
+        if (settled && !askerBot.busy) break;
+        if (Date.now() > deadline) {
+          throw new Error(
+            `job asker never got the peer reply. messages: ${JSON.stringify(askerBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      const reply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+      expect(reply.text).toContain("JobHelper replied:");
+      expect(reply.text).toContain("hello from fake acp");
+      const note = askerBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name?.startsWith("asked @JobHelper"));
+      expect(note).toBeTruthy();
     },
     40_000,
   );
