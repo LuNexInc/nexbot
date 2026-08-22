@@ -98,7 +98,15 @@ export function spawnCli(
 
   const unwrapped = unwrapCmdShim(resolved);
   if (unwrapped) {
-    return spawn(unwrapped.command, [...unwrapped.extraArgs, ...args], { ...opts, shell: false });
+    // The shim target is a node script. Inside the packaged app the harness
+    // runs under Electron, so process.execPath is NexBot.exe — it only acts
+    // as node with ELECTRON_RUN_AS_NODE. Without this, every npm-shim CLI
+    // (codex et al.) dies at spawn and reports "CLI not found".
+    return spawn(unwrapped.command, [...unwrapped.extraArgs, ...args], {
+      ...opts,
+      env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
+      shell: false,
+    });
   }
 
   if (needsWinShell(resolved)) {
@@ -122,7 +130,13 @@ export function execFileCli(
   };
   const unwrapped = unwrapCmdShim(resolved);
   if (unwrapped) {
-    return execFile(unwrapped.command, [...unwrapped.extraArgs, ...args], { ...opts, shell: false }, cb);
+    // See spawnCli: the app binary only runs node scripts as node.
+    return execFile(
+      unwrapped.command,
+      [...unwrapped.extraArgs, ...args],
+      { ...opts, env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, shell: false },
+      cb,
+    );
   }
   if (needsWinShell(resolved)) {
     return execFile(resolved, args, { ...opts, shell: true }, cb);

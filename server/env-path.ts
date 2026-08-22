@@ -55,6 +55,7 @@ function knownDirsWin(): string[] {
   return [
     join(roaming, "npm"), // npm global .cmd shims (claude.cmd, codex.cmd)
     join(local, "npm"),
+    join(home, "nodejs"), // custom npm-global-style dir some setups use
     join(local, "Programs", "nodejs"),
     join(pf, "nodejs"),
     join(pf86, "nodejs"),
