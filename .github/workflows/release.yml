@@ -1,0 +1,52 @@
+name: Release build
+
+# Package installers for a pushed tag (v*). CI stays the quality gate; this
+# only builds artifacts so packaging rot surfaces at tag time, not on a
+# user's machine. Publishing to GitHub Releases stays manual until builds
+# are signed (auto-update feeds require signed macOS builds anyway).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: package:win
+          - os: macos-latest
+            script: package:mac
+          - os: ubuntu-latest
+            script: package:linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: package (${{ matrix.script }})
+        run: pnpm run ${{ matrix.script }}
+      - name: upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexbot-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 30

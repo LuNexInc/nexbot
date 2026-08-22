@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck + test (${{ matrix.os }})
+    name: lint + typecheck + test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -32,8 +32,26 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - name: coverage report (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:coverage
+      - name: upload coverage (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
       - name: production UI build
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build
+      - name: upload UI bundle on failure
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-debug
+          path: dist/
+          retention-days: 7

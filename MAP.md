@@ -55,9 +55,12 @@ Computer use is this PC only (CUA + tray keepalive). No Cloudflare / Huawei / Or
 
 | Skills | `server/skills.ts` → `~/.nexbot/skills` |
 | Connectors | `src/components/PluginsPanel.tsx` (Composio catalog) |
-| Routines | cron, signed webhook (`webhookSecret` required, `x-nexbot-secret`), `POST /api/webhooks/github`, file watch (no `..` in `watchPath`) — `server/routines.ts`. DELETE bot drops its routines. |
+| Routines | cron, signed webhook (`webhookSecret` write-only — responses carry `hasSecret`, `x-nexbot-secret`), `POST /api/webhooks/github`, file watch (no `..` in `watchPath`) — `server/routines.ts`. DELETE bot drops its routines. |
 | Memory | `~/.nexbot/memory/<id>/profile.md` + `log/YYYY-MM.md`. PUT caps each file at 16KB; prompt clips 8k. |
 | Steer token | `server/steer.ts` → `/m.html?token=` |
+| Browser cross-site gate | `server/harness-auth.ts` `requestLooksCrossSite` — Host/Origin/Sec-Fetch-Site defense so a rebound/cross-origin page cannot drive loopback `/api`; public paths exempt via `isPublicHarnessPath`. Covered by `server/security-gate.test.ts`. Artifact serving denies the data dir's token/key files and dotfiles (`server/artifacts.ts`). |
+| Secrets at the process boundary | Claude MCP config rides a 0600 temp file, never argv (`server/drivers/claude.ts`, swept by `runDataHygiene`); native logs redact env/headers/token values (`server/drivers/native.ts`). |
+| Quality gates | `pnpm lint` (eslint.config.js — floating-promise rules are the point), `pnpm test:coverage` (ubuntu CI leg uploads the report), `.github/workflows/release.yml` (tag → package all three OSes, artifacts uploaded). |
 | Capabilities | `server/capabilities.ts` + `desktop:capabilities` |
 | Default model | `server/selection.ts` `pickDefaultSelection` — Grok first, then Codex; Claude only if sole available |
 | Hidden bots | Skipped by @mention fanout, `/api/jobs`, `/api/steer/jobs`, `ask_bot`, and group `memberIds`. Phone `/m.html` hides them. User `POST /messages` still runs. Cannot hide the last CoS. |

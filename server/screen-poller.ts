@@ -46,7 +46,7 @@ export function createScreenPoller(deps: ScreenPollerDeps): ScreenPoller {
       }
     };
     const entry = {
-      timer: setInterval(capture, intervalMs),
+      timer: setInterval(() => { void capture(); }, intervalMs),
       capture,
       last: null as ScreenFrame | null,
     };

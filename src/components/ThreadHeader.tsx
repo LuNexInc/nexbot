@@ -17,15 +17,41 @@ function TtfrChip({ ms }: { ms: number }) {
   );
 }
 
-/** Serialize the visible thread to Markdown and download it client-side. */
-function exportThreadMarkdown(bot: Bot): void {
+/** Full transcript for export. The chat view hydrates only the most recent
+ * window, so page the whole history from the server before serializing. */
+async function fullTranscript(bot: Bot): Promise<Bot["messages"]> {
+  if (!bot.hasEarlier && (bot.messageCount ?? bot.messages.length) <= bot.messages.length) {
+    return bot.messages;
+  }
+  const out = [...bot.messages];
+  for (let page = 0; page < 50; page++) {
+    const before = out[0]?.id;
+    if (!before) break;
+    try {
+      const res = await fetch(`/api/bots/${bot.id}/messages?limit=500&before=${encodeURIComponent(before)}`);
+      if (!res.ok) break;
+      const body = await res.json();
+      const messages: Bot["messages"] = Array.isArray(body?.messages) ? body.messages : [];
+      if (!messages.length) break;
+      out.unshift(...messages);
+      if (!body.hasEarlier) break;
+    } catch {
+      break; // export what is loaded rather than nothing
+    }
+  }
+  return out;
+}
+
+/** Serialize the thread to Markdown and download it client-side. */
+async function exportThreadMarkdown(bot: Bot): Promise<void> {
+  const messages = await fullTranscript(bot);
   const lines: string[] = [
     `# ${bot.name} — conversation export`,
     ``,
     `Exported ${new Date().toLocaleString()} · NexBot v${__APP_VERSION__}`,
     ``,
   ];
-  for (const m of bot.messages) {
+  for (const m of messages) {
     if (m.kind !== "text" || !m.text?.trim()) continue;
     const who = m.role === "user" ? "You" : (m.fromBot?.name ?? bot.name);
     const at = new Date(m.at).toLocaleString();
@@ -85,7 +111,7 @@ export function ThreadHeader({ bot, onToggleSidebar }: { bot: Bot; onToggleSideb
         )}
         {bot.messages.length > 0 && (
           <button
-            onClick={() => exportThreadMarkdown(bot)}
+            onClick={() => void exportThreadMarkdown(bot)}
             className="pressable rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
             title="Export conversation as Markdown"
             aria-label="Export conversation as Markdown"

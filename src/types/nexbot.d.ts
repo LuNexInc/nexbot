@@ -15,8 +15,9 @@ declare global {
       platform?: string;
       /** True on macOS when the native speech helper is used. */
       speechNative?: boolean;
-      onUpdateStatus(cb: (info: { state: string; version?: string }) => void): () => void;
+      onUpdateStatus(cb: (info: { state: string; version?: string; platform?: string }) => void): () => void;
       updateInstall(): Promise<void>;
+      onDeepLink(cb: (info: { url: string }) => void): () => void;
       screenFrame(): Promise<string | null>;
       speechStart(): Promise<void>;
       speechStop(): Promise<void>;

@@ -14,6 +14,34 @@ export function nativeLogEnabled(): boolean {
   return true;
 }
 
+// The event hot path appends constantly; stat-ing the file before every
+// append doubles the syscalls per streamed token. Track sizes in memory
+// (bumped on write, reset on rotate) and re-stat at most once a minute so
+// an external deletion is still noticed.
+const SIZE_CACHE_TTL_MS = 60_000;
+const sizeCache = new Map<string, { size: number; at: number }>();
+
+function cachedSize(file: string): number | null {
+  const hit = sizeCache.get(file);
+  if (hit && Date.now() - hit.at < SIZE_CACHE_TTL_MS) return hit.size;
+  try {
+    const size = statSync(file).size;
+    sizeCache.set(file, { size, at: Date.now() });
+    return size;
+  } catch {
+    return null;
+  }
+}
+
+function bumpCachedSize(file: string, bytes: number): void {
+  const hit = sizeCache.get(file);
+  if (hit && Date.now() - hit.at < SIZE_CACHE_TTL_MS) {
+    hit.size += bytes;
+  } else {
+    sizeCache.delete(file); // stale or absent — the next rotate re-stats
+  }
+}
+
 export function appendNdjson(
   dir: string,
   threadId: string,
@@ -28,16 +56,12 @@ export function appendNdjson(
     /* rotate is best-effort */
   }
   appendFileSync(file, line);
+  bumpCachedSize(file, Buffer.byteLength(line));
 }
 
 export function rotateIfOversized(file: string, maxBytes = EVENT_LOG_MAX_BYTES): void {
-  let size = 0;
-  try {
-    size = statSync(file).size;
-  } catch {
-    return;
-  }
-  if (size < maxBytes) return;
+  const size = cachedSize(file);
+  if (size == null || size < maxBytes) return;
   const rotated = `${file}.1`;
   try {
     unlinkSync(rotated);
@@ -45,6 +69,7 @@ export function rotateIfOversized(file: string, maxBytes = EVENT_LOG_MAX_BYTES):
     /* no previous rotate */
   }
   renameSync(file, rotated);
+  sizeCache.set(file, { size: 0, at: Date.now() });
 }
 
 export function pruneEventLogs(

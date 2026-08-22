@@ -120,7 +120,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       emit({ ...base(threadId, turnId), type: "session.started", sessionId: promptId, model });
 
       // poll events + run status until the prompt settles
-      (async () => {
+      void (async () => {
         const seen = new Set<string>();
         const startedAt = Date.now();
         let lastText = "";

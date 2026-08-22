@@ -49,7 +49,22 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
   return email ? email[0]!.toUpperCase() : "?";
 }
 
+// The reducer replaces a bot's messages array on every change, so the array
+// identity is a perfect cache key: the regex pipeline below runs once per
+// transcript change instead of once per render across the whole roster.
+// `busy` flips without touching the array, so it is validated explicitly.
+const previewCache = new WeakMap<Bot["messages"], { text: string; busy: boolean }>();
+
 function preview(bot: Bot): string {
+  const hit = previewCache.get(bot.messages);
+  const busy = Boolean(bot.busy);
+  if (hit && hit.busy === busy) return hit.text;
+  const text = computePreview(bot);
+  previewCache.set(bot.messages, { text, busy });
+  return text;
+}
+
+function computePreview(bot: Bot): string {
   if (bot.busy) return "Working…";
   for (const message of [...bot.messages].reverse()) {
     if (message.kind === "options" && message.card) return nexBotCopy(message.card.title);

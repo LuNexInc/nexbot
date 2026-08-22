@@ -106,6 +106,14 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
+// ── nexbot:// deep link ─────────────────────────────────────────────────
+// The Android Connect app emits nexbot://pair?… — the desktop side finally
+// answers it. Registered for packaged builds only.
+if (app.isPackaged && !DEV_PREVIEW) app.setAsDefaultProtocolClient("nexbot");
+let pendingDeepLink = null;
+const deepLinkFromArgv = (argv) =>
+  (argv ?? []).find((arg) => typeof arg === "string" && arg.startsWith("nexbot://")) ?? null;
+
 let quitting = false;
 let tray = null;
 let mainWin = null;
@@ -122,6 +130,39 @@ function showMainWindow() {
   // every time the user asks for the app.
   if (!DEV_PREVIEW && !serverReady) recoverWindowWhenServerUp(mainWin);
 }
+
+function forwardDeepLink() {
+  if (!pendingDeepLink || !mainWin || mainWin.isDestroyed()) return;
+  try {
+    mainWin.webContents.send("deep-link", { url: pendingDeepLink });
+    pendingDeepLink = null;
+  } catch {
+    /* window went away — the link stays pending */
+  }
+}
+
+function handleDeepLink(url) {
+  if (typeof url !== "string" || !url.startsWith("nexbot://")) return;
+  if (!app.isReady()) {
+    // macOS can deliver open-url before ready; hold it for whenReady.
+    pendingDeepLink = url;
+    return;
+  }
+  pendingDeepLink = url;
+  showMainWindow();
+  if (mainWin && !mainWin.isDestroyed()) {
+    // Cold start: the renderer may not have subscribed yet — flush again
+    // once the page is up. A duplicate is harmless (idempotent handler).
+    mainWin.webContents.once("did-finish-load", () => forwardDeepLink());
+    forwardDeepLink();
+  }
+}
+
+// macOS hands external URLs here; Windows/Linux put them in argv.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
 
 // ── window state persistence ─────────────────────────────────────────────
 function windowStateFile() {
@@ -248,7 +289,17 @@ function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // Model-controlled transcript content can produce links. Only plain
+    // web pages go to the browser — never arbitrary schemes (file:, shell
+    // handlers, custom protocol apps).
+    try {
+      const target = new URL(url);
+      if (target.protocol === "http:" || target.protocol === "https:") {
+        shell.openExternal(target.toString());
+      }
+    } catch {
+      /* not a URL — ignore */
+    }
     return { action: "deny" };
   });
 
@@ -364,7 +415,15 @@ ipcMain.handle("notify", (_e, title, body) => {
   } catch {}
 });
 ipcMain.handle("open-path", (_e, dir) => {
-  if (dir) return shell.openPath(String(dir));
+  // "Open in Explorer/Finder" is a convenience for bot desk folders, not a
+  // general file opener for renderer-supplied paths — on Windows opening a
+  // .bat/.cmd would execute it. Restrict to the desk root.
+  const target = path.resolve(String(dir || ""));
+  const deskRoot = path.join(app.getPath("home"), ".nexbot", "desk");
+  if (target !== deskRoot && !target.startsWith(deskRoot + path.sep)) {
+    return "outside the desk";
+  }
+  return shell.openPath(target);
 });
 
 // ── auto-update (packaged builds only) ───────────────────────────────────
@@ -375,7 +434,7 @@ let updater = null;
 let updateReadyVersion = null;
 async function setupAutoUpdater(win) {
   const send = (state, version) => {
-    if (!win.isDestroyed()) win.webContents.send("update:status", { state, version });
+    if (!win.isDestroyed()) win.webContents.send("update:status", { state, version, platform: process.platform });
   };
   const bundlePath = path.join(__dirname, "updater.bundle.cjs");
   if (!app.isPackaged || DEV_PREVIEW || !existsSync(bundlePath)) {
@@ -516,12 +575,22 @@ app.whenReady().then(async () => {
   createTray();
   if (!START_HIDDEN) createWindow();
 
+  // A cold start launched via a nexbot:// link (Windows/Linux argv), or an
+  // open-url that arrived before ready.
+  const coldLink = pendingDeepLink ?? deepLinkFromArgv(process.argv);
+  if (coldLink) handleDeepLink(coldLink);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on("second-instance", (_e, argv) => {
+  const link = deepLinkFromArgv(argv);
+  if (link) {
+    handleDeepLink(link);
+    return;
+  }
   if (argv.includes("--hidden")) return;
   showMainWindow();
 });

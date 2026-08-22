@@ -40,4 +40,11 @@ contextBridge.exposeInMainWorld("nexbot", {
     return () => ipcRenderer.removeListener("update:status", handler);
   },
   updateInstall: () => ipcRenderer.invoke("update:install"),
+  /** nexbot:// deep links (e.g. Android Connect pairing), forwarded from
+   * the main process after the page has loaded. */
+  onDeepLink: (cb) => {
+    const handler = (_event, info) => cb(info);
+    ipcRenderer.on("deep-link", handler);
+    return () => ipcRenderer.removeListener("deep-link", handler);
+  },
 });

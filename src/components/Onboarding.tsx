@@ -80,11 +80,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [testStatus, setTestStatus] = useState<"idle" | "sending" | "passed" | "failed">("idle");
   const [testError, setTestError] = useState<string | null>(null);
   const [perms, setPerms] = useState<{ mic: string } | null>(null);
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  // Local-first product with no shipped analytics: the email is a courtesy
+  // field, never a gate. A name alone is enough to continue.
+  const canContinue = emailValid || name.trim().length > 0;
   const chosenCosJob = cosCustomJob.trim() || cosJob.trim();
 
   const saveProfile = () => {
-    identifyEmail(email.trim().toLowerCase());
+    if (emailValid) identifyEmail(email.trim().toLowerCase());
     // persisted server-side (~/.nexbot/config.json) — the sidebar
     // footer reads it back through /api/config
     void fetch("/api/config", {
@@ -94,7 +97,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         profile: {
           name: name.trim(),
           companyName: companyName.trim(),
-          email: email.trim().toLowerCase(),
+          ...(emailValid ? { email: email.trim().toLowerCase() } : {}),
         },
       }),
     }).catch(() => {});
@@ -301,13 +304,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && valid && saveProfile()}
-              placeholder="you@example.com"
+              onKeyDown={(e) => e.key === "Enter" && canContinue && saveProfile()}
+              placeholder="you@example.com (optional)"
               className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
             />
             <button
               onClick={saveProfile}
-              disabled={!valid}
+              disabled={!canContinue}
               className="pressable mt-3 w-full rounded-full bg-ink py-2.5 text-[15px] font-medium text-app disabled:opacity-40"
             >
               Continue

@@ -802,31 +802,43 @@ type UpdateState = "unsupported" | "checking" | "up-to-date" | "downloading" | "
 function UpdatesSection() {
   const { state } = useStore();
   const version = state.config?.version || APP_VERSION || "0.0.0";
-  const [update, setUpdate] = useState<{ state: UpdateState; version?: string }>({
+  const [update, setUpdate] = useState<{ state: UpdateState; version?: string; platform?: string }>({
     state: window.nexbot ? "checking" : "unsupported",
   });
 
   useEffect(() => {
     if (!window.nexbot) return;
-    return window.nexbot.onUpdateStatus((info) => setUpdate({ state: info.state as UpdateState, version: info.version }));
+    return window.nexbot.onUpdateStatus((info) => setUpdate({ state: info.state as UpdateState, version: info.version, platform: info.platform }));
   }, []);
 
+  // In-app updates on macOS require a signed, notarized build; unsigned DMGs
+  // never auto-update. Say so plainly instead of implying an update will come.
+  const macUnsigned = update.platform === "darwin" && (update.state === "error" || update.state === "unsupported" || update.state === "checking" || update.state === "up-to-date");
   const copy: Record<UpdateState, { title: string; body: string }> = {
     unsupported: {
       title: `This install is NexBot v${version}`,
-      body: "Updates are checked automatically in the desktop app. A newer build is also available as an installer on GitHub releases.",
+      body: macUnsigned
+        ? "This macOS build checks the release feed, but in-app updates install only on signed builds. To update, download the latest installer from GitHub releases."
+        : "Updates are checked automatically in the desktop app. A newer build is also available as an installer on GitHub releases.",
     },
     checking: { title: "Checking for updates…", body: "Talking to the release feed." },
     "up-to-date": {
       title: `You're up to date`,
-      body: `NexBot v${version} is the newest published build.`,
+      body: macUnsigned
+        ? `NexBot v${version} is the newest published build. Future macOS in-app updates arrive once builds are signed; until then, install from GitHub releases.`
+        : `NexBot v${version} is the newest published build.`,
     },
     downloading: { title: "Downloading update…", body: "NexBot downloads in the background and installs when you restart." },
     ready: {
       title: `Update ready${update.version ? ` — v${update.version}` : ""}`,
       body: "Restart NexBot to finish installing. Quitting to tray keeps bots working; the update applies on a full restart.",
     },
-    error: { title: "Couldn't check for updates", body: "The release feed was unreachable. You can always grab the latest installer from GitHub releases." },
+    error: {
+      title: "Couldn't check for updates",
+      body: macUnsigned
+        ? "Unsigned macOS builds cannot install in-app updates. Download the latest installer from GitHub releases."
+        : "The release feed was unreachable. You can always grab the latest installer from GitHub releases.",
+    },
   };
   const tone =
     update.state === "ready" ? "border-accent/40 bg-accent/10" : update.state === "error" ? "border-warning/40 bg-warning/10" : "border-black/8 bg-card";

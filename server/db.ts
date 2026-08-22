@@ -60,8 +60,32 @@ export function openStoreDb(): DatabaseSync {
   const db = new DatabaseSync(path);
   wal(db);
   db.exec(SCHEMA);
+  runMigrations(db);
   cache = { path, db };
   return db;
+}
+
+/** Versioned schema steps beyond the idempotent CREATE TABLE baseline.
+ * Add one entry per release that changes shape; never edit a shipped step. */
+const MIGRATIONS: Array<(db: DatabaseSync) => void> = [
+  // v1: baseline — every workspace that predates the runner is already on it.
+];
+
+function runMigrations(db: DatabaseSync): void {
+  const from = Number((db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined)?.user_version ?? 0);
+  if (from >= MIGRATIONS.length) return;
+  for (let v = from; v < MIGRATIONS.length; v++) {
+    const step = MIGRATIONS[v];
+    db.exec("BEGIN");
+    try {
+      step(db);
+      db.exec(`PRAGMA user_version = ${v + 1}`);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw new Error(`store.db migration to v${v + 1} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+    }
+  }
 }
 
 function parseJsonArray(raw: string): unknown[] {
@@ -111,6 +135,14 @@ export function persistBots(bots: BotRecord[]): void {
   } catch (e) { db.exec("ROLLBACK"); throw e; }
 }
 
+/** Upsert one bot row. patchBot fires per token-usage tick, so it must never
+ * rewrite the whole table the way the import path does. */
+export function persistBot(bot: BotRecord): void {
+  openStoreDb()
+    .prepare("INSERT INTO bots (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json")
+    .run(bot.id, JSON.stringify(bot));
+}
+
 export function persistMessages(threadId: string, messages: Message[], botId?: string): void {
   const db = openStoreDb();
   db.exec("BEGIN");
@@ -143,19 +175,25 @@ export function deleteBotRow(id: string): void {
   openStoreDb().prepare("DELETE FROM bots WHERE id = ?").run(id);
 }
 
+/** A row that cannot be parsed is a data-loss event, not a silent skip:
+ * for a commercial workspace the operator must be able to see it happened. */
+function warnSkippedRow(table: string, at: string): void {
+  console.warn(`[store] skipped an unreadable ${table} row (${at}) — the record was left in the database`);
+}
+
 export function loadRoutinesFromDb(): Routine[] {
-  const rows = openStoreDb().prepare("SELECT json FROM routines").all() as Array<{ json: string }>;
+  const rows = openStoreDb().prepare("SELECT id, json FROM routines").all() as Array<{ id: string; json: string }>;
   const out: Routine[] = [];
   for (const row of rows) {
-    try { out.push(JSON.parse(row.json) as Routine); } catch { /* skip */ }
+    try { out.push(JSON.parse(row.json) as Routine); } catch { warnSkippedRow("routines", row.id); }
   }
   return out;
 }
 
 export function loadBotsFromDb(): BotRecord[] {
-  const rows = openStoreDb().prepare("SELECT json FROM bots").all() as Array<{ json: string }>;
+  const rows = openStoreDb().prepare("SELECT id, json FROM bots").all() as Array<{ id: string; json: string }>;
   const out: BotRecord[] = [];
-  for (const row of rows) { try { out.push(JSON.parse(row.json) as BotRecord); } catch { /* skip */ } }
+  for (const row of rows) { try { out.push(JSON.parse(row.json) as BotRecord); } catch { warnSkippedRow("bots", row.id); } }
   return out;
 }
 
@@ -168,7 +206,7 @@ export function loadMessagesFromDb(): Map<string, Message[]> {
       const list = map.get(row.thread_id) ?? [];
       list.push(msg);
       map.set(row.thread_id, list);
-    } catch { /* skip */ }
+    } catch { warnSkippedRow("messages", row.thread_id); }
   }
   return map;
 }
@@ -179,8 +217,10 @@ export function loadThreadMessagesFromDb(threadId: string): Message[] {
     .prepare("SELECT json FROM messages WHERE thread_id = ? ORDER BY at ASC")
     .all(threadId) as Array<{ json: string }>;
   const out: Message[] = [];
+  let index = 0;
   for (const row of rows) {
-    try { out.push(JSON.parse(row.json) as Message); } catch { /* skip */ }
+    try { out.push(JSON.parse(row.json) as Message); } catch { warnSkippedRow("messages", `${threadId}#${index}`); }
+    index += 1;
   }
   return out;
 }

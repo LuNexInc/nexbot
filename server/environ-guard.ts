@@ -66,6 +66,7 @@ export const MAX_KEY_LENGTH = 100;
 // Dangerous characters: ASCII control chars (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F),
 // zero-width characters (U+200B..U+200D, U+FEFF), and unicode directional overrides (U+202A..U+202E, U+2066..U+2069).
 const DANGEROUS_CHARS_REGEX =
+  // eslint-disable-next-line no-control-regex -- stripping raw control bytes is the point
   /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 /** Strips dangerous control chars, null bytes, zero-width evasion characters, and directional overrides. */

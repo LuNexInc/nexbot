@@ -54,6 +54,6 @@ describe("cli-spawn", () => {
       child.on("close", (code) => (code === 0 ? resolve(buf) : reject(new Error(`exit ${code}: ${buf}`))));
     });
     expect(out).toContain("hi-from-cli");
-    stopChild(child);
+    void stopChild(child);
   });
 });

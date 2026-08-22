@@ -3,6 +3,7 @@
 // the harness token — or, for the small phone surface, the steer token.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 
@@ -97,4 +98,72 @@ export function tokenFromHarnessRequest(
   queryToken: string | null,
 ): string | undefined {
   return tokenFromRequest(authHeader, queryToken);
+}
+
+// ── browser cross-site defense ─────────────────────────────────────────
+// The server sends no CORS headers, so a normal cross-origin page cannot
+// read responses. DNS rebinding defeats that: a hostile domain that resolves
+// to 127.0.0.1 makes the attack same-origin while loopback stays "trusted".
+// Validate the Host header, and — when the browser volunteers them — Origin,
+// Referer, and Sec-Fetch-Site. Non-browser clients (curl, the Electron
+// shell, the proxies) always send a correct Host and no Origin, so only a
+// rebound or malicious page is rejected.
+let localHostnameCache: { at: number; names: Set<string> } | null = null;
+
+function localHostnames(bind: string): Set<string> {
+  const now = Date.now();
+  if (localHostnameCache && now - localHostnameCache.at < 60_000) return localHostnameCache.names;
+  const names = new Set(["127.0.0.1", "localhost", "::1"]);
+  const bindHost = bind.replace(/^\[|\]$/g, "").trim().toLowerCase();
+  if (bindHost) names.add(bindHost);
+  try {
+    for (const addrs of Object.values(networkInterfaces())) {
+      for (const addr of addrs ?? []) {
+        if (addr.address) names.add(addr.address.split("%")[0]!.toLowerCase());
+      }
+    }
+  } catch {
+    /* interfaces unavailable — loopback names still apply */
+  }
+  localHostnameCache = { at: now, names };
+  return names;
+}
+
+function hostnameAllowed(hostname: string, bind: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").trim().toLowerCase();
+  if (!host) return false;
+  return localHostnames(bind).has(host);
+}
+
+function originAllowed(origin: string, bind: string): boolean {
+  try {
+    return hostnameAllowed(new URL(origin).hostname, bind);
+  } catch {
+    return false;
+  }
+}
+
+/** True when the request carries browser headers pointing at another site —
+ * a cross-origin page or a DNS-rebound domain. Host is mandatory in HTTP/1.1,
+ * so a missing Host is treated as hostile too. */
+export function requestLooksCrossSite(
+  req: Pick<IncomingMessage, "headers">,
+  bind: string,
+): boolean {
+  const site = req.headers["sec-fetch-site"];
+  if (typeof site === "string" && site === "cross-site") return true;
+  const host = req.headers.host;
+  if (typeof host !== "string" || !host.trim()) return true;
+  if (!hostnameAllowed(host.replace(/:\d+$/, ""), bind)) return true;
+  const origin = req.headers.origin;
+  if (typeof origin === "string" && origin && origin !== "null" && !originAllowed(origin, bind)) return true;
+  const referer = req.headers.referer;
+  if (typeof referer === "string" && referer) {
+    try {
+      if (!hostnameAllowed(new URL(referer).hostname, bind)) return true;
+    } catch {
+      /* malformed referer — the Host check already decided */
+    }
+  }
+  return false;
 }

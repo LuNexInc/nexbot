@@ -63,9 +63,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     const { instanceId, config } = input;
     const listeners = new Set<RuntimeEventListener>();
     interface Turn {
-      stop: () => void;
+      stop: () => Promise<void>;
       turnId: string;
       asks: Map<string, (behavior: string, message?: string) => void>;
+      forceSettle: (ok: boolean, stopReason: string | null) => void;
     }
     const active = new Map<string, Turn>();
 
@@ -129,7 +130,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         rpcPending.clear();
         active.delete(threadId);
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
-        stop(); // the app-server never exits on its own
+        void stop(); // the app-server never exits on its own
       };
 
       // server→client approval request → canonical request.opened
@@ -279,7 +280,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             const pend = rpcPending.get(msg.id);
             if (pend) {
               rpcPending.delete(msg.id);
-              msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+              if (msg.error) pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error)));
+              else pend.resolve(msg.result);
             }
           } else if (msg.id !== undefined && msg.method) {
             handleServerRequest(msg);
@@ -309,11 +311,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       });
 
-      active.set(threadId, { stop, turnId, asks });
+      active.set(threadId, { stop, turnId, asks, forceSettle: settle });
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
       // handshake + kickoff; any refusal surfaces as failure, not a hang
-      (async () => {
+      void (async () => {
         try {
           await request("initialize", { clientInfo: { name: "nexbot", version: "1" } });
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
@@ -376,7 +378,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         provider: DRIVER_KIND,
         capabilities: { sessionModelSwitch: "unsupported" },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        interruptTurn: async (threadId) => {
+          const turn = active.get(threadId);
+          if (!turn) return;
+          await turn.stop();
+          // A kill that did not land (zombie child) must not brick the thread.
+          if (active.get(threadId) === turn) turn.forceSettle(false, "interrupted");
+        },
         respondToRequest: async (threadId, requestId, decision) => {
           const turn = active.get(threadId);
           const finish = turn?.asks.get(requestId);
@@ -385,7 +393,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const [threadId, turn] of [...active.entries()]) {
+            await turn.stop();
+            if (active.get(threadId) === turn) turn.forceSettle(false, "stopped");
+          }
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -393,7 +404,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         },
       },
       dispose: async () => {
-        for (const { stop } of active.values()) stop();
+        for (const [threadId, turn] of [...active.entries()]) {
+          await turn.stop();
+          if (active.get(threadId) === turn) turn.forceSettle(false, "stopped");
+        }
         listeners.clear();
       },
     };

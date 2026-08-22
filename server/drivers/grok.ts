@@ -210,7 +210,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       emit({ ...base(threadId, turnId), type: "turn.started" });
       emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model: turn.model ?? MODELS.default });
 
-      (async () => {
+      void (async () => {
         try {
           const tools = turn.botId ? [TODO_OPENAI_TOOL] : [];
           let inTok = 0;

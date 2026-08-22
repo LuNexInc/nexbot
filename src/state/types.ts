@@ -122,6 +122,12 @@ export interface Bot {
   sortOrder?: number;
   /** Live durable checklist from the todo tool. */
   todos?: TodoItem[];
+  /** Total messages in the server-side transcript. The hydrated `messages`
+   * array may be only the most recent window; older pages load through
+   * GET /api/bots/:id/messages. */
+  messageCount?: number;
+  /** True while the transcript has messages older than the loaded window. */
+  hasEarlier?: boolean;
   messages: Message[];
 }
 
@@ -131,7 +137,9 @@ export interface Routine {
   name: string;
   prompt: string;
   kind?: "cron" | "webhook" | "file";
+  /** Write-only on the server; responses carry hasSecret instead of the value. */
   webhookSecret?: string;
+  hasSecret?: boolean;
   githubRepo?: string;
   watchPath?: string;
   everyMinutes?: number;
@@ -231,6 +239,9 @@ export interface AppState {
   provisioning: Record<string, boolean>;
   connected: boolean;
   error: string | null;
+  /** The initial roster fetch failed — distinct from an empty workspace so
+   * the empty state never masquerades as "no bots". */
+  rosterError: string | null;
   /** transient warnings scoped to their owning bot */
   botErrors: Record<string, string>;
   mascotMotion: {
@@ -268,6 +279,7 @@ export type Action =
   | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
+  | { type: "messagesPrepended"; threadId: string; messages: Message[]; messageCount?: number; hasEarlier?: boolean }
   | { type: "messageFailed"; threadId: string; clientNonce: string }
   | { type: "retryMessage"; botId: string; clientNonce: string }
   | { type: "streamDelta"; threadId: string; delta: string }
@@ -280,6 +292,7 @@ export type Action =
   | { type: "interrupt"; botId: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
+  | { type: "rosterError"; message: string | null }
   | { type: "botError"; botId: string; message: string }
   | { type: "clearBotError"; botId: string }
   | { type: "wipe" }

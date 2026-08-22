@@ -55,6 +55,7 @@ export const initialState: AppState = {
   provisioning: {},
   connected: false,
   error: null,
+  rosterError: null,
   botErrors: {},
   mascotMotion: null,
 };
@@ -77,7 +78,7 @@ export function reducer(state: AppState, action: Action): AppState {
         orderedBots.some((b) => b.id === state.selectedId) && state.selectedId
           ? state.selectedId
           : (chief?.id ?? orderedBots[0]?.id ?? "");
-      return { ...state, bots: orderedBots, selectedId };
+      return { ...state, bots: orderedBots, selectedId, rosterError: null };
     }
     case "instances":
       return { ...state, instances: action.instances };
@@ -236,15 +237,28 @@ export function reducer(state: AppState, action: Action): AppState {
           ? /\b(?:ask_bot|send_bot)\b/i.test(action.message.tool?.name ?? "") && action.message.tool?.ok !== true && action.message.tool?.ok !== false
             ? "handover"
             : action.message.tool?.ok === false
-            ? "failure"
-            : action.message.tool?.ok === true
-              ? "success"
-              : "working"
+              ? "failure"
+              : action.message.tool?.ok === true
+                ? "success"
+                : "working"
           : null;
       const next = motion ? withMascotMotion(state, bot.id, motion) : state;
       return updateBot(next, bot.id, (b) => ({
         ...b,
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
+      }));
+    }
+    // Older transcript history loaded from GET /api/bots/:id/messages.
+    case "messagesPrepended": {
+      const bot = state.bots.find((b) => b.threadId === action.threadId);
+      if (!bot) return state;
+      const known = new Set(bot.messages.map((m) => m.id));
+      const fresh = action.messages.filter((m) => !known.has(m.id));
+      return updateBot(state, bot.id, (b) => ({
+        ...b,
+        messages: [...fresh, ...b.messages],
+        ...(action.messageCount !== undefined ? { messageCount: action.messageCount } : {}),
+        hasEarlier: action.hasEarlier ?? false,
       }));
     }
     case "streamDelta":
@@ -292,6 +306,8 @@ export function reducer(state: AppState, action: Action): AppState {
           : state),
         error: action.message,
       };
+    case "rosterError":
+      return { ...state, rosterError: action.message };
     case "botError":
       return withMascotMotion(
         { ...state, botErrors: { ...state.botErrors, [action.botId]: action.message } },

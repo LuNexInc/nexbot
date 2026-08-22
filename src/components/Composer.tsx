@@ -35,11 +35,20 @@ export function Composer({ bot }: { bot: Bot }) {
     text: string;
     choices: ClarificationChoice[];
   } | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<Array<{ name: string; data: string }>>([]);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
+
+  // Auto-grow the composer with its content, up to a sane ceiling. Long
+  // agent prompts are the core use case; one cramped line was not.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [text]);
 
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
@@ -418,17 +427,18 @@ export function Composer({ bot }: { bot: Bot }) {
               @
             </button>
 
-            <input
+            <textarea
               ref={inputRef}
               value={text}
+              rows={1}
               onChange={(e) => {
                 setText(e.target.value);
                 setCaret(e.target.selectionStart ?? e.target.value.length);
                 setDismissedAt(null);
                 setClarification(null);
               }}
-              onKeyUp={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
-              onClick={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
+              onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
               onPaste={(e) => {
                 const items = Array.from(e.clipboardData?.items ?? []);
                 const images = items.filter((it) => it.type.startsWith("image/"));
@@ -458,22 +468,22 @@ export function Composer({ bot }: { bot: Bot }) {
                     return;
                   }
                 }
-                if (e.key === "Enter") {
-                  // This is a single-line composer. Keep Enter deterministic:
-                  // choose a visible @mention first, otherwise send the turn.
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  // Enter sends; Shift+Enter inserts a newline. A visible
+                  // @mention still wins so tagging stays one keystroke.
                   e.preventDefault();
                   send();
                   return;
                 }
                 if (e.key === "Escape" && recording) setRecording(false);
               }}
-              aria-keyshortcuts="Enter"
+              aria-keyshortcuts="Enter Shift+Enter"
               aria-controls={pickerOpen ? "nexbot-mention-picker" : undefined}
               aria-activedescendant={pickerOpen ? `nexbot-mention-${candidates[highlight]?.id}` : undefined}
               placeholder={
                 recording ? "Listening…" : bot.operatorControl ? "Operator control is active — messages will queue" : bot.busy ? `Message while ${bot.name} works…` : `Message ${bot.name} · @ to tag`
               }
-              className="w-full bg-transparent px-1 py-1 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none"
+              className="w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-ink placeholder:text-ink-secondary focus:outline-none"
             />
 
             {bot.busy ? (

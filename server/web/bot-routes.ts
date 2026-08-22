@@ -22,7 +22,7 @@ import {
   writeProfile,
   writeLog,
 } from "../desk.ts";
-import { deleteRoutinesForBot, listRoutines } from "../routines.ts";
+import { deleteRoutinesForBot, publicRoutines } from "../routines.ts";
 import { persistAgentInbox } from "../agent-inbox.ts";
 import { removeQueuedTurnsForBot, enqueueTurn, queuedTurns } from "../turn-queue.ts";
 import { observeFrame } from "../execution-evidence.ts";
@@ -45,8 +45,24 @@ function groupMemberError(ids: string[], store: Store): string | null {
   return null;
 }
 
+/** Messages included when hydrating a bot card. The full transcript stays in
+ * SQLite (and the server-side cache); clients page older history through
+ * GET /api/bots/:id/messages so a months-old workspace does not serialize
+ * every message on every boot and reconnect. */
+const ROSTER_MESSAGE_WINDOW = 200;
+
+function transcriptWindow(store: Store, threadId: string): {
+  messages: ReturnType<Store["messagesFor"]>;
+  messageCount: number;
+  hasEarlier: boolean;
+} {
+  const all = store.messagesFor(threadId);
+  const messages = all.length > ROSTER_MESSAGE_WINDOW ? all.slice(-ROSTER_MESSAGE_WINDOW) : all;
+  return { messages, messageCount: all.length, hasEarlier: all.length > messages.length };
+}
+
 export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
-  const { req, res, method, path } = args;
+  const { req, res, method, path, url } = args;
   if (!path.startsWith("/api/bots") && path !== "/api/onboarding/chief-of-staff") return false;
   const {
     store, registry, broadcast, screens, agentInbox, nonceCache,
@@ -58,14 +74,14 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
   // ── roster ──
   if (method === "GET" && path === "/api/bots") {
     return json(res, 200, {
-      bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId), todos: listTodos(b.id) })),
+      bots: store.bots.map((b) => ({ ...b, ...transcriptWindow(store, b.threadId), todos: listTodos(b.id) })),
     });
   }
   let m = path.match(/^\/api\/bots\/([\w-]+)$/);
   if (method === "GET" && m) {
     const bot = store.bot(m[1]);
     if (!bot) return json(res, 404, { error: "no such bot" });
-    return json(res, 200, { bot: { ...bot, messages: store.messagesFor(bot.threadId), todos: listTodos(bot.id) } });
+    return json(res, 200, { bot: { ...bot, ...transcriptWindow(store, bot.threadId), todos: listTodos(bot.id) } });
   }
   if (method === "POST" && path === "/api/onboarding/chief-of-staff") {
     const body = await readBody(req).catch((): Record<string, unknown> => ({}));
@@ -208,7 +224,7 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
       } catch {}
     }
     broadcast({ kind: "bot.deleted", botId: bot.id });
-    broadcast({ kind: "routines", routines: listRoutines() });
+    broadcast({ kind: "routines", routines: publicRoutines() });
     return json(res, 200, { ok: true });
   }
 
@@ -236,6 +252,25 @@ export async function handleBotRoutes(args: RouteArgs): Promise<boolean> {
     }
     broadcast({ kind: "message.patch", threadId: bot.threadId, message: patched });
     return json(res, 200, { message: patched });
+  }
+  m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
+  if (m && method === "GET") {
+    const bot = store.bot(m[1]);
+    if (!bot) return json(res, 404, { error: "no such bot" });
+    const all = store.messagesFor(bot.threadId);
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? ROSTER_MESSAGE_WINDOW) || ROSTER_MESSAGE_WINDOW));
+    const before = url.searchParams.get("before");
+    let end = all.length;
+    if (before) {
+      const idx = all.findIndex((msg) => msg.id === before);
+      end = idx > 0 ? idx : idx === 0 ? 0 : all.length;
+    }
+    const start = Math.max(0, end - limit);
+    return json(res, 200, {
+      messages: all.slice(start, end),
+      messageCount: all.length,
+      hasEarlier: start > 0,
+    });
   }
   m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
   if (m && method === "POST") {

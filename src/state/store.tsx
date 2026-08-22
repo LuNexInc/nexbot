@@ -4,6 +4,7 @@
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -38,6 +39,8 @@ export type {
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  /** Re-run the initial roster/config fetch (the retry button). */
+  reload: () => void;
 } | null>(null);
 
 const EXPERT_MODE_STORAGE_KEY = "nexbot.expert-mode";
@@ -297,14 +300,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ── initial load + SSE fold ──────────────────────────────────────────
+  const loadAllRef = useRef<() => void>(() => {});
+  const reload = useCallback(() => loadAllRef.current(), []);
   useEffect(() => {
     let alive = true;
     const loadAll = () => {
       // hydrate restores unread as persisted. Do not PATCH unread:false for
       // the auto-selected first bot — that would wipe the New chip across restart.
+      // A failed roster fetch must not read as an empty workspace: surface it.
       api("/api/bots")
-        .then(({ bots }) => alive && rawDispatch({ type: "hydrate", bots }))
-        .catch(() => {});
+        .then(({ bots }) => {
+          if (!alive) return;
+          rawDispatch({ type: "rosterError", message: null });
+          rawDispatch({ type: "hydrate", bots });
+        })
+        .catch((e) => {
+          if (alive) rawDispatch({ type: "rosterError", message: e instanceof Error ? e.message : String(e) });
+        });
       api("/api/instances")
         .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
         .catch(() => {});
@@ -312,6 +324,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .then((config) => alive && rawDispatch({ type: "configStatus", config }))
         .catch(() => {});
     };
+    loadAllRef.current = loadAll;
     loadAll();
 
     const es = new EventSource(remoteApiUrl("/api/events"));
@@ -458,7 +471,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch }), [state, dispatch]);
+  const value = useMemo(() => ({ state, dispatch, reload }), [state, dispatch, reload]);
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

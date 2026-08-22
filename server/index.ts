@@ -31,6 +31,7 @@ import {
   dueRoutines,
   listRoutines,
   markRan,
+  publicRoutines,
 } from "./routines.ts";
 import { ASK_BOT_STILL_WORKING, ASK_BOT_WAIT_MS, boundToolOutput } from "./comms-policy.ts";
 import { createScreenPoller } from "./screen-poller.ts";
@@ -44,7 +45,9 @@ import { checkSteerToken } from "./steer.ts";
 import {
   authorizeHarnessRequest,
   bindIsOffLoopback,
+  isPublicHarnessPath,
   loadHarnessToken,
+  requestLooksCrossSite,
   tokenFromHarnessRequest,
 } from "./harness-auth.ts";
 import {
@@ -63,6 +66,8 @@ import { loadAgentInbox, persistAgentInbox, type StoredAgentMessage } from "./ag
 import { createTaskContext, delegateTask, isTaskDelegation, type TaskContext } from "./task-context.ts";
 import { wipeLocalData } from "./wipe.ts";
 import { renderArtifactsForReply, serveArtifact } from "./artifacts.ts";
+import { runDataHygiene } from "./data-hygiene.ts";
+import { pruneEventLogs } from "./event-log.ts";
 import { enqueueConversationArchive, ensureConversationArchive, freshSessionContextPrompt } from "./conversation-context.ts";
 import { handleInternalRoutes } from "./web/internal-routes.ts";
 import { handleBotRoutes } from "./web/bot-routes.ts";
@@ -305,6 +310,11 @@ const watchdog = createWatchdog({ stuckMs: 90_000 });
 /** botId → group thread that started this turn (shared transcript). */
 const turnGroup = new Map<string, string>();
 type TurnKind = "user" | "agent" | "routine" | "proactive" | "completion";
+// Synchronous claim taken the moment a turn is requested. bot.busy only
+// flips after provider probing (which can await a CLI --version call for
+// seconds), so without this a second send can slip through the gate while
+// the first is still dispatching.
+const turnReservations = new Set<string>();
 const turnMeta = new Map<string, {
   kind: TurnKind;
   messageStart: number;
@@ -325,6 +335,7 @@ const completionReports: CompletionReport[] = [];
 let cosReportTimer: ReturnType<typeof setTimeout> | undefined;
 const proactivePending = new Map<string, Set<ProactiveReason>>();
 const taskMessageCounts = new Map<string, number>();
+const usagePersistAt = new Map<string, number>();
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set<ServerResponse>();
@@ -380,7 +391,8 @@ const groupCopyByMember = new Map<string, string>();
 function patchReceiptMessage(receipt: ExecutionReceipt): void {
   const link = receiptMessage.get(receipt.id);
   if (!link) return;
-  const existing = store.messagesFor(link.threadId).find((message) => message.id === link.messageId);
+  const existing = store.getMessage(link.threadId, link.messageId);
+  if (receipt.status !== "running") receiptMessage.delete(receipt.id);
   if (!existing?.tool) return;
   const patched = store.patchMessage(link.threadId, link.messageId, {
     tool: {
@@ -400,7 +412,13 @@ bus.subscribe((event: RuntimeEvent) => {
   const extra: { tokens?: { input: number; output: number }; computerTool?: boolean; isChunk?: boolean } = {};
   if (event.type === "thread.token-usage.updated") {
     extra.tokens = { input: event.input ?? 0, output: event.output ?? 0 };
-    store.patchBot(bot.id, { usage: extra.tokens });
+    // One usage tick per assistant message: keep memory live, but write the
+    // row at most every 2s per bot. The turn-end busy:false persist carries
+    // the final value, so a crash loses at most 2s of usage stats.
+    const now = Date.now();
+    const persistUsage = now - (usagePersistAt.get(bot.id) ?? 0) >= 2_000;
+    if (persistUsage) usagePersistAt.set(bot.id, now);
+    store.patchBot(bot.id, { usage: extra.tokens }, { persist: persistUsage });
     broadcast({ kind: "usage", botId: bot.id, usage: extra.tokens });
     const currentTurn = turnMeta.get(bot.id);
     if (currentTurn) {
@@ -480,7 +498,7 @@ bus.subscribe((event: RuntimeEvent) => {
         }
       } else if (event.itemType === "tool" && event.itemId) {
         const messageId = toolMessageByItem.get(event.itemId);
-        const existingName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
+        const existingName = (messageId ? store.getMessage(event.threadId, messageId) : null)?.tool?.name ?? "tool";
         if (event.ok === false) onToolError({ name: existingName, title: existingName });
         else postToolHook({ name: existingName, title: existingName });
         const tools = turnTools.get(bot.id);
@@ -489,7 +507,7 @@ bus.subscribe((event: RuntimeEvent) => {
         const receipt = receiptId ? completeReceipt(receiptId, event.ok !== false) : null;
         if (receipt) patchReceiptMessage(receipt);
         if (messageId) {
-          const existingTool = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
+          const existingTool = store.getMessage(event.threadId, messageId)?.tool;
           const patched = store.patchMessage(event.threadId, messageId, {
             tool: { ...existingTool, name: existingName, ok: event.ok },
           });
@@ -592,7 +610,7 @@ bus.subscribe((event: RuntimeEvent) => {
     case "request.resolved": {
       const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
       if (messageId) {
-        const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
+        const existing = event.threadId ? store.getMessage(event.threadId, messageId) : null;
         if (existing?.card && !existing.card.answered) {
           const patched = store.patchMessage(event.threadId, messageId, {
             card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
@@ -701,10 +719,13 @@ bus.subscribe((event: RuntimeEvent) => {
       store.patchBot(bot.id, { busy: false, unread: true, ...(meta?.ttfrMs !== undefined ? { lastTtfrMs: meta.ttfrMs } : {}) });
       const used = turnTools.get(bot.id);
       turnTools.delete(bot.id);
+      // A budget trip raced off by normal completion must not disarm the
+      // ceiling for this bot's future turns.
+      budgetStopped.delete(bot.id);
       if (used && used.okNames.length >= 2) {
-        const msgs = store.messagesFor(bot.threadId);
-        const userText = [...msgs].reverse().find((m) => m.role === "user" && m.kind === "text")?.text ?? "";
-        const assistantText = [...msgs].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "";
+        const turnWindow = store.messagesFor(bot.threadId).slice(currentTurn?.messageStart ?? 0);
+        const userText = [...turnWindow].reverse().find((m) => m.role === "user" && m.kind === "text")?.text ?? "";
+        const assistantText = [...turnWindow].reverse().find((m) => m.role === "bot" && m.kind === "text")?.text ?? "";
         autoDistillFromTurn({ userText, assistantText, toolNames: used.okNames });
       }
       turnGroup.delete(bot.id);
@@ -1053,9 +1074,11 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
   if (bot.operatorControl) throw Object.assign(new Error("operator takeover is active — release control before starting the bot"), { status: 409 });
-  if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+  if (bot.busy || turnReservations.has(botId)) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+  turnReservations.add(botId);
   const existingJob = opts?.jobId ? getJob(opts.jobId) : null;
   if (opts?.jobId && (!existingJob || existingJob.botId !== bot.id)) {
+    turnReservations.delete(botId);
     throw Object.assign(new Error("no such job for this bot"), { status: 404 });
   }
   const isResume = Boolean(opts?.resume && existingJob);
@@ -1084,6 +1107,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         void startTurn(member.id, promptText, { taskContext: createTaskContext(member.id), source: "agent", groupId: bot.id }).catch(() => {});
       }
     }
+    turnReservations.delete(botId);
     return;
   }
 
@@ -1096,7 +1120,13 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     : bot.modelSelection;
   let instance = registry.get(selection.instanceId);
   if (!instance) {
-    const fallback = await defaultSelection();
+    let fallback;
+    try {
+      fallback = await defaultSelection();
+    } catch (e) {
+      turnReservations.delete(botId);
+      throw e;
+    }
     const fallbackInstance = registry.get(fallback.instanceId);
     if (fallbackInstance) {
       selection = fallback;
@@ -1106,6 +1136,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
         broadcast({ kind: "bot", bot: store.bot(bot.id) });
       }
     } else {
+      turnReservations.delete(botId);
       throw Object.assign(
         new Error("No AI provider is ready: the selected provider is unavailable. Install and sign in to a supported CLI, or configure an API provider in Settings."),
         { status: 409 },
@@ -1162,6 +1193,7 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
     isChiefOfStaffRole(bot.name, bot.title);
   if (canAutoRoute) {
     store.patchBot(bot.id, { busy: true, unread: false });
+    turnReservations.delete(botId);
     broadcast({ kind: "bot", bot: store.bot(bot.id) });
     try {
       const routed = await autoRouteChiefTurn(bot, turnText, taskContext);
@@ -1230,6 +1262,8 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   store.patchBot(bot.id, { busy: true, unread: false });
+  // The busy flag owns concurrency from here; drop the dispatch claim.
+  turnReservations.delete(botId);
   watchdog.start(bot.id);
   if (opts?.groupId) turnGroup.set(bot.id, opts.groupId);
   if (turnKind === "user" && !isResume && !opts?.replay) rememberTurn(bot.id, turnText, "user");
@@ -1391,6 +1425,8 @@ async function startTurn(botId: string, text: string, opts?: StartTurnOpts) {
       watchdog.end(bot.id);
       turnGroup.delete(bot.id);
       turnMeta.delete(bot.id);
+      turnTools.delete(bot.id);
+      budgetStopped.delete(bot.id);
       forgetTurn(bot.id);
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       if (queuedTurns(bot.id).length > 0) setTimeout(() => drainUserQueue(bot.id), 50);
@@ -1418,6 +1454,11 @@ function allowPairingAttempt(req: IncomingMessage): boolean {
   const now = Date.now();
   const current = pairingAttemptWindows.get(key);
   if (!current || now - current.startedAt >= PAIRING_ATTEMPT_WINDOW_MS) {
+    // Sweep expired windows so the map cannot grow once per unique remote
+    // address for the life of the process.
+    for (const [k, row] of pairingAttemptWindows) {
+      if (now - row.startedAt >= PAIRING_ATTEMPT_WINDOW_MS) pairingAttemptWindows.delete(k);
+    }
     pairingAttemptWindows.set(key, { startedAt: now, count: 1 });
     return true;
   }
@@ -1426,12 +1467,20 @@ function allowPairingAttempt(req: IncomingMessage): boolean {
   return true;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-misused-promises -- the handler catches its own errors
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
   try {
     const providedToken = tokenFromHarnessRequest(req.headers.authorization, url.searchParams.get("token"));
+    // A browser page from another site (or a DNS-rebound domain) must never
+    // drive /api even from a loopback socket — that is the whole trust model.
+    // Public paths (webhooks, health, the token-gated internal API) are
+    // exempt: they carry their own authentication.
+    if (path.startsWith("/api/") && !isPublicHarnessPath(method, path) && requestLooksCrossSite(req, BIND)) {
+      return json(res, 403, { error: "cross-origin API requests are not allowed" });
+    }
     // Connect device tokens authorize the same API surface as the host
     // harness, but only while LAN mode (or an explicit off-loopback bind) is
     // active. Loopback clients remain trusted by the existing harness gate.
@@ -1488,7 +1537,12 @@ const server = createServer(async (req, res) => {
       turnMeta.clear();
       turnTools.clear();
       toolMessageByItem.clear();
+      receiptByItem.clear();
+      receiptMessage.clear();
       askMessageByRequest.clear();
+      groupCopyByMember.clear();
+      budgetStopped.clear();
+      relayResolvedThreads.clear();
       proactivePending.clear();
       taskMessageCounts.clear();
       completionReports.length = 0;
@@ -1526,7 +1580,7 @@ function fireRoutineEvent(r: { id: string; botId: string; name: string; prompt: 
   markRan(r.id);
   rememberTurn(r.botId, text, "routine");
   void startTurn(r.botId, text, { source: "routine" }).catch(() => {});
-  broadcast({ kind: "routines", routines: listRoutines() });
+  broadcast({ kind: "routines", routines: publicRoutines() });
   return true;
 }
 
@@ -1581,7 +1635,7 @@ function runDueRoutines() {
       onComplete: r.onComplete,
       maxTokens: r.maxTokens,
     }).catch(() => {});
-    broadcast({ kind: "routines", routines: listRoutines() });
+    broadcast({ kind: "routines", routines: publicRoutines() });
   }
 }
 
@@ -1648,6 +1702,21 @@ server.listen(PORT, BIND, () => {
     console.log(`nexbot: bound off-loopback. Non-local /api calls need a token from ${join(DATA_DIR, "harness.json")}.`);
   }
   syncFileWatches();
+  // events/ and native/ NDJSON grow forever without this: the rotation
+  // comments promise 14-day retention, so honor it on a daily sweep.
+  const hygiene = runDataHygiene();
+  const pruned = pruneEventLogs();
+  if (hygiene.removed.length || pruned.removed || pruned.rotated) {
+    console.log(`nexbot: hygiene — removed ${hygiene.removed.length} legacy file(s), pruned ${pruned.removed} log(s), rotated ${pruned.rotated}.`);
+  }
+  const dailyPrune = setInterval(() => {
+    try {
+      pruneEventLogs();
+    } catch (e) {
+      console.warn("[harness] log prune failed:", e);
+    }
+  }, 24 * 60 * 60 * 1000);
+  dailyPrune.unref?.();
   setTimeout(recoverAfterBoot, 2500);
   setTimeout(() => {
     for (const bot of store.bots) {
@@ -1698,8 +1767,30 @@ setInterval(() => {
   }
 }, 10_000);
 
+// This process hosts every agent child and every SSE client; one stray
+// rejection must not take the whole tray backend down. Log it, tell the
+// clients, keep running. A second failure within the window means real
+// damage — exit before state gets worse.
+let lastProcessFailureAt = 0;
+function surviveProcessFailure(kind: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[harness] ${kind}:`, error);
+  broadcast({ kind: "warning", body: `The harness hit an internal error (${message.slice(0, 120)}) and recovered.` });
+  if (Date.now() - lastProcessFailureAt < 5_000) {
+    console.error("[harness] repeated internal failures — exiting");
+    void registry.disposeAll().finally(() => process.exit(1));
+    return;
+  }
+  lastProcessFailureAt = Date.now();
+}
+process.on("unhandledRejection", (reason) => surviveProcessFailure("unhandledRejection", reason));
+process.on("uncaughtException", (error) => surviveProcessFailure("uncaughtException", error));
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    void registry.disposeAll().finally(() => process.exit(0));
+    // Give every child a real chance to die (driver dispose awaits the kill)
+    // but never hang shutdown on a zombie process.
+    const ceiling = new Promise<void>((resolve) => setTimeout(resolve, 8_000).unref?.());
+    void Promise.race([registry.disposeAll(), ceiling]).finally(() => process.exit(0));
   });
 }

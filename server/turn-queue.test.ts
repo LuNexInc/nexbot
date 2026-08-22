@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeStoreDb } from "./db.ts";
-import { enqueueTurn, queuedTurns, takeNextTurn } from "./turn-queue.ts";
+import { enqueueTurn, queuedTurns, removeQueuedTurnsForBot, takeNextTurn } from "./turn-queue.ts";
 
 beforeEach(() => { closeStoreDb(); rmSync(DATA_DIR, { recursive: true, force: true }); });
 
@@ -12,5 +12,35 @@ describe("user turn queue", () => {
     enqueueTurn({ botId: "b1", text: "next", messageId: "m2", delivery: "steer" });
     expect(queuedTurns("b1").map((row) => row.text)).toEqual(["next", "later"]);
     expect(takeNextTurn("b1")?.text).toBe("next");
+  });
+
+  it("drains queued work in FIFO order", () => {
+    for (const [i, text] of ["first", "second", "third"].entries()) {
+      enqueueTurn({ botId: "b1", text, messageId: `m${i}`, delivery: "queue" });
+    }
+    expect(takeNextTurn("b1")?.text).toBe("first");
+    expect(takeNextTurn("b1")?.text).toBe("second");
+    expect(takeNextTurn("b1")?.text).toBe("third");
+    expect(takeNextTurn("b1")).toBeNull();
+  });
+
+  it("keeps queues per bot isolated", () => {
+    enqueueTurn({ botId: "b1", text: "mine", messageId: "m1", delivery: "queue" });
+    enqueueTurn({ botId: "b2", text: "theirs", messageId: "m2", delivery: "queue" });
+    expect(takeNextTurn("b2")?.text).toBe("theirs");
+    expect(queuedTurns("b1").map((row) => row.text)).toEqual(["mine"]);
+  });
+
+  it("takeNextTurn on an empty queue returns null", () => {
+    expect(takeNextTurn("nobody")).toBeNull();
+    expect(queuedTurns("nobody")).toEqual([]);
+  });
+
+  it("dropping a bot clears its pending turns (bot deletion path)", () => {
+    enqueueTurn({ botId: "b1", text: "queued", messageId: "m1", delivery: "queue" });
+    enqueueTurn({ botId: "b2", text: "keep", messageId: "m2", delivery: "queue" });
+    removeQueuedTurnsForBot("b1");
+    expect(queuedTurns("b1")).toEqual([]);
+    expect(queuedTurns("b2").map((row) => row.text)).toEqual(["keep"]);
   });
 });

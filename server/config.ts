@@ -126,7 +126,7 @@ function encryptPlaintextSecrets(disk: Record<string, unknown>): void {
 }
 
 export function loadConfig(): AppConfig {
-  let disk = readDisk();
+  const disk = readDisk();
   if (diskHasPlaintextSecrets(disk)) {
     encryptPlaintextSecrets(disk);
     writeDisk(disk);

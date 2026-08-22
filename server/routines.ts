@@ -95,6 +95,19 @@ export function listRoutines(botId?: string): Routine[] {
   return botId ? all.filter((r) => r.botId === botId) : all;
 }
 
+/** Routine rows as any client may see them: the webhook secret is write-only.
+ * A hasSecret flag replaces the value everywhere a routine leaves the harness
+ * (HTTP responses and SSE broadcasts alike). */
+export type PublicRoutine = Omit<Routine, "webhookSecret"> & { webhookSecret?: undefined; hasSecret?: boolean };
+
+export function publicRoutine(routine: Routine): PublicRoutine {
+  return { ...routine, webhookSecret: undefined, hasSecret: Boolean(routine.webhookSecret) };
+}
+
+export function publicRoutines(botId?: string): PublicRoutine[] {
+  return listRoutines(botId).map(publicRoutine);
+}
+
 export function nextRunAfter(r: Omit<Routine, "id">, from = Date.now()): number {
   if (r.everyMinutes && r.everyMinutes > 0) {
     return from + r.everyMinutes * 60_000;

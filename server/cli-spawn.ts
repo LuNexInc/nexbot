@@ -130,31 +130,53 @@ export function execFileCli(
   return execFile(resolved, args, opts, cb);
 }
 
-/** Stop a CLI and its children (MCP proxies, etc.). */
-export function stopChild(child: ChildProcess | null | undefined): void {
-  if (!child?.pid) return;
-  if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-    } catch {
+/** Stop a CLI and its children (MCP proxies, etc.). Resolves once the child
+ * is confirmed dead, or after `timeoutMs` so an unkillable zombie can never
+ * hang shutdown or an interrupt. */
+export function stopChild(child: ChildProcess | null | undefined, timeoutMs = 5_000): Promise<void> {
+  return new Promise((resolve) => {
+    if (!child || child.pid == null || child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    timer.unref?.();
+    // 'close' (not 'exit'): the driver's own close handler settles the turn
+    // first, so a force-settle upstream only fires for a real zombie.
+    child.once("close", done);
+    if (process.platform === "win32") {
       try {
-        child.kill();
+        const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+        // Without this listener a failed taskkill spawn raises an uncaught
+        // 'error' event that the surrounding try/catch cannot intercept.
+        killer.on("error", () => {
+          try { child.kill(); } catch { /* already gone */ }
+        });
       } catch {
-        /* already gone */
+        try { child.kill(); } catch { /* already gone */ }
       }
+      return;
     }
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
     try {
-      child.kill("SIGTERM");
+      process.kill(-child.pid, "SIGTERM");
     } catch {
-      /* already gone */
+      try { child.kill("SIGTERM"); } catch { /* already gone */ }
     }
-  }
+    // A child that ignores SIGTERM gets escalated so the resolve is real.
+    const escalate = setTimeout(() => {
+      if (child.pid == null) return;
+      try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+    }, Math.min(2_000, timeoutMs));
+    escalate.unref?.();
+  });
 }

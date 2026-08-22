@@ -2,7 +2,7 @@
 // inside a bot's agent process) calls these to discover peers and hand a
 // message to one. Guarded by the per-boot COMMS_TOKEN; not part of the
 // public API.
-import { json, readBody } from "../http-util.ts";
+import { json, readBody, secretsMatch } from "../http-util.ts";
 import { applyTodoTool } from "../todo.ts";
 import { searchMessages } from "../db.ts";
 import {
@@ -28,7 +28,9 @@ export async function handleInternalRoutes(args: RouteArgs): Promise<boolean> {
     queueAgentMessage, drainAgentInbox, chiefOfStaffBot, triggerProactive,
   } = harness;
 
-  if (req.headers.authorization !== `Bearer ${COMMS_TOKEN}`) {
+  const authHeader = req.headers.authorization;
+  const providedComms = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!secretsMatch(COMMS_TOKEN, providedComms)) {
     return json(res, 401, { error: "unauthorized" });
   }
   if (method === "GET" && path === "/api/internal/agents") {

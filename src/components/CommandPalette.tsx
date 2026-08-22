@@ -96,7 +96,13 @@ export function CommandPalette({
     const target = hit.botId
       ? state.bots.find((b) => b.id === hit.botId)
       : state.bots.find((b) => b.threadId === hit.threadId);
-    if (target) selectBot(target);
+    if (target) {
+      dispatch({ type: "select", id: target.id });
+      // ChatView listens and scrolls the matched message into view, loading
+      // earlier pages when the hit predates the hydrated window.
+      window.dispatchEvent(new CustomEvent("nexbot:focus-message", { detail: { messageId: hit.messageId } }));
+      onClose();
+    }
   };
 
   const pickFlat = (index: number) => {

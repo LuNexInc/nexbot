@@ -101,7 +101,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       NPM_CONFIG_LOGLEVEL: "error",
     });
     const models = await discoverCliModels(config.cli, ["models"], envForCli(), ANTIGRAVITY_MODELS);
-    const active = new Map<string, { stop: () => void; turnId: string }>();
+    const active = new Map<string, {
+      stop: () => Promise<void>;
+      turnId: string;
+      forceSettle: (ok: boolean, stopReason: string | null) => void;
+    }>();
 
     const emit = (event: RuntimeEvent) => {
       for (const listener of [...listeners]) listener(event);
@@ -252,7 +256,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       });
 
       const stop = () => stopChild(child);
-      active.set(turn.threadId, { stop, turnId });
+      active.set(turn.threadId, { stop, turnId, forceSettle: settle });
       emit({ ...base(turn.threadId, turnId), type: "turn.started" });
       // Print mode takes the prompt as the -p value. It does not use the
       // Gemini ACP stdin handshake, so close stdin immediately.
@@ -283,13 +287,21 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         // other NexBot drivers, so the harness will not advertise peer tools.
         capabilities: { sessionModelSwitch: "unsupported" },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        interruptTurn: async (threadId) => {
+          const entry = active.get(threadId);
+          if (!entry) return;
+          await entry.stop();
+          if (active.get(threadId) === entry) entry.forceSettle(false, "interrupted");
+        },
         respondToRequest: async () => {
           throw new Error("Antigravity print mode has no interactive request channel");
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const [threadId, entry] of [...active.entries()]) {
+            await entry.stop();
+            if (active.get(threadId) === entry) entry.forceSettle(false, "stopped");
+          }
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -305,7 +317,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           );
         }),
       dispose: async () => {
-        for (const { stop } of active.values()) stop();
+        for (const [threadId, entry] of [...active.entries()]) {
+          await entry.stop();
+          if (active.get(threadId) === entry) entry.forceSettle(false, "stopped");
+        }
         listeners.clear();
       },
     };

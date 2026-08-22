@@ -2,7 +2,7 @@
 // thread→instance binding and per-instance resume cursors). Persist the
 // binding from day one. messages-<threadId>.json holds the folded transcript.
 import { mkdirSync } from "node:fs";
-import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadThreadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBots, wasExplicitlyWiped } from "./db.ts";
+import { appendMessage as appendMessageToDb, clearExplicitWipeMarker, deleteBotRow, deleteThread, importJsonIfNeeded, loadBotsFromDb, loadThreadMessagesFromDb, openStoreDb, patchMessage as patchMessageInDb, persistBot, persistBots, wasExplicitlyWiped } from "./db.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
@@ -340,17 +340,52 @@ export class Store {
   clearAll(): void {
     this.bots = [];
     this.messages.clear();
+    this.idIndex.clear();
   }
 
   /** Threads kept in memory before the least-recently-used one is evicted.
    * Eviction is safe: every mutation writes through to SQLite immediately. */
   private static readonly MAX_LOADED_THREADS = 64;
 
+  /** messageId → its position in the cached thread array. Threads are
+   * append-only (never spliced mid-list), so positions stay stable while a
+   * thread stays cached; entries are lazily validated and fall back to a
+   * scan, so eviction/deletion can never produce a wrong hit. */
+  private static readonly MAX_ID_INDEX = 120_000;
+  private idIndex = new Map<string, { threadId: string; index: number }>();
+
+  private indexThread(threadId: string, list: Message[]): void {
+    for (let i = 0; i < list.length; i++) {
+      this.idIndex.set(list[i]!.id, { threadId, index: i });
+    }
+    this.trimIdIndex();
+  }
+
+  private trimIdIndex(): void {
+    while (this.idIndex.size > Store.MAX_ID_INDEX) {
+      const oldest = this.idIndex.keys().next().value;
+      if (oldest === undefined) break;
+      this.idIndex.delete(oldest);
+    }
+  }
+
+  /** O(1) message lookup by id (validated against the cached array, with a
+   * scan fallback), instead of a linear pass over the whole thread. */
+  getMessage(threadId: string, messageId: string): Message | null {
+    const hit = this.idIndex.get(messageId);
+    if (hit && hit.threadId === threadId) {
+      const m = this.messagesFor(threadId)[hit.index];
+      if (m && m.id === messageId) return m;
+    }
+    return this.messagesFor(threadId).find((m) => m.id === messageId) ?? null;
+  }
+
   messagesFor(threadId: string): Message[] {
     let list = this.messages.get(threadId);
     if (!list) {
       list = loadThreadMessagesFromDb(threadId);
       this.messages.set(threadId, list);
+      this.indexThread(threadId, list);
       this.evictStaleThreads();
       return list;
     }
@@ -370,7 +405,10 @@ export class Store {
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const full: Message = { id: newId(), at: Date.now(), ...message };
-    this.messagesFor(threadId).push(full);
+    const list = this.messagesFor(threadId);
+    list.push(full);
+    this.idIndex.set(full.id, { threadId, index: list.length - 1 });
+    this.trimIdIndex();
     const bot = this.botByThread(threadId);
     appendMessageToDb(threadId, full, bot?.id);
     return full;
@@ -378,11 +416,14 @@ export class Store {
 
   patchMessage(threadId: string, messageId: string, patch: Partial<Message>): Message | null {
     const list = this.messagesFor(threadId);
-    const idx = list.findIndex((m) => m.id === messageId);
+    const hit = this.idIndex.get(messageId);
+    const idx = hit && hit.threadId === threadId && list[hit.index]?.id === messageId
+      ? hit.index
+      : list.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
-    list[idx] = { ...list[idx], ...patch, card: patch.card ?? list[idx].card };
-    patchMessageInDb(threadId, list[idx]);
-    return list[idx];
+    list[idx] = { ...list[idx]!, ...patch, card: patch.card ?? list[idx]!.card };
+    patchMessageInDb(threadId, list[idx]!);
+    return list[idx]!;
   }
 
   bot(id: string) {
@@ -431,7 +472,7 @@ export class Store {
       createdAt: Date.now(),
     };
     this.bots.unshift(bot);
-    this.saveBots();
+    persistBot(bot);
     ensureDesk(bot.id);
     if (isGroup) {
       this.appendMessage(bot.threadId, {
@@ -464,13 +505,13 @@ export class Store {
     if (this.isLastChiefOfStaff(id)) return false;
     this.bots = this.bots.filter((b) => b.id !== id);
     this.messages.delete(bot.threadId);
-    this.saveBots();
+    deleteBotRow(bot.id);
     deleteThread(bot.threadId);
     removeJobsForBot(id);
     return true;
   }
 
-  patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
+  patchBot(id: string, patch: Partial<BotRecord>, opts: { persist?: boolean } = {}): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
     const next: Partial<BotRecord> = { ...patch };
@@ -492,7 +533,9 @@ export class Store {
       next.sortOrder = Number.isFinite(order) ? Math.max(0, Math.floor(order)) : bot.sortOrder;
     }
     Object.assign(bot, next);
-    this.saveBots();
+    // High-frequency callers (token-usage ticks) can skip the row write; the
+    // next persisted patch (e.g. busy:false at turn end) carries the value.
+    if (opts.persist !== false) persistBot(bot);
     return bot;
   }
 
@@ -500,7 +543,7 @@ export class Store {
     const bot = this.bot(botId);
     if (!bot) return;
     bot.resumeCursors = { ...(bot.resumeCursors ?? {}), [instanceId]: cursor };
-    this.saveBots();
+    persistBot(bot);
   }
 
   /** First-run seed: Chief of Staff + Research. Never wipes an existing roster. */

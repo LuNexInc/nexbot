@@ -11,6 +11,9 @@ _upstream_cmp/
 
 _upstream_cmp/
 
+# secrets never belong in the repo
+.env
+.env.*
 
 dist-server
 electron/updater.bundle.cjs

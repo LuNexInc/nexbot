@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { DATA_DIR } from "./config.ts";
@@ -28,11 +28,35 @@ const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 function allowedRoots(): string[] {
   const roots = [
     join(homedir(), "AI Projects"),
-    DATA_DIR,
+    join(DATA_DIR, "desk"),
     join(homedir(), ".gemini", "antigravity-cli", "brain"),
-    join(homedir(), ".codex"),
+    join(homedir(), ".codex", "brain"),
   ];
   return roots.filter((root, index) => roots.indexOf(root) === index && existsSync(root));
+}
+
+// Artifact previews are chat content, not a file browser for the harness's
+// own credentials. Dotfiles (.env, .credentials) never serve anywhere, and
+// the data dir's token/key material is denied by name.
+const DATA_DIR_DENIED_FILES = new Set([
+  "harness.json",
+  "steer.json",
+  "remote-access.json",
+  "config.json",
+  "agent-inbox.json",
+  "pending-turns.json",
+]);
+
+function artifactDenied(file: string): boolean {
+  const base = file.slice(Math.max(file.lastIndexOf("\\"), file.lastIndexOf("/")) + 1);
+  if (!base || base.startsWith(".") || base === "master.key") return true;
+  const rel = relative(resolve(DATA_DIR), file);
+  const insideDataDir = rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  if (insideDataDir) {
+    if (rel === "wireguard" || rel.startsWith(`wireguard${sep}`)) return true; // host private key
+    if (DATA_DIR_DENIED_FILES.has(base)) return true;
+  }
+  return false;
 }
 
 function inside(root: string, candidate: string): boolean {
@@ -79,6 +103,7 @@ export function resolveArtifactPath(reference: string): string | null {
   if (!isAbsolute(candidate)) return null;
   const resolved = canonical(resolve(candidate));
   if (!resolved || !allowedRoots().some((root) => inside(resolve(root), resolved))) return null;
+  if (artifactDenied(resolved)) return null;
   const ext = extname(resolved).toLowerCase();
   if (!ARTIFACT_MIME[ext]) return null;
   try {

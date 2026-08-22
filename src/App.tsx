@@ -39,7 +39,7 @@ function ReconnectBanner() {
 }
 
 function Shell({ inputGated }: { inputGated?: boolean }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, reload } = useStore();
   const [commandOpen, setCommandOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [narrow, setNarrow] = useState(() => window.innerWidth <= 900);
@@ -93,6 +93,18 @@ function Shell({ inputGated }: { inputGated?: boolean }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // nexbot:// deep links from the OS (Android Connect pairing sends
+  // nexbot://pair?…) land on App Settings, where Connect lives.
+  useEffect(() => {
+    const off = window.nexbot?.onDeepLink?.((info) => {
+      const url = String(info?.url ?? "");
+      if (url.startsWith("nexbot://pair") || url.startsWith("nexbot://connect")) {
+        dispatch({ type: "toggleAppSettings", open: true });
+      }
+    });
+    return () => off?.();
+  }, [dispatch]);
+
   return (
     <div className={`relative flex h-full bg-transparent ${winPad ? "pt-9" : ""}`}>
       {!state.connected && state.bots.length > 0 && <ReconnectBanner />}
@@ -109,7 +121,22 @@ function Shell({ inputGated }: { inputGated?: boolean }) {
         <ChatView bot={bot} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
-          {state.connected ? (
+          {state.rosterError && state.bots.length === 0 ? (
+            <>
+              <div className="text-[15px] font-medium text-danger">Couldn't load your team</div>
+              <p className="max-w-[380px] text-center text-[14px] leading-relaxed">
+                The harness is reachable but the roster request failed ({state.rosterError}).
+                Your bots are safe on disk.
+              </p>
+              <button
+                type="button"
+                onClick={reload}
+                className="pressable rounded-lg bg-ink px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90"
+              >
+                Try again
+              </button>
+            </>
+          ) : state.connected ? (
             <>
               <div className="text-[15px] font-medium text-ink">No bots yet</div>
               <p className="max-w-[380px] text-center text-[14px] leading-relaxed">

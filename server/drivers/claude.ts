@@ -6,7 +6,7 @@
 //   - Composio Connect (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -211,7 +211,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const { instanceId, config } = input;
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
-    const active = new Map<string, { stop: () => void; turnId: string; broker?: ReturnType<typeof createPermissionBroker> }>();
+    const active = new Map<string, {
+      stop: () => Promise<void>;
+      turnId: string;
+      broker?: ReturnType<typeof createPermissionBroker>;
+      forceSettle: (ok: boolean, stopReason: string | null) => void;
+    }>();
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
@@ -249,6 +254,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // integrations → MCP servers; pre-allow their tools (a headless
       // acceptEdits run silently denies anything unlisted)
       const mcpServers: Record<string, unknown> = {};
+      let mcpConfigFile: string | undefined;
       const allowed: string[] = [];
       if (turn.integrations?.composio?.key) {
         mcpServers.composio = {
@@ -320,7 +326,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         allowed.push("mcp__nexbot");
       }
       if (Object.keys(mcpServers).length) {
-        args.push("--mcp-config", JSON.stringify({ mcpServers }));
+        // Secrets ride in mcpServers (comms token, Composio key, CUA spec).
+        // argv is world-readable via ps on Unix — hand the CLI a 0600 file instead.
+        // A leftover after a crash is swept by the boot/daily hygiene pass.
+        try {
+          mcpConfigFile = join(DATA_DIR, "tmp", `mcp-${threadId}-${turnId}.json`);
+          mkdirSync(dirname(mcpConfigFile), { recursive: true });
+          writeFileSync(mcpConfigFile, JSON.stringify({ mcpServers }), { mode: 0o600 });
+          args.push("--mcp-config", mcpConfigFile);
+        } catch {
+          mcpConfigFile = undefined;
+          args.push("--mcp-config", JSON.stringify({ mcpServers })); // a live turn beats a dead one
+        }
         args.push("--allowedTools", allowed.join(","));
       }
 
@@ -345,6 +362,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         broker?.close();
         active.delete(threadId);
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost });
+        if (mcpConfigFile) {
+          try { rmSync(mcpConfigFile, { force: true }); } catch { /* best effort */ }
+        }
       };
 
       const handleLine = (line: string) => {
@@ -432,7 +452,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       const stop = () => stopChild(child);
-      active.set(threadId, { stop, turnId, broker });
+      active.set(threadId, { stop, turnId, broker, forceSettle: settle });
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
       // prompt over stdin as a stream-json message — never argv (ARG_MAX)
@@ -466,7 +486,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         provider: DRIVER_KIND,
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        interruptTurn: async (threadId) => {
+          const entry = active.get(threadId);
+          if (!entry) return;
+          await entry.stop();
+          // A kill that did not land (zombie child) must not brick the thread
+          // forever — settle it so a future sendTurn is accepted.
+          if (active.get(threadId) === entry) entry.forceSettle(false, "interrupted");
+        },
         respondToRequest: async (threadId, requestId, decision) => {
           const broker = active.get(threadId)?.broker;
           if (!broker) throw new Error("no active turn with a permission broker on this thread");
@@ -477,7 +504,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const [threadId, entry] of [...active.entries()]) {
+            await entry.stop();
+            if (active.get(threadId) === entry) entry.forceSettle(false, "stopped");
+          }
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -494,7 +524,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           );
         }),
       dispose: async () => {
-        for (const { stop } of active.values()) stop();
+        for (const [threadId, entry] of [...active.entries()]) {
+          await entry.stop();
+          if (active.get(threadId) === entry) entry.forceSettle(false, "stopped");
+        }
         listeners.clear();
       },
     };

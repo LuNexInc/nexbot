@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
 import { Check, Copy, Loader2, ChevronDown, MessageCircle, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useStore, formatTime, type Bot, type Message, type TurnEffort } from "@/state/store";
 import { NexAvatar } from "./Avatar";
@@ -494,6 +494,10 @@ const THINKING_TIERS: Array<{ afterS: number; phrase: string }> = [
   { afterS: 60, phrase: "is on a longer one — still here" },
 ];
 
+// Applied to a row via classList when a Ctrl+K hit targets it. Kept as a
+// source literal so the Tailwind scanner generates the utilities.
+const FOCUS_HIGHLIGHT_CLASSES = ["ring-2", "ring-accent/55", "rounded-2xl"];
+
 function thinkingPhrase(elapsedS: number): string {
   let phrase = THINKING_TIERS[0].phrase;
   for (const tier of THINKING_TIERS) if (elapsedS >= tier.afterS) phrase = tier.phrase;
@@ -527,7 +531,9 @@ function ThinkingLine({ name, color }: { name: string; color?: NexColor }) {
   );
 }
 
-function Bubble({
+// memo: the reducer replaces message objects immutably, so a 40ms stream
+// flush in another thread re-renders nothing here.
+const Bubble = memo(function Bubble({
   message,
   botId,
   expertMode,
@@ -626,7 +632,7 @@ function Bubble({
       </div>
     </div>
   );
-}
+});
 
 function isInterAgentMessage(m: Message): boolean {
   if (m.fromBot) return true;
@@ -707,7 +713,7 @@ function groupMessages(messages: Message[], expertMode = true): Array<
   return result;
 }
 
-function CommsCluster({
+const CommsCluster = memo(function CommsCluster({
   cluster,
   botId,
   expertMode,
@@ -783,7 +789,7 @@ function CommsCluster({
       )}
     </div>
   );
-}
+});
 
 function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
   return (
@@ -846,6 +852,7 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [artifact, setArtifact] = useState<ArtifactOpen | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
 
   const streaming = state.streaming[bot.threadId];
   const streamingReasoning = state.streamingReasoning[bot.threadId];
@@ -853,6 +860,84 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
   const previousBotId = useRef<string | null>(null);
   const initializedThreads = useRef(new Set<string>());
   const errorMessage = state.error ?? state.botErrors[bot.id];
+  const hasEarlier = Boolean(bot.hasEarlier) || (bot.messageCount ?? 0) > bot.messages.length;
+
+  const loadEarlier = async () => {
+    if (loadingEarlier) return;
+    setLoadingEarlier(true);
+    const el = scrollRef.current;
+    const heightBefore = el?.scrollHeight ?? 0;
+    try {
+      const before = bot.messages[0]?.id;
+      const res = await fetch(`/api/bots/${bot.id}/messages?limit=200${before ? `&before=${encodeURIComponent(before)}` : ""}`);
+      if (!res.ok) return;
+      const body = await res.json();
+      if (Array.isArray(body?.messages)) {
+        dispatch({
+          type: "messagesPrepended",
+          threadId: bot.threadId,
+          messages: body.messages,
+          messageCount: typeof body.messageCount === "number" ? body.messageCount : undefined,
+          hasEarlier: Boolean(body.hasEarlier),
+        });
+        // Keep the reader anchored: prepend shifts everything down, so hand
+        // the height delta back to scrollTop.
+        requestAnimationFrame(() => {
+          const el2 = scrollRef.current;
+          if (el2) el2.scrollTop += el2.scrollHeight - heightBefore;
+        });
+      }
+    } catch {
+      /* transient — the button stays and can be retried */
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
+
+  // Ctrl+K message hits land here. The hit may predate the hydrated window,
+  // so page older history (bounded) until the row exists, then scroll + ring.
+  const botRef = useRef(bot);
+  botRef.current = bot;
+  useEffect(() => {
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const onFocusMessage = async (event: Event) => {
+      const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+      if (!messageId) return;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const el =
+          document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`) ??
+          document.querySelector<HTMLElement>(`[data-cluster-message-ids~="${messageId}"]`);
+        if (el) {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+          el.classList.add(...FOCUS_HIGHLIGHT_CLASSES);
+          window.setTimeout(() => el.classList.remove(...FOCUS_HIGHLIGHT_CLASSES), 1800);
+          return;
+        }
+        const fresh = botRef.current;
+        if (!fresh.hasEarlier || fresh.messages.length === 0) break;
+        const before = fresh.messages[0]!.id;
+        try {
+          const res = await fetch(`/api/bots/${bot.id}/messages?limit=200&before=${encodeURIComponent(before)}`);
+          if (!res.ok) break;
+          const body = await res.json();
+          if (!Array.isArray(body?.messages) || !body.messages.length) break;
+          dispatch({
+            type: "messagesPrepended",
+            threadId: fresh.threadId,
+            messages: body.messages,
+            messageCount: typeof body.messageCount === "number" ? body.messageCount : undefined,
+            hasEarlier: Boolean(body.hasEarlier),
+          });
+        } catch {
+          break;
+        }
+        await nextFrame();
+        await nextFrame();
+      }
+    };
+    window.addEventListener("nexbot:focus-message", onFocusMessage);
+    return () => window.removeEventListener("nexbot:focus-message", onFocusMessage);
+  }, [bot.id, dispatch]);
 
   useEffect(() => {
     const onArtifact = (event: Event) => {
@@ -894,8 +979,14 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
     return () => cancelAnimationFrame(frame);
   }, [bot.id, bot.messages.length, bot.busy, streaming ? Math.floor(streaming.length / 160) : 0, streamingReasoning ? Math.floor(streamingReasoning.length / 160) : 0]);
 
-  const grouped = groupMessages(bot.messages, state.expertMode);
+  const grouped = useMemo(() => groupMessages(bot.messages, state.expertMode), [bot.messages, state.expertMode]);
   let lastTimeAt = 0;
+  // Stable identity so memoized Bubble/CommsCluster rows skip re-renders.
+  const handleRetry = useCallback((msg: Message) => {
+    if (msg.clientNonce) {
+      dispatch({ type: "retryMessage", botId: bot.id, clientNonce: msg.clientNonce });
+    }
+  }, [bot.id, dispatch]);
 
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-transparent">
@@ -914,19 +1005,28 @@ export function ChatView({ bot, onToggleSidebar }: { bot: Bot; onToggleSidebar?:
       <ChatErrorBoundary>
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-5">
           <div className="mx-auto flex max-w-[900px] flex-col gap-2 pb-4">
+            {hasEarlier && (
+              <button
+                type="button"
+                onClick={() => void loadEarlier()}
+                disabled={loadingEarlier}
+                className="pressable mx-auto mt-2 rounded-full border border-black/8 bg-black/[0.03] px-3.5 py-1.5 text-[12px] font-medium text-ink-secondary transition-colors hover:bg-black/6 hover:text-ink disabled:opacity-50"
+              >
+                {loadingEarlier ? "Loading…" : "Load earlier messages"}
+              </button>
+            )}
             {grouped.map((item, idx) => {
-              const handleRetry = (msg: Message) => {
-                if (msg.clientNonce) {
-                  dispatch({ type: "retryMessage", botId: bot.id, clientNonce: msg.clientNonce });
-                }
-              };
-
               const itemAt = item.type === "cluster" ? item.messages[0]?.at : item.message.at;
               const showTimeDivider = idx === 0 || (itemAt && itemAt - lastTimeAt > 15 * 60_000);
               if (itemAt) lastTimeAt = itemAt;
 
               return (
-                <div key={item.type === "cluster" ? item.id : item.message.id} className="flex flex-col gap-2">
+                <div
+                  key={item.type === "cluster" ? item.id : item.message.id}
+                  data-message-id={item.type === "single" ? item.message.id : undefined}
+                  data-cluster-message-ids={item.type === "cluster" ? item.messages.map((m) => m.id).join(" ") : undefined}
+                  className="flex flex-col gap-2"
+                >
                   {showTimeDivider && itemAt && (
                     <div className="py-2.5 text-center text-[12px] font-medium text-ink-secondary">
                       Today {formatTime(itemAt)}

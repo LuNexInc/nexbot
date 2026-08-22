@@ -22,7 +22,8 @@ export function parseCliModelCatalog(output: string, fallback: ModelCatalog): Mo
   const options: Array<{ id: string; label: string }> = [];
   let markedDefault: string | undefined;
 
-  for (const rawLine of output.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "").split(/\r?\n/)) {
+  // eslint-disable-next-line no-control-regex -- the ESC byte is exactly what is being stripped
+  for (const rawLine of output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
 

@@ -108,7 +108,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const { instanceId, config } = input;
       const listeners = new Set<RuntimeEventListener>();
       interface Turn {
-        stop: () => void;
+        stop: () => Promise<void>;
         interrupt: () => void;
         turnId: string;
         asks: Map<string, (behavior: string) => void>;
@@ -222,7 +222,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: state.text });
           }
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
-          stop(); // the agent process does not exit on its own
+          void stop(); // the agent process does not exit on its own
         };
 
         // server→client permission request → canonical request.opened
@@ -381,7 +381,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (pend) {
                 rpcPending.delete(msg.id);
                 if (pend.timer) clearTimeout(pend.timer);
-                msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+                if (msg.error) pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error)));
+                else pend.resolve(msg.result);
               }
             } else if (msg.id !== undefined && msg.method) {
               handleServerRequest(msg);
@@ -413,7 +414,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const interrupt = () => {
           if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
-          else stop();
+          else void stop();
           if (interruptTimer) clearTimeout(interruptTimer);
           interruptTimer = setTimeout(() => settle(true, "cancelled"), 5_000);
           interruptTimer.unref?.();
@@ -421,7 +422,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         active.set(threadId, { stop, interrupt, turnId, asks });
         emit({ ...base(threadId, turnId), type: "turn.started" });
 
-        (async () => {
+        void (async () => {
           try {
             const init = await request(
               "initialize",
@@ -533,7 +534,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
           hasSession: (threadId) => active.has(threadId),
           stopAll: async () => {
-            for (const { stop } of active.values()) stop();
+            for (const { stop } of active.values()) await stop();
           },
           onEvent: (listener) => {
             listeners.add(listener);
@@ -541,7 +542,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
         },
         dispose: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const { stop } of active.values()) await stop();
           listeners.clear();
         },
       };

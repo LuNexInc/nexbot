@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { X, ChevronRight, ChevronDown, ShieldCheck, AlertCircle } from "lucide-react";
 import { useStore, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -6,7 +6,8 @@ import { nexBotCopy } from "@/lib/nexbot-templates";
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
-export function OptionCard({
+// memo: cards are immutable once rendered; stream flushes skip them.
+export const OptionCard = memo(function OptionCard({
   botId,
   message,
 }: {
@@ -136,4 +137,4 @@ export function OptionCard({
       )}
     </div>
   );
-}
+});

@@ -8,6 +8,8 @@ import {
   deleteRoutine,
   listRoutines,
   normalizeRoutineKind,
+  publicRoutine,
+  publicRoutines,
   patchRoutine,
   routineCreateError,
   routineHookPath,
@@ -29,7 +31,7 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
 
   if (method === "GET" && path === "/api/routines") {
     const botId = url.searchParams.get("botId") ?? undefined;
-    return json(res, 200, { routines: listRoutines(botId || undefined) });
+    return json(res, 200, { routines: publicRoutines(botId || undefined) });
   }
   if (method === "POST" && path === "/api/routines") {
     const body = await readBody(req);
@@ -56,9 +58,9 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
       enabled: body.enabled !== false,
     });
     syncFileWatches();
-    broadcast({ kind: "routines", routines: listRoutines() });
+    broadcast({ kind: "routines", routines: publicRoutines() });
     const hookUrl = kind === "webhook" ? `http://127.0.0.1:${harness.PORT}${routineHookPath(routine.id)}` : undefined;
-    return json(res, 201, { routine, hookUrl });
+    return json(res, 201, { routine: publicRoutine(routine), hookUrl });
   }
   if (method === "POST" && path === "/api/routines/from-thread") {
     const body = await readBody(req);
@@ -86,8 +88,8 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
       onComplete,
       maxTokens: body.maxTokens ? Number(body.maxTokens) : undefined,
     });
-    broadcast({ kind: "routines", routines: listRoutines() });
-    return json(res, 201, { routine });
+    broadcast({ kind: "routines", routines: publicRoutines() });
+    return json(res, 201, { routine: publicRoutine(routine) });
   }
   if (method === "POST" && path === "/api/webhooks/github") {
     const body = await readBody(req);
@@ -131,13 +133,13 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
     const routine = patchRoutine(m[1], body);
     if (!routine) return json(res, 404, { error: "no such routine" });
     syncFileWatches();
-    broadcast({ kind: "routines", routines: listRoutines() });
-    return json(res, 200, { routine });
+    broadcast({ kind: "routines", routines: publicRoutines() });
+    return json(res, 200, { routine: publicRoutine(routine) });
   }
   if (m && method === "DELETE") {
     if (!deleteRoutine(m[1])) return json(res, 404, { error: "no such routine" });
     syncFileWatches();
-    broadcast({ kind: "routines", routines: listRoutines() });
+    broadcast({ kind: "routines", routines: publicRoutines() });
     return json(res, 200, { ok: true });
   }
 
@@ -161,7 +163,7 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
           everyMinutes: body.everyMinutes ? Number(body.everyMinutes) : 60,
           enabled: true,
         });
-        broadcast({ kind: "routines", routines: listRoutines() });
+        broadcast({ kind: "routines", routines: publicRoutines() });
       }
       return json(res, 201, { skill });
     } catch (e) {
@@ -187,7 +189,7 @@ export async function handleRoutineRoutes(args: RouteArgs): Promise<boolean> {
         everyMinutes: body.everyMinutes ? Number(body.everyMinutes) : 60,
         enabled: true,
       });
-      broadcast({ kind: "routines", routines: listRoutines() });
+      broadcast({ kind: "routines", routines: publicRoutines() });
     }
     return json(res, 201, { skill });
   }
