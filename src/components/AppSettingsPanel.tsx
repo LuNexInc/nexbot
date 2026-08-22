@@ -1,8 +1,8 @@
 // App-level settings: profile, connection keys, agent CLI status,
 // desktop permissions, About. No third-party product analytics.
-import { Check, Copy, ExternalLink, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi, X } from "lucide-react";
+import { Check, ClipboardCopy, Copy, Download, ExternalLink, Loader2, Mic, Monitor, Plus, QrCode, RefreshCw, RotateCw, ShieldAlert, ShieldCheck, Smartphone, Trash2, Upload, Wifi, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useStore, type Bot, type InstanceInfo, type RemoteAccessStatus, type WireGuardStatus } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { ConnectorsBody } from "./PluginsPanel";
@@ -12,7 +12,106 @@ import { cn } from "@/lib/cn";
 import { ExpertToggle } from "./ExpertToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
-const APP_VERSION = "0.3.9";
+/** Injected by Vite `define` from package.json — never hardcode again. */
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "";
+
+/** Export the team roster (no secrets, no transcripts) as a portable JSON file. */
+function exportTeamConfig(bots: Bot[]): void {
+  const roster = bots
+    .filter((b) => b.kind !== "group")
+    .map((b) => ({
+      name: b.name,
+      title: b.title,
+      description: b.description,
+      personality: b.personality ?? "",
+      color: b.color,
+      modelSelection: b.modelSelection,
+      memoryEnabled: b.memoryEnabled ?? false,
+      notifications: b.notifications,
+      proactiveEnabled: b.proactiveEnabled ?? false,
+    }));
+  const payload = { app: "nexbot", version: 1, exportedAt: new Date().toISOString(), bots: roster };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `nexbot-team-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Team backup: one-click export / guided re-import of agent identities. */
+function TeamConfigSection() {
+  const { state } = useStore();
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const importFile = async (file: File) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const data = JSON.parse(await file.text()) as { app?: string; bots?: Array<Record<string, unknown>> };
+      if (data.app !== "nexbot" || !Array.isArray(data.bots)) throw new Error("not a NexBot team file");
+      let added = 0;
+      for (const bot of data.bots) {
+        const exists = state.bots.some((b) => b.name.toLowerCase() === String(bot.name ?? "").toLowerCase());
+        if (exists) continue; // skip duplicates instead of clobbering live agents
+        await fetch("/api/bots", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(bot),
+        });
+        added += 1;
+      }
+      setStatus(`Imported ${added} agent${added === 1 ? "" : "s"}. Duplicates were skipped.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Import failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="text-[15px] font-medium text-ink">Team backup</div>
+      <div className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">
+        Export agent identities (names, roles, talking style, models) to a JSON file you can re-import on
+        another PC or after a reinstall. Secrets and transcripts are never included.
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => exportTeamConfig(state.bots)}
+          disabled={state.bots.length === 0}
+          className="pressable flex min-h-9 items-center gap-1.5 rounded-lg border border-black/12 px-3 text-[13px] font-medium text-ink-secondary hover:bg-black/6 hover:text-ink disabled:opacity-40"
+        >
+          <Download size={14} /> Export team
+        </button>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="pressable flex min-h-9 items-center gap-1.5 rounded-lg border border-black/12 px-3 text-[13px] font-medium text-ink-secondary hover:bg-black/6 hover:text-ink disabled:opacity-40"
+        >
+          <Upload size={14} /> Import team
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void importFile(file);
+          }}
+        />
+      </div>
+      {status && <div className="mt-2 rounded-lg bg-inset px-3 py-2 text-[12px] text-ink-secondary">{status}</div>}
+    </div>
+  );
+}
 
 /** Profile and workspace brand, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
@@ -414,6 +513,19 @@ function DoctorSection() {
               <span className="text-ink-secondary">{check.detail}</span>
             </div>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              const lines = [
+                `NexBot v${APP_VERSION || "unknown"} · ${navigator.userAgent}`,
+                ...report.checks.map((c) => `[${c.status}] ${c.detail}`),
+              ];
+              void navigator.clipboard?.writeText(lines.join("\n"));
+            }}
+            className="pressable mt-1 flex min-h-9 items-center justify-center gap-1.5 self-start rounded-lg border border-black/12 px-3 text-[12px] font-medium text-ink-secondary hover:bg-black/6 hover:text-ink"
+          >
+            <ClipboardCopy size={13} /> Copy system report
+          </button>
         </div>
       )}
     </div>
@@ -683,6 +795,69 @@ function AboutSection() {
   );
 }
 
+type UpdateState = "unsupported" | "checking" | "up-to-date" | "downloading" | "ready" | "error";
+
+/** In-app update status. The Electron main process owns electron-updater;
+ * the renderer only renders what arrives over the narrow bridge. */
+function UpdatesSection() {
+  const { state } = useStore();
+  const version = state.config?.version || APP_VERSION || "0.0.0";
+  const [update, setUpdate] = useState<{ state: UpdateState; version?: string }>({
+    state: window.nexbot ? "checking" : "unsupported",
+  });
+
+  useEffect(() => {
+    if (!window.nexbot) return;
+    return window.nexbot.onUpdateStatus((info) => setUpdate({ state: info.state as UpdateState, version: info.version }));
+  }, []);
+
+  const copy: Record<UpdateState, { title: string; body: string }> = {
+    unsupported: {
+      title: `This install is NexBot v${version}`,
+      body: "Updates are checked automatically in the desktop app. A newer build is also available as an installer on GitHub releases.",
+    },
+    checking: { title: "Checking for updates…", body: "Talking to the release feed." },
+    "up-to-date": {
+      title: `You're up to date`,
+      body: `NexBot v${version} is the newest published build.`,
+    },
+    downloading: { title: "Downloading update…", body: "NexBot downloads in the background and installs when you restart." },
+    ready: {
+      title: `Update ready${update.version ? ` — v${update.version}` : ""}`,
+      body: "Restart NexBot to finish installing. Quitting to tray keeps bots working; the update applies on a full restart.",
+    },
+    error: { title: "Couldn't check for updates", body: "The release feed was unreachable. You can always grab the latest installer from GitHub releases." },
+  };
+  const tone =
+    update.state === "ready" ? "border-accent/40 bg-accent/10" : update.state === "error" ? "border-warning/40 bg-warning/10" : "border-black/8 bg-card";
+
+  return (
+    <div className={cn("mt-2 rounded-xl border p-4", tone)}>
+      <div className="text-[15px] font-medium text-ink">Updates</div>
+      <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{copy[update.state].body}</div>
+      {update.state === "ready" && (
+        <button
+          type="button"
+          onClick={() => void window.nexbot?.updateInstall()}
+          className="pressable mt-3 min-h-9 rounded-lg bg-ink px-3.5 text-[13px] font-semibold text-white hover:opacity-90"
+        >
+          Restart to update
+        </button>
+      )}
+      {(update.state === "unsupported" || update.state === "error") && (
+        <a
+          href="https://github.com/LuNexInc/nexbot/releases"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-accent hover:underline"
+        >
+          GitHub releases <ExternalLink size={12} />
+        </a>
+      )}
+    </div>
+  );
+}
+
 function WipeSection() {
   const { dispatch, state } = useStore();
   const [open, setOpen] = useState(false);
@@ -938,9 +1113,8 @@ function AppearanceSection() {
 type SettingsTab = "general" | "plugins" | "team" | "appearance" | "updates";
 
 export function AppSettingsPanel() {
-  const { dispatch, state } = useStore();
+  const { dispatch } = useStore();
   const [tab, setTab] = useState<SettingsTab>("general");
-  const version = state.config?.version || APP_VERSION;
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: "General" },
     { id: "plugins", label: "Plugins" },
@@ -1033,29 +1207,14 @@ export function AppSettingsPanel() {
                 <ComputerUseSection />
                 <DoctorSection />
                 <DesktopPermissions />
+                <TeamConfigSection />
                 <AboutSection />
                 <WipeSection />
               </>
             )}
             {tab === "team" && <TeamSetupSection />}
             {tab === "appearance" && <AppearanceSection />}
-            {tab === "updates" && (
-              <div className="mt-2 rounded-xl bg-card p-4">
-                <div className="text-[15px] font-medium text-ink">Updates</div>
-                <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-                  This install is NexBot v{version}. There is no in-app updater. A newer build is a new
-                  installer when Charles ships one. Computer use stays on this PC.
-                </div>
-                <a
-                  href="https://github.com/LuNexInc/nexbot/releases"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-accent hover:underline"
-                >
-                  GitHub releases <ExternalLink size={12} />
-                </a>
-              </div>
-            )}
+            {tab === "updates" && <UpdatesSection />}
           </div>
         )}
       </div>

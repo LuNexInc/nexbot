@@ -1,7 +1,7 @@
 {
   "name": "nexbot",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "NexBot — team of AI agents in a chat app (LuNex Inc)",
   "author": "LuNex Inc",
   "type": "module",
@@ -26,10 +26,11 @@
     "preview": "vite preview",
     "build:server": "tsc -p tsconfig.server.build.json",
     "build:speech": "swiftc -O electron/resources/speech-helper.swift -o electron/resources/speech-helper",
-    "package": "pnpm build && pnpm build:server && electron-builder --publish never",
-    "package:win": "pnpm build && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --win --publish never",
-    "package:mac": "pnpm build && pnpm build:server && pnpm build:speech && node scripts/stage-cua-driver.mjs && electron-builder --mac --publish never",
-    "package:linux": "pnpm build && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --linux --publish never",
+    "package": "pnpm build && pnpm build:updater && pnpm build:server && electron-builder --publish never",
+    "package:win": "pnpm build && pnpm build:updater && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --win --publish never",
+    "package:mac": "pnpm build && pnpm build:updater && pnpm build:server && pnpm build:speech && node scripts/stage-cua-driver.mjs && electron-builder --mac --publish never",
+    "package:linux": "pnpm build && pnpm build:updater && pnpm build:server && node scripts/stage-cua-driver.mjs && electron-builder --linux --publish never",
+    "build:updater": "node scripts/build-updater.mjs",
     "cua:install": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://cua.ai/driver/install.ps1 | iex\""
   },
   "dependencies": {
@@ -50,6 +51,8 @@
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
+    "electron-updater": "^6.6.2",
+    "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3",
     "vite": "^7.1.0",

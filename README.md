@@ -54,6 +54,12 @@ messages. Execution receipts distinguish a tool attempt from a verified state
 change. App Settings also provides operator takeover, an encrypted per-bot
 credential vault, custom ACP providers, and the same doctor report.
 
+Desktop polish: Ctrl+K searches agents **and** message history (FTS),
+Ctrl+1…9 jumps between teammates, `?` shows shortcuts, every reply has Copy /
+Listen (read-aloud), threads export to Markdown, team identities backup to a
+portable JSON file, packaged builds auto-update in the background, and a
+reconnecting banner plus crash recovery keep failures calm.
+
 The live benchmark sends real turns and writes its report under `outputs/`.
 Run it against a disposable profile or an intended test bot because it uses
 provider quota and adds benchmark messages to that bot's transcript.

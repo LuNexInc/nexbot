@@ -379,6 +379,16 @@ h1, h2, .display {
     animation: none !important;
     transition: none !important;
   }
+  /* Utility-class motion (Tailwind animate-pulse/bounce/spin) and anything
+     not covered by the named classes above. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {

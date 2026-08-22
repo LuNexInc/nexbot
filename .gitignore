@@ -13,3 +13,4 @@ _upstream_cmp/
 
 
 dist-server
+electron/updater.bundle.cjs

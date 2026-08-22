@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
-import { Loader2, ChevronDown, MessageCircle, Sparkles, Volume2, VolumeX } from "lucide-react";
+import { Check, Copy, Loader2, ChevronDown, MessageCircle, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useStore, formatTime, type Bot, type Message, type TurnEffort } from "@/state/store";
 import { NexAvatar } from "./Avatar";
 import { OptionCard } from "./OptionCard";
@@ -430,6 +430,33 @@ function renderPlainMarkdown(text: string, keyBase: string) {
   );
 }
 
+/** One-click copy for a bubble. Falls back silently when clipboard is blocked. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+      className={cn(
+        "pressable flex h-7 items-center gap-1 rounded-full border border-black/6 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 text-[11px] font-medium transition-colors",
+        copied
+          ? "border-success/40 bg-success/10 text-success"
+          : "text-ink-secondary hover:border-black/12 hover:bg-black/6 hover:text-ink",
+      )}
+      title={copied ? "Copied" : "Copy message"}
+      aria-label={copied ? "Copied" : "Copy message"}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      <span>{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
 /** Read-aloud toggle for one bot bubble. Hidden when there is nothing to say. */
 function SpeakButton({ messageId, text }: { messageId: string; text: string }) {
   const [speaking, setSpeaking] = useState(false);
@@ -561,9 +588,10 @@ function Bubble({
             {user ? message.text : <Markdownish text={cleanText} botId={botId} />}
           </div>
         )}
-        {!user && !isPending && message.kind === "text" && cleanText.trim() && (
-          <div className="px-1">
-            <SpeakButton messageId={message.id} text={cleanText} />
+{message.kind === "text" && (user ? message.text?.trim() : cleanText.trim()) && !isPending && (
+          <div className="flex gap-1.5 px-1">
+            <CopyButton text={user ? (message.text ?? "") : cleanText} />
+            {!user && <SpeakButton messageId={message.id} text={cleanText} />}
           </div>
         )}
         {!user && <ArtifactGallery files={message.files} />}
