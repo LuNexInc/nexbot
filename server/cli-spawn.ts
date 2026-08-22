@@ -10,31 +10,11 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, dirname, extname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { augmentedPath } from "./env-path.ts";
 
 const WIN_EXTS = [".exe", ".cmd", ".bat", ""];
-
-/** On Windows, run console .exe agent CLIs through a windowless launcher so a
- * CLI's own console children attach to a hidden console instead of flashing
- * new windows. Returns null (→ direct spawn) when the launcher is absent. */
-function windowlessSpawnPath(): string | null {
-  if (process.platform !== "win32") return null;
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    process.env.NEXBOT_SPAWN_WRAPPER,
-    // resources\windowless-spawn.exe (packaged) or dist-server\ (dev) —
-    // ONE level up from the server module dir.
-    join(here, "..", "windowless-spawn.exe"),
-    join(homedir(), ".nexbot", "windowless-spawn.exe"),
-    join(here, "..", "..", "vendor", "windowless-spawn.exe"), // repo vendor (source dev)
-  ].filter((c): c is string => Boolean(c));
-  for (const c of candidates) if (existsSync(c)) return c;
-  return null;
-}
 
 function pathFromEnv(env?: NodeJS.ProcessEnv | null): string {
   if (env?.PATH) return env.PATH;
@@ -132,10 +112,6 @@ export function spawnCli(
   if (needsWinShell(resolved)) {
     // Required for non-Node .cmd shims.
     return spawn(resolved, args, { ...opts, shell: true });
-  }
-  if (process.platform === "win32" && /\.exe$/i.test(resolved)) {
-    const wrapper = windowlessSpawnPath();
-    if (wrapper) return spawn(wrapper, [resolved, ...args], { ...opts, shell: false });
   }
   return spawn(resolved, args, opts);
 }
