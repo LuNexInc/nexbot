@@ -493,6 +493,23 @@ app.whenReady().then(async () => {
   // error page and self-recover via recoverWindowWhenServerUp().
   if (app.isPackaged && !DEV_PREVIEW) {
     serverReady = await startServerPackaged();
+    // If every port attempt failed (contention, slow disk, AV scan), keep
+    // trying in the background instead of leaving the app dead until relaunch.
+    if (!serverReady) {
+      const retry = setInterval(async () => {
+        if (serverReady || quitting) {
+          clearInterval(retry);
+          return;
+        }
+        serverReady = await startServerPackaged();
+        if (serverReady) {
+          clearInterval(retry);
+          if (mainWin && !mainWin.isDestroyed()) {
+            mainWin.loadURL(`http://127.0.0.1:${SERVER_PORT}`).catch(() => {});
+          }
+        }
+      }, 20_000);
+    }
   }
   createTray();
   if (!START_HIDDEN) createWindow();
