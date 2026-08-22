@@ -10,6 +10,7 @@ import type {
   ProviderInstance,
   ProviderSnapshot,
 } from "../contracts.ts";
+import { cliDrift } from "../cli-version.ts";
 
 export interface ShadowInstance {
   instanceId: InstanceId;
@@ -104,12 +105,20 @@ export class ProviderRegistry {
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
         }
+        const drift = cliDrift(inst.driverKind, snapshot.version);
+        if (drift.drifted) {
+          console.warn(
+            `[drivers] ${inst.driverKind} CLI version ${drift.version} differs from validated ${drift.expected} — verify the driver before relying on it.`,
+          );
+        }
         return {
           instanceId: inst.instanceId,
           driverKind: inst.driverKind,
           displayName: inst.displayName ?? inst.driverKind,
           snapshot,
           models: inst.models,
+          expectedVersion: drift.expected,
+          versionDrift: drift.drifted,
         };
       }),
     );
