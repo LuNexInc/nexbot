@@ -49,3 +49,19 @@ describe("Chief of Staff routing hints", () => {
     expect(directive).toMatch(/before doing specialist work yourself/i);
   });
 });
+
+describe("renamed specialists", () => {
+  const renamed = { ...peers[2], name: "Engineer", title: "Engineering & builds" };
+
+  it("still routes engineering work to a renamed Builder by its capability", () => {
+    const routes = suggestSpecialistRoutes("Build the project files and tests.", [renamed, peers[0], peers[1]]);
+    expect(routes.map((route) => route.peer.name)).toEqual(["Engineer"]);
+  });
+
+  it("never leaks the old seed role name into the directive", () => {
+    const routes = suggestSpecialistRoutes("Build the project files and tests.", [renamed]);
+    const directive = routingDirective(routes);
+    expect(directive).toMatch(/@Engineer/);
+    expect(directive).not.toMatch(/Builder/);
+  });
+});

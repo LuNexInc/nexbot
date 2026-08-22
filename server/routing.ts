@@ -28,10 +28,13 @@ type Rule = {
 
 const RULES: Rule[] = [
   {
-    role: "Builder",
+    // Internal capability id — never shown to the model. A peer can carry this
+    // capability under any name (Builder renamed to Engineer, etc.), so the
+    // metadata regex matches common titles/descriptions, not just seed names.
+    role: "builder",
     reason: "projects, code, files, or implementation",
     signals: [/\b(?:build|project|code|repo|file|test|implement|ship|deploy)\b/i],
-    metadata: /builder|projects|build|implementation|project-build/i,
+    metadata: /builder|engineer|develop(?:er|ment)?\b|coding|software|implementation|projects?|build/i,
   },
   {
     role: "Spark",
@@ -130,8 +133,10 @@ export function suggestSpecialistRoutes(text: string, peers: RoutingPeer[]): Rou
 
 export function routingDirective(suggestions: RoutingSuggestion[]): string {
   if (!suggestions.length) return "";
+  // Address teammates by their CURRENT name only. Seed role ids stay internal:
+  // a renamed specialist (Builder → Engineer) must never see its old name.
   const assignments = suggestions
-    .map((suggestion) => `@${suggestion.peer.name} (${suggestion.role}: ${suggestion.reason})`)
+    .map((suggestion) => `@${suggestion.peer.name} (${suggestion.reason})`)
     .join("; ");
   return `Harness routing directive: this request matches ${assignments}. Before doing specialist work yourself, call list_bots and delegate the matching assignment(s) with ask_bot. Ask one teammate at a time, pass the useful result to the next teammate, then summarize the handoffs and owners for Charles. If a matched teammate is busy, report that clearly instead of silently doing their work.`;
 }
