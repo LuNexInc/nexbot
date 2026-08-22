@@ -13,6 +13,20 @@ const READ_ONLY = /\b(?:read|search|list|find|inspect|view|get|status|health|scr
 /** Classify a provider permission request. Unknown actions require approval. */
 export function classifyPermission(tool: string, summary: string): RiskDecision {
   const text = `${tool} ${summary}`.trim();
+
+  // NexBot's own peer-coordination and memory tools are internal: they read
+  // bot lists and history, manage todos, or hand a message to another bot in
+  // this workspace. They have no external, durable, or credential effect, so
+  // auto-allow them rather than spamming the operator while a teammate works.
+  if (/^(?:agents|todos|memory|skills?)__/i.test(summary)) {
+    return { level: "low", action: "allow", reason: "Internal NexBot coordination tool (no external effect)." };
+  }
+
+  // Reading a web URL (research fetch) is read-only and safe to allow.
+  if (tool.toLowerCase() === "fetch" || /^fetch\s*:/i.test(summary)) {
+    return { level: "low", action: "allow", reason: "Read-only web fetch." };
+  }
+
   if (CRITICAL.test(text)) return { level: "critical", action: "ask", reason: "This action can affect credentials, money, production, or another person." };
   if (HIGH.test(text)) return { level: "high", action: "ask", reason: "This action can make a durable or destructive change." };
   if (READ_ONLY.test(text) && !MEDIUM.test(text)) return { level: "low", action: "allow", reason: "This request is read-only." };

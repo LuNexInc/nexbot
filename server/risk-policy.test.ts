@@ -15,6 +15,14 @@ const TABLE: Array<{ tool: string; summary: string; level: RiskLevel; action: "a
   { tool: "edit", summary: "edit src/index.ts", level: "medium", action: "allow" },
   { tool: "patch", summary: "patch the config file", level: "medium", action: "allow" },
   { tool: "shell", summary: "create a build directory", level: "medium", action: "allow" },
+  // NexBot's own internal coordination tools → allow (no external effect)
+  { tool: "other", summary: "agents__list_bots", level: "low", action: "allow" },
+  { tool: "other", summary: "agents__search_history", level: "low", action: "allow" },
+  { tool: "other", summary: "agents__send_bot", level: "low", action: "allow" },
+  { tool: "other", summary: "agents__save_memory", level: "low", action: "allow" },
+  { tool: "other", summary: "todos__todo", level: "low", action: "allow" },
+  // read-only web fetch → allow
+  { tool: "fetch", summary: "Fetch: https://example.com/article", level: "low", action: "allow" },
   // durable or destructive → ask
   { tool: "shell", summary: "delete the build folder", level: "high", action: "ask" },
   { tool: "shell", summary: "rm -rf node_modules", level: "high", action: "ask" },
