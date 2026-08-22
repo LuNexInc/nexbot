@@ -23,6 +23,12 @@ const TABLE: Array<{ tool: string; summary: string; level: RiskLevel; action: "a
   { tool: "other", summary: "todos__todo", level: "low", action: "allow" },
   // read-only web fetch → allow
   { tool: "fetch", summary: "Fetch: https://example.com/article", level: "low", action: "allow" },
+  // benign PowerShell formatting (the "-Format" switch) is NOT critical
+  { tool: "shell", summary: 'Get-Date -Format "yyyy-MM-dd HH:mm"', level: "medium", action: "allow" },
+  { tool: "shell", summary: "Get-Content -Path .\\notes.txt", level: "medium", action: "allow" },
+  // a real disk format is still critical
+  { tool: "shell", summary: "format volume", level: "critical", action: "ask" },
+  { tool: "shell", summary: "format C:", level: "critical", action: "ask" },
   // durable or destructive → ask
   { tool: "shell", summary: "delete the build folder", level: "high", action: "ask" },
   { tool: "shell", summary: "rm -rf node_modules", level: "high", action: "ask" },
