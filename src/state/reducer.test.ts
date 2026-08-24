@@ -177,3 +177,135 @@ describe("bot-scoped runtime warnings", () => {
     expect(cleared.botErrors).toEqual({});
   });
 });
+
+describe("hydrate and selection", () => {
+  it("orders the Chief of Staff first and keeps the selected chat", () => {
+    const state = { ...initialState, selectedId: "chosen", bots: [bot({ id: "c" })] };
+    const next = reducer(state, {
+      type: "hydrate",
+      bots: [bot({ id: "a", name: "Engineer" }), bot({ id: "cos", name: "Chief of Staff" }), bot({ id: "chosen", name: "Chosen" })],
+    });
+    expect(next.bots[0].id).toBe("cos");
+    expect(next.selectedId).toBe("chosen");
+    expect(next.rosterError).toBeNull();
+  });
+
+  it("auto-selects the Chief of Staff when nothing is selected", () => {
+    const next = reducer(initialState, {
+      type: "hydrate",
+      bots: [bot({ id: "a" }), bot({ id: "cos", name: "Chief of Staff" })],
+    });
+    expect(next.selectedId).toBe("cos");
+  });
+
+  it("select clears the row unread and switches", () => {
+    const next = reducer({ ...initialState, bots: [bot({ id: "b1", unread: true })] }, { type: "select", id: "b1" });
+    expect(next.selectedId).toBe("b1");
+    expect(next.bots[0].unread).toBe(false);
+  });
+
+  it("deleteBot falls back to the next bot and clears its error", () => {
+    const next = reducer(
+      { ...initialState, selectedId: "b1", bots: [bot({ id: "b1" }), bot({ id: "b2" })], botErrors: { b1: "boom" } },
+      { type: "deleteBot", botId: "b1" },
+    );
+    expect(next.bots.map((b) => b.id)).toEqual(["b2"]);
+    expect(next.selectedId).toBe("b2");
+    expect(next.botErrors).toEqual({});
+  });
+});
+
+describe("botAdded and option cards", () => {
+  it("botAdded prepends and selects the new bot", () => {
+    const next = reducer({ ...initialState, bots: [bot({ id: "b1" })] }, { type: "botAdded", bot: bot({ id: "b2", name: "New" }) });
+    expect(next.bots[0].id).toBe("b2");
+    expect(next.selectedId).toBe("b2");
+  });
+
+  it("answerCard settles an option card optimistically", () => {
+    const card: Message = { id: "card1", role: "bot", kind: "options", at: 1, card: { title: "T", subtitle: "S", options: ["a"] } };
+    const next = reducer({ ...initialState, bots: [bot({ id: "b1", messages: [card] })] }, { type: "answerCard", botId: "b1", messageId: "card1", answer: "a" });
+    expect(next.bots[0].messages[0].card?.answered).toBe("a");
+  });
+
+  it("dismissCard hides an option card", () => {
+    const card: Message = { id: "card1", role: "bot", kind: "options", at: 1, card: { title: "T", subtitle: "S", options: ["a"] } };
+    const next = reducer({ ...initialState, bots: [bot({ id: "b1", messages: [card] })] }, { type: "dismissCard", botId: "b1", messageId: "card1" });
+    expect(next.bots[0].messages[0].card?.dismissed).toBe(true);
+  });
+});
+
+describe("messagePatched and messagesPrepended", () => {
+  it("messagePatched replaces a known message by id", () => {
+    const state = { ...initialState, bots: [bot({ id: "b1", threadId: "t1", messages: [{ id: "m1", role: "bot", kind: "text", text: "old", at: 1 }] })] };
+    const next = reducer(state, { type: "messagePatched", threadId: "t1", message: { id: "m1", role: "bot", kind: "text", text: "new", at: 1 } });
+    expect(next.bots[0].messages[0].text).toBe("new");
+  });
+
+  it("messagesPrepended dedups by id and tracks earlier history", () => {
+    const state = { ...initialState, bots: [bot({ id: "b1", threadId: "t1", messages: [{ id: "m2", role: "bot", kind: "text", at: 2 }] })] };
+    const next = reducer(state, {
+      type: "messagesPrepended",
+      threadId: "t1",
+      messages: [{ id: "m0", role: "bot", kind: "text", at: 1 }, { id: "m2" as string, role: "bot", kind: "text", at: 2 }],
+      messageCount: 10,
+      hasEarlier: true,
+    });
+    expect(next.bots[0].messages.map((m) => m.id)).toEqual(["m0", "m2"]);
+    expect(next.bots[0].messageCount).toBe(10);
+    expect(next.bots[0].hasEarlier).toBe(true);
+  });
+});
+
+describe("streaming, screen, and panels", () => {
+  it("streamDelta and streamClear manage in-flight text", () => {
+    let s = reducer(initialState, { type: "streamDelta", threadId: "t1", delta: "hello" });
+    s = reducer(s, { type: "streamDelta", threadId: "t1", delta: " world" });
+    expect(s.streaming.t1).toBe("hello world");
+    s = reducer(s, { type: "reasoningDelta", threadId: "t1", delta: "why" });
+    expect(s.streamingReasoning.t1).toBe("why");
+    s = reducer(s, { type: "streamClear", threadId: "t1" });
+    expect(s.streaming.t1).toBeUndefined();
+    expect(s.streamingReasoning.t1).toBeUndefined();
+  });
+
+  it("screenFrame records the screenshot and lifts provisioning", () => {
+    const next = reducer(
+      { ...initialState, bots: [bot({ id: "b1" })], provisioning: { b1: true } },
+      { type: "screenFrame", botId: "b1", png: "data:image/png;base64,x", mime: "image/png" },
+    );
+    expect(next.screens.b1?.png).toBe("data:image/png;base64,x");
+    expect(next.provisioning.b1).toBe(false);
+  });
+
+  it("toggleSettings keeps panels mutually exclusive", () => {
+    const next = reducer({ ...initialState, computerOpen: true }, { type: "toggleSettings" });
+    expect(next.settingsOpen).toBe(true);
+    expect(next.computerOpen).toBe(false);
+  });
+});
+
+describe("wipe resets volatile state", () => {
+  it("clears bots, selection, streams, screens, and errors", () => {
+    const next = reducer(
+      {
+        ...initialState,
+        bots: [bot({ id: "b1" })],
+        selectedId: "b1",
+        streaming: { t1: "x" },
+        screens: { b1: { png: "p", mime: "image/png" } },
+        botErrors: { b1: "boom" },
+        error: "e",
+        mascotMotion: { botId: "b1", kind: "alert", nonce: 1 },
+      },
+      { type: "wipe" },
+    );
+    expect(next.bots).toEqual([]);
+    expect(next.selectedId).toBe("");
+    expect(next.streaming).toEqual({});
+    expect(next.screens).toEqual({});
+    expect(next.botErrors).toEqual({});
+    expect(next.error).toBeNull();
+    expect(next.mascotMotion).toBeNull();
+  });
+});
