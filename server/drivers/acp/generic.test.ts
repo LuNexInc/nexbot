@@ -16,7 +16,12 @@ describe("acp generic driver config", () => {
     const config = cfg({ args: ["--model", "{model}", "{extra}"] });
     expect(acpSpawnArgs(config, turn({ model: "grok-4.5" }))).toEqual(["--model", "grok-4.5", "{extra}"]);
     expect(acpSpawnArgs(cfg({ ...config, model: "grok-4.5" }), turn())).toEqual(["--model", "grok-4.5", "{extra}"]);
-    expect(acpSpawnArgs(config, turn({ model: "default" }))).toEqual(["--model", "{extra}"]);
+    expect(acpSpawnArgs(config, turn({ model: "default" }))).toEqual(["{extra}"]);
+  });
+
+  it("drops a split --model/{model} pair with no model", () => {
+    expect(acpSpawnArgs(cfg({ args: ["--model", "{model}", "--verbose"] }), turn())).toEqual(["--verbose"]);
+    expect(acpSpawnArgs(cfg({ args: ["-m", "{model}"] }), turn())).toEqual([]);
   });
 
   it("spawnArgs drops {model}-referencing args when no model is set", () => {

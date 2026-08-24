@@ -5,14 +5,22 @@ import type { SendTurnInput } from "../../contracts.ts";
 
 /** Build CLI argv (after the binary name) for the custom ACP CLI. A `{model}`
  * token is replaced with the effective model; when no model is set, any arg
- * that references `{model}` is dropped rather than left as an empty `--model=`. */
+ * that references `{model}` is dropped (and a split `--model`/`-m` switch with
+ * it) so no dangling flag or empty `--model=` reaches the CLI. */
 export function acpSpawnArgs(config: AcpConfig, turn: SendTurnInput): string[] {
   const model = turn.model && turn.model !== "default" ? turn.model : config.model ?? "";
   const template = config.args?.length ? config.args : [];
-  return template.flatMap((arg) => {
-    if (!model && arg.includes("{model}")) return [];
-    return [arg.replaceAll("{model}", model)];
-  });
+  const out: string[] = [];
+  for (let i = 0; i < template.length; i++) {
+    const arg = template[i];
+    if (!model && /^--model$|^-m$/i.test(arg) && template[i + 1]?.includes("{model}")) {
+      i++;
+      continue;
+    }
+    if (arg.includes("{model}") && !model) continue;
+    out.push(arg.replaceAll("{model}", model));
+  }
+  return out;
 }
 
 /** Pick the ACP authenticate methodId from initialize's advertised list. */

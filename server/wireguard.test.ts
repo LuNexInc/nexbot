@@ -88,6 +88,19 @@ describe("NexBot Connect WireGuard", () => {
     expect(publicKeyLines).toEqual(["PublicKey = pk"]);
     expect(cfg.split("\n").filter((line) => line.startsWith("[Peer]"))).toEqual(["[Peer]"]);
   });
+  it("sanitizes a hostile publicKey and address so they cannot inject a [Peer] block", async () => {
+    const { wireGuardConfigTextForTest } = await wireguard();
+    const cfg = wireGuardConfigTextForTest({
+      version: 1,
+      privateKey: "priv",
+      publicKey: "pub",
+      endpoint: "e:1",
+      listenPort: 51820,
+      peers: [{ deviceId: "dev", publicKey: "pk\n[Peer]\nPublicKey = evil", address: "10.77.0.2/32\n[Peer]", createdAt: 1 }],
+    });
+    expect(cfg.split("\n").filter((line) => line.startsWith("[Peer]"))).toEqual(["[Peer]"]);
+    expect(cfg.split("\n").filter((line) => line.startsWith("PublicKey = "))).toHaveLength(1);
+  });
 
   it("rejects a device id that is not a safe identifier", async () => {
     const { provisionWireGuardPeer } = await wireguard();

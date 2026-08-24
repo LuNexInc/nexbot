@@ -97,23 +97,30 @@ describe("box agent driver", () => {
     expect(deltas).toEqual(["hello"]);
   });
 
-  it("authenticates box API calls with the per-bot computer token", async () => {
+  it("authenticates prompt, events, and status with the per-bot computer token", async () => {
     const auths: string[] = [];
     boxFetch.mockImplementation(async (url, opts) => {
       const u = String(url);
       if (u.endsWith("/boxes/b1/prompt")) {
-        auths.push(authOf(opts));
+        auths.push("prompt:" + authOf(opts));
         return ok({ prompt: { id: "p1" } });
       }
-      if (u.includes("/events")) return ok({ events: [] });
-      if (u.includes("/prompts/")) return ok({ prompt: { status: "completed", result: "ok" } });
+      if (u.includes("/events")) {
+        auths.push("events:" + authOf(opts));
+        return ok({ events: [] });
+      }
+      if (u.includes("/prompts/")) {
+        auths.push("status:" + authOf(opts));
+        return ok({ prompt: { status: "completed", result: "ok" } });
+      }
       return ok({});
     });
     const inst = await instance();
     const events = collect(inst);
     await inst.adapter.sendTurn(turn());
     await vi.waitFor(() => expect(events.some((e) => e.type === "turn.completed")).toBe(true), { timeout: 3000 });
-    expect(auths).toContain("Bearer t");
+    expect(auths.length).toBeGreaterThanOrEqual(3);
+    expect(auths.every((a) => a.endsWith("Bearer t"))).toBe(true);
     expect(auths).not.toContain("Bearer test-token");
   });
 });

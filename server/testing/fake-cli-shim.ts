@@ -15,8 +15,9 @@ export function fakeCliShim(scriptPath: string, tempDir: string, name = "fake-cl
     return scriptPath;
   }
   const shim = join(tempDir, `${name}.cmd`);
-  // %* forwards all args; quote node + script for spaces in paths.
-  const body = `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`;
+  // Use the npm `"%_prog%" "<script>" %*` form so unwrapCmdShim parses it to a
+  // direct Node run (the safe path) instead of fail-closing on a raw .cmd.
+  const body = `@echo off\r\n"%_prog%" "${scriptPath}" %*\r\n`;
   writeFileSync(shim, body, "utf8");
   return shim;
 }

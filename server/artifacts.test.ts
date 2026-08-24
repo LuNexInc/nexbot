@@ -34,6 +34,11 @@ beforeAll(() => {
   writeFileSync(join(deskRoot, "ok.txt"), "hello");
   writeFileSync(join(deskRoot, ".env"), "SECRET=1");
   writeFileSync(join(deskRoot, "SECRETS.md"), "# a secret");
+  writeFileSync(join(deskRoot, "secrets.txt"), "s");
+  writeFileSync(join(deskRoot, "tokens.md"), "t");
+  writeFileSync(join(deskRoot, "API_KEYS.md"), "k");
+  writeFileSync(join(deskRoot, "auth.json"), "{}");
+  writeFileSync(join(deskRoot, "service-account.json"), "{}");
   writeFileSync(join(deskRoot, "harness.json"), "{}");
   writeFileSync(join(deskRoot, "big.bin"), Buffer.alloc(33 * 1024 * 1024));
 });
@@ -87,6 +92,13 @@ describe("resolveArtifactPath security boundary", () => {
     const { resolveArtifactPath } = await artifacts();
     expect(resolveArtifactPath(join(deskRoot, "SECRETS.md"))).toBeNull();
     expect(resolveArtifactPath(join(deskRoot, "master.key"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "SECRETS.md"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "master.key"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "secrets.txt"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "tokens.md"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "API_KEYS.md"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "auth.json"))).toBeNull();
+    expect(resolveArtifactPath(join(deskRoot, "service-account.json"))).toBeNull();
   });
 
   it("rejects files over the 32MB artifact size limit", async () => {

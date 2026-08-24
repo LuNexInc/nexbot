@@ -110,14 +110,12 @@ export function spawnCli(
   }
 
   if (needsWinShell(resolved)) {
-    // Required for non-Node .cmd shims. Route through cmd.exe /d /s /c with
-    // windowsVerbatimArguments instead of `shell: true` — that combination is
-    // deprecated (DEP0190) and concatenates args unescaped into the shell.
-    const comspec = process.env.ComSpec ?? "cmd.exe";
-    return spawn(comspec, ["/d", "/s", "/c", resolved, ...args], {
-      ...opts,
-      windowsVerbatimArguments: true,
-    });
+    // Only Node/npm shims (unwrapped above) are safe to run. A non-Node .cmd/.bat
+    // would have to go through cmd.exe, whose shell re-parses the argv and turns
+    // chat/persona text into `& | > < ^` — an injection path. Fail closed.
+    throw new Error(
+      `Unsupported Windows wrapper "${resolved}": provide a direct executable or a Node script instead of a .cmd/.bat shim.`,
+    );
   }
   return spawn(resolved, args, opts);
 }
@@ -145,11 +143,9 @@ export function execFileCli(
     );
   }
   if (needsWinShell(resolved)) {
-    const comspec = process.env.ComSpec ?? "cmd.exe";
-    return execFile(comspec, ["/d", "/s", "/c", resolved, ...args], {
-      ...opts,
-      windowsVerbatimArguments: true,
-    }, cb);
+    throw new Error(
+      `Unsupported Windows wrapper "${resolved}": provide a direct executable or a Node script instead of a .cmd/.bat shim.`,
+    );
   }
   return execFile(resolved, args, opts, cb);
 }

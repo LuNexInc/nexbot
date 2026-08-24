@@ -85,8 +85,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       const boxId = turn.integrations?.computer?.boxId;
-      const turnToken = turn.integrations?.computer?.token ?? token;
-      if (!turnToken) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.nexbot/config.json');
+      const turnToken = turn.integrations?.computer?.token;
+      if (!turnToken) throw new Error("this bot has no computer token — provision its cloud computer before running a turn");
       if (!boxId) throw new Error("this bot has no computer yet — open the Computer panel and provision one");
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();

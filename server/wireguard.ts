@@ -170,11 +170,22 @@ function nextAddress(peers: WireGuardPeer[]): string {
   throw new Error("NexBot Connect has reached its peer limit");
 }
 
+/** Keep only WireGuard base64 chars — a `\n`/`[Peer]` payload in a key cannot
+ * inject a second block; a malformed value fails at the CLI, not the shell. */
+function safeBase64(value: string): string {
+  return value.replace(/[^A-Za-z0-9+/=]/g, "");
+}
+
+/** Keep only address-ish chars (e.g. `10.77.0.2/32`). */
+function safeAddr(value: string): string {
+  return value.replace(/[^\w:./]/g, "");
+}
+
 function renderConfig(state: WireGuardState): string {
   const peers = state.peers.filter((peer) => !peer.revokedAt);
   const sections = [
-    `[Interface]\nPrivateKey = ${state.privateKey}\nAddress = ${HOST_ADDRESS}\nListenPort = ${state.listenPort}`,
-    ...peers.map((peer) => `[Peer]\n# device ${peer.deviceId.replace(/[^\w.-]/g, "_")}\nPublicKey = ${peer.publicKey}\nAllowedIPs = ${peer.address}`),
+    `[Interface]\nPrivateKey = ${safeBase64(state.privateKey)}\nAddress = ${HOST_ADDRESS}\nListenPort = ${state.listenPort}`,
+    ...peers.map((peer) => `[Peer]\n# device ${peer.deviceId.replace(/[^\w.-]/g, "_")}\nPublicKey = ${safeBase64(peer.publicKey)}\nAllowedIPs = ${safeAddr(peer.address)}`),
   ];
   return `${sections.join("\n\n")}\n`;
 }
