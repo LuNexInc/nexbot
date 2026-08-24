@@ -46,10 +46,15 @@ const DATA_DIR_DENIED_FILES = new Set([
   "agent-inbox.json",
   "pending-turns.json",
 ]);
+// Non-dotfile credential files are secrets too (e.g. webmaster/SECRETS.md under
+// the allowlisted AI Projects root). Deny these by basename so artifact
+// previews never serve credential material.
+const SECRET_BASENAMES = new Set(["secrets.md", "secrets.json", "credentials.json", "credentials", "master.key"]);
 
 function artifactDenied(file: string): boolean {
   const base = file.slice(Math.max(file.lastIndexOf("\\"), file.lastIndexOf("/")) + 1);
   if (!base || base.startsWith(".") || base === "master.key") return true;
+  if (SECRET_BASENAMES.has(base.toLowerCase())) return true;
   const rel = relative(resolve(DATA_DIR), file);
   const insideDataDir = rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
   if (insideDataDir) {
