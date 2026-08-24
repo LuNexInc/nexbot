@@ -56,4 +56,34 @@ describe("cli-spawn", () => {
     expect(out).toContain("hi-from-cli");
     void stopChild(child);
   });
+
+  const winOnly = it.runIf(process.platform === "win32");
+
+  winOnly("spawnCli runs a raw .cmd shim with args and emits no DEP0190", async () => {
+    dir = mkdtempSync(join(tmpdir(), "nexbot-cli-"));
+    const cmd = join(dir, "probe.cmd");
+    writeFileSync(cmd, "@echo off\r\necho ARGS=%*\r\n");
+    const warnings: string[] = [];
+    const onWarn = (w: { code?: string }) => {
+      if (w.code) warnings.push(w.code);
+    };
+    process.on("warning", onWarn);
+    try {
+      const child = spawnCli(cmd, ["--model", "gpt-5"], {
+        env: { ...process.env, PATH: augmentedPath() },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const out = await new Promise<string>((resolve, reject) => {
+        let buf = "";
+        child.stdout?.on("data", (c) => (buf += c));
+        child.on("error", reject);
+        child.on("close", (code) => (code === 0 ? resolve(buf) : reject(new Error(`exit ${code}: ${buf}`))));
+      });
+      expect(out).toContain("ARGS=");
+      expect(warnings).not.toContain("DEP0190");
+      void stopChild(child);
+    } finally {
+      process.off("warning", onWarn);
+    }
+  });
 });

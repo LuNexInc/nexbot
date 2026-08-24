@@ -110,8 +110,14 @@ export function spawnCli(
   }
 
   if (needsWinShell(resolved)) {
-    // Required for non-Node .cmd shims.
-    return spawn(resolved, args, { ...opts, shell: true });
+    // Required for non-Node .cmd shims. Route through cmd.exe /d /s /c with
+    // windowsVerbatimArguments instead of `shell: true` — that combination is
+    // deprecated (DEP0190) and concatenates args unescaped into the shell.
+    const comspec = process.env.ComSpec ?? "cmd.exe";
+    return spawn(comspec, ["/d", "/s", "/c", resolved, ...args], {
+      ...opts,
+      windowsVerbatimArguments: true,
+    });
   }
   return spawn(resolved, args, opts);
 }
@@ -139,7 +145,11 @@ export function execFileCli(
     );
   }
   if (needsWinShell(resolved)) {
-    return execFile(resolved, args, { ...opts, shell: true }, cb);
+    const comspec = process.env.ComSpec ?? "cmd.exe";
+    return execFile(comspec, ["/d", "/s", "/c", resolved, ...args], {
+      ...opts,
+      windowsVerbatimArguments: true,
+    }, cb);
   }
   return execFile(resolved, args, opts, cb);
 }
