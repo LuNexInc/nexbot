@@ -123,4 +123,25 @@ describe("box agent driver", () => {
     expect(auths.every((a) => a.endsWith("Bearer t"))).toBe(true);
     expect(auths).not.toContain("Bearer test-token");
   });
+
+  it("authenticates the interrupt call with the per-bot token while a turn is active", async () => {
+    let interruptAuth = "";
+    boxFetch.mockImplementation(async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith("/boxes/b1/prompt")) return ok({ prompt: { id: "p1" } });
+      if (u.includes("/interrupt")) {
+        interruptAuth = authOf(opts);
+        return ok({});
+      }
+      if (u.includes("/events")) return ok({ events: [] });
+      if (u.includes("/prompts/")) return ok({ prompt: { status: "running" } });
+      return ok({});
+    });
+    const inst = await instance();
+    const events = collect(inst);
+    await inst.adapter.sendTurn(turn());
+    await inst.adapter.interruptTurn("t1");
+    await vi.waitFor(() => expect(events.some((e) => e.type === "turn.completed")).toBe(true), { timeout: 3000 });
+    expect(interruptAuth).toBe("Bearer t");
+  });
 });
