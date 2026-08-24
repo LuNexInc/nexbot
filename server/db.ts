@@ -265,7 +265,7 @@ function importBotsJson(): BotRecord[] {
 }
 function importMessageFiles(): Map<string, Message[]> {
   const map = new Map<string, Message[]>();
-  let names: string[] = [];
+  let names: string[];
   try { names = readdirSync(DATA_DIR); } catch { return map; }
   for (const name of names) {
     const m = name.match(/^messages-(.+)\.json$/);

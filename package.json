@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
     "doctor": "node scripts/nexbot.mjs doctor",
     "benchmark": "node scripts/nexbot.mjs benchmark",
     "preview": "vite preview",

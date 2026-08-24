@@ -272,7 +272,7 @@ ${f.approval}
 
 function walkMd(dir: string, out: string[], depth = 0) {
   if (depth > 3 || !existsSync(dir)) return;
-  let names: string[] = [];
+  let names: string[];
   try {
     names = readdirSync(dir);
   } catch {

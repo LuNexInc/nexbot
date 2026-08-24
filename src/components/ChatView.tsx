@@ -278,7 +278,7 @@ function Markdownish({ text, botId }: { text: string; botId?: string }) {
   }
 
   if (lastIdx < text.length) {
-    blocks.push(renderPlainMarkdown(normalizeMarkdown(text.slice(lastIdx)), `plain-${blockKey++}`));
+    blocks.push(renderPlainMarkdown(normalizeMarkdown(text.slice(lastIdx)), `plain-${blockKey}`));
   }
 
   return <>{blocks}</>;

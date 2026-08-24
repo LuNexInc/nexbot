@@ -14,7 +14,7 @@ const DEAD_SQLITE = ["data.sqlite", "data.sqlite-wal", "data.sqlite-shm"];
 function sweepStaleMcpConfigs(now = Date.now()): string[] {
   const removed: string[] = [];
   const dir = join(DATA_DIR, "tmp");
-  let names: string[] = [];
+  let names: string[];
   try {
     names = readdirSync(dir);
   } catch {
@@ -47,7 +47,7 @@ export function sweepLegacyDataFiles(): string[] {
     }
   }
   if (!jsonImportDone()) return removed;
-  let names: string[] = [];
+  let names: string[];
   try {
     names = readdirSync(DATA_DIR);
   } catch {
@@ -67,7 +67,7 @@ export function sweepLegacyDataFiles(): string[] {
 
 export function runDataHygiene(): { removed: string[]; checkpoint: WalCheckpoint | null } {
   const removed = [...sweepLegacyDataFiles(), ...sweepStaleMcpConfigs()];
-  let checkpoint: WalCheckpoint | null = null;
+  let checkpoint: WalCheckpoint | null;
   try {
     checkpoint = walCheckpoint();
   } catch {

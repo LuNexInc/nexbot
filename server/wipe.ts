@@ -41,7 +41,7 @@ function removeChildren(dir: string): number {
 }
 
 function removeLegacyFiles(): number {
-  let names: string[] = [];
+  let names: string[];
   try {
     names = readdirSync(DATA_DIR);
   } catch {

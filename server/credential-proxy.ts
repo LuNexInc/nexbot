@@ -38,7 +38,7 @@ async function typeWithCua(secret: string): Promise<void> {
   let buffer = "";
   child.stdout.on("data", (chunk) => {
     buffer += chunk.toString();
-    let newline = -1;
+    let newline: number;
     while ((newline = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);

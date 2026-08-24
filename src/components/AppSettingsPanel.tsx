@@ -301,7 +301,7 @@ function ProvidersSection() {
           className="mt-3 flex flex-col gap-2 rounded-lg border border-hairline/40 bg-inset p-3"
           onSubmit={(event) => {
             event.preventDefault();
-            let parsedArgs: string[] = [];
+            let parsedArgs: string[];
             try { parsedArgs = args.trim().startsWith("[") ? JSON.parse(args) : args.split(/\s+/).filter(Boolean); } catch { return; }
             void fetch("/api/instances", {
               method: "POST",

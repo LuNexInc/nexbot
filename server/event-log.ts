@@ -82,7 +82,7 @@ export function pruneEventLogs(
   let rotated = 0;
   const cutoff = now - retainMs;
   for (const dir of dirs) {
-    let names: string[] = [];
+    let names: string[];
     try {
       names = readdirSync(dir);
     } catch {
