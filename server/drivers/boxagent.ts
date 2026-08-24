@@ -69,10 +69,10 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       createdAt: new Date().toISOString(),
     });
 
-    const api = async (path: string, opts: RequestInit = {}) => {
+    const api = async (path: string, opts: RequestInit = {}, authToken: string = token) => {
       const res = await fetch(`${BOX_API}${path}`, {
         ...opts,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(opts.headers ?? {}) },
+        headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json", ...(opts.headers ?? {}) },
         signal: (opts as any).signal ?? AbortSignal.timeout(30_000),
       });
       const body: any = await res.json().catch(() => null);
@@ -85,7 +85,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       const boxId = turn.integrations?.computer?.boxId;
-      if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.nexbot/config.json');
+      const turnToken = turn.integrations?.computer?.token ?? token;
+      if (!turnToken) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.nexbot/config.json');
       if (!boxId) throw new Error("this bot has no computer yet — open the Computer panel and provision one");
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
@@ -103,7 +104,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const started: any = await api(`/boxes/${boxId}/prompt`, {
         method: "POST",
         body: JSON.stringify({ provider: providerFor(model), model, prompt }),
-      });
+      }, turnToken);
       appendNative(threadId, { dir: "out", source: "box.prompt", msg: { model, prompt, response: started } });
       const promptId = started?.prompt?.id ?? started?.promptId ?? started?.id ?? null;
 
@@ -113,7 +114,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         boxId,
         cancel: () => {
           cancelled = true;
-          void api(`/boxes/${boxId}/interrupt`, { method: "POST" }).catch(() => {});
+          void api(`/boxes/${boxId}/interrupt`, { method: "POST" }, turnToken).catch(() => {});
         },
       });
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -128,7 +129,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           for (;;) {
             if (cancelled) break;
             await new Promise((r) => setTimeout(r, config.pollMs));
-            const events: any = await api(`/boxes/${boxId}/events`).catch(() => null);
+            const events: any = await api(`/boxes/${boxId}/events`, {}, turnToken).catch(() => null);
             const list: any[] = events?.events ?? events?.items ?? [];
             for (const ev of list) {
               const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
@@ -151,7 +152,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               }
             }
             if (promptId) {
-              const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`).catch(() => null);
+              const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`, {}, turnToken).catch(() => null);
               const state = String(status?.prompt?.status ?? status?.status ?? "");
               appendNative(threadId, { dir: "in", source: "box.prompt.status", msg: status });
               if (/completed|succeeded|done/i.test(state)) {
