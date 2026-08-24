@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -7,6 +7,7 @@ import { deskPath } from "./desk.ts";
 import {
   applyTodoTool,
   canTransition,
+  formatTodoList,
   listTodos,
   replaceTodos,
   resetTodoCache,
@@ -116,5 +117,39 @@ describe("todo persist", () => {
 
   it("rejects empty content", () => {
     expect(() => replaceTodos(BOT, [{ content: "  ", status: "pending" }])).toThrow(/content/);
+  });
+});
+
+describe("todo edge cases", () => {
+  it("rejects an invalid status on a new item", () => {
+    expect(() => replaceTodos(BOT, [{ content: "X", status: "done" }])).toThrow(/invalid status/);
+  });
+
+  it("rejects a duplicate id", () => {
+    const [a] = replaceTodos(BOT, [{ content: "A", status: "pending" }]);
+    expect(() =>
+      replaceTodos(BOT, [
+        { id: a.id, content: "A", status: "pending" },
+        { id: a.id, content: "B", status: "pending" },
+      ]),
+    ).toThrow(/duplicate todo id/);
+  });
+
+  it("formatTodoList marks statuses and reports empty", () => {
+    const list = formatTodoList([
+      { id: "1", content: "draft", status: "in_progress" },
+      { id: "2", content: "run", status: "completed" },
+    ]);
+    expect(list).toContain("[>] 1 draft");
+    expect(list).toContain("[x] 2 run");
+    expect(formatTodoList([])).toMatch(/empty/i);
+  });
+
+  it("malformed todos.json on disk yields an empty list", () => {
+    const p = todosPath(BOT);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, "not json");
+    resetTodoCache(BOT);
+    expect(listTodos(BOT)).toEqual([]);
   });
 });
