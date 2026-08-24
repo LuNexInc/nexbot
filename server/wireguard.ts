@@ -174,7 +174,7 @@ function renderConfig(state: WireGuardState): string {
   const peers = state.peers.filter((peer) => !peer.revokedAt);
   const sections = [
     `[Interface]\nPrivateKey = ${state.privateKey}\nAddress = ${HOST_ADDRESS}\nListenPort = ${state.listenPort}`,
-    ...peers.map((peer) => `[Peer]\n# device ${peer.deviceId}\nPublicKey = ${peer.publicKey}\nAllowedIPs = ${peer.address}`),
+    ...peers.map((peer) => `[Peer]\n# device ${peer.deviceId.replace(/[^\w.-]/g, "_")}\nPublicKey = ${peer.publicKey}\nAllowedIPs = ${peer.address}`),
   ];
   return `${sections.join("\n\n")}\n`;
 }
@@ -237,6 +237,7 @@ export function setupWireGuard(options: { endpoint: string; listenPort?: number 
 export function provisionWireGuardPeer(deviceId: string, publicKey: string): WireGuardClientConfig {
   const state = readState();
   if (!state) throw new Error("Set up the NexBot WireGuard host before pairing a VPN device");
+  if (!/^[\w.-]{1,64}$/.test(deviceId)) throw new Error("The device id is invalid");
   if (!validPublicKey(publicKey)) throw new Error("The Android WireGuard public key is invalid");
   const existing = state.peers.find((peer) => peer.deviceId === deviceId && !peer.revokedAt);
   if (existing && existing.publicKey !== publicKey) throw new Error("This device already has a different active VPN key; revoke it first");
